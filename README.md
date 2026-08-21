@@ -1,31 +1,42 @@
-# Training Timer
+# Lab Protocol Timer — Accelerometer & REDCap Sync
 
-Training Timer is a customizable workout timer application built with Flutter. It helps you manage your workout and rest intervals with ease, featuring visual progress indicators and audio alerts to keep you on track. This app is designed to be intuitive and user-friendly, suitable for any type of interval training.
+**Lab Protocol Timer** is a cross-platform and web application built with Flutter, designed to standardize timing, provide voice-guided transitions, and synchronize laboratory protocols for wearable sensor research (accelerometry).
 
-The web version of the app can be accessed at: [https://plinkr.github.io/training_timer_web/](https://plinkr.github.io/training_timer_web/)
+The app captures high-precision timestamps to isolate active exercise windows from transition and surrounding intervals, guides mechanical sensor impact alignment for clock-drift correction, and exports structured batch data directly to the **REDCap API**.
+
+> **Note:** The in-app interface, visual prompts, and Text-to-Speech voice guidance are in **Spanish (`es-ES`)**.
+
+---
 
 ## Features
 
-- **Customizable Rounds and Intervals**: Set your desired workout duration, number of rounds, and rest periods.
-- **Visual Progress Indicators**: Displays a circular progress indicator for both workout and rest periods.
-- **Audio Alerts**: Plays different sounds to signal the start of a round, a warning when 10 seconds remain, and the end of a round.
-- **Pause and Resume**: Easily pause and resume your training sessions.
-- **Settings Dialog**: Modify your workout settings on the go.
+- **Accelerometer Time-Synchronization:** Visual and acoustic prompts during pre- and post-activity static phases to perform controlled sensor-to-sensor clapping events, facilitating offline clock synchronization.
+- **Precise Activity Isolation:** Explicit logging of exact exercise boundaries (`activityStartTime`, `activityEndTime`), separating movement from static baseline and transition intervals.
+- **Multi-Participant Setup:** Simultaneous tracking of multiple participants in a single lab trial, allowing individual assignment of Participant IDs and REDCap longitudinal event arms (e.g., *Day 0 — Initial Visit* or *Day 8 — Final Visit*).
+- **Aggregated REDCap Batch Export:** Automated flat-record data transfer delivering key aggregated metrics: total protocol duration, total activity duration, total transition time, and total completed stations.
+- **Local State Persistence & Recovery:** Automatic local storage (`SharedPreferences`) on every lap/activity to restore interrupted sessions following accidental tab closures or browser reloads.
+- **Audio & TTS Voice Prompts:** Integrated audio alerts and Text-to-Speech narration for phase transitions and sensor synchronization commands.
 
-## Screenshots
+---
 
-![Timer Screen](screenshots/training_timer_screen.png)
-![Settings Screen](screenshots/training_timer_settings.png)
+## Protocol Structure per Activity
 
-## Installation
+1. **Initial Static Baseline (30 s default):** Subject remains motionless. A 5-second countdown prompts the initial accelerometer synchronization clap.
+2. **Main Activity (Configurable duration):** Active exercise phase. Triggers and records `activityStartTime`.
+3. **Final Static Baseline (30 s default):** Immediate cessation of movement and logging of `activityEndTime`. The first 5 seconds prompt the final synchronization clap.
+4. **Lap / Transition Mode:** Manual pause interval for station rotation or protocol completion.
 
-To run this project locally, ensure you have Flutter installed. Then follow these steps:
+---
 
-1. **Clone the repository**:
-    ```sh
-    git clone https://github.com/plinkr/training_timer
-    cd training-timer
-    ```
+## Getting Started
+
+Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) installed.
+
+1. **Clone the repository:**
+   ```sh
+   git clone [https://github.com/YOUR_USERNAME/lab_protocol_timer.git](https://github.com/YOUR_USERNAME/lab_protocol_timer.git)
+   cd lab_protocol_timer
+   ```
 
 2. **Install dependencies**:
     ```sh
@@ -37,36 +48,46 @@ To run this project locally, ensure you have Flutter installed. Then follow thes
     flutter run --release
     ```
 
-### Running on the Web
+## REDCap Configuration
 
-To build and run the web version, follow these steps:
+Set your REDCap endpoint and API credentials in `lib/services/lab_redcap_service.dart`:
 
-1. **Build the web app**:
-    ```sh
-    flutter build web --release
-    ```
+```dart
+static const String _redcapUrl = '[https://your-redcap-instance.org/api/](https://your-redcap-instance.org/api/)';
+static const String _apiToken = 'YOUR_REDCAP_API_TOKEN';
+```
 
-2. **Serve the web app**:
-    ```sh
-    cd build/web/
-    python -m http.server 1337
-    ```
+### Required REDCap Data Dictionary Fields
 
-3. **View the web app**:
-    Open your web browser and navigate to `http://<your-ip>:1337`, replacing `<your-ip>` with your actual IP address.
+Ensure your REDCap project instrument contains the following field variables to properly receive the batch sync payload:
 
-## Usage
+| Variable Name | Field Type | Validation / Format | Description |
+| :--- | :--- | :--- | :--- |
+| `record_id` | Text Box | — | Unique Participant ID / Record Identifier |
+| `redcap_event_name` | System / Event | — | Target longitudinal arm (`da_0__visita_inici_arm_1` / `da_8__visita_final_arm_1`) |
+| `session_start_time` | Text Box | Datetime (Y-M-D H:M:S) or ISO-8601 | Global protocol session start timestamp |
+| `session_end_time` | Text Box | Datetime (Y-M-D H:M:S) or ISO-8601 | Global protocol session end timestamp |
+| `lab_total_stations` | Text Box | Integer | Total count of completed activities / stations |
+| `total_protocol_seconds` | Text Box | Number (2 decimal places) | Total duration of the test session in seconds |
+| `total_activity_seconds` | Text Box | Number (2 decimal places) | Aggregated time spent performing activities in seconds |
+| `total_transition_seconds` | Text Box | Number (2 decimal places) | Total transition / baseline interval time in seconds |
+| `act_{N}_start_time` | Text Box | Datetime (Y-M-D H:M:S) or ISO-8601 | Start timestamp for activity *N* (e.g., `act_1_start_time`, `act_2_start_time`) |
+| `act_{N}_end_time` | Text Box | Datetime (Y-M-D H:M:S) or ISO-8601 | End timestamp for activity *N* (e.g., `act_1_end_time`, `act_2_end_time`) |
 
-- Press the **Start** button to begin the timer.
-- The timer will automatically switch between workout and rest intervals.
-- The **Pause** button allows you to pause the timer, and the **Stop** button will reset it.
-- Use the **Settings** button to customize your workout parameters.
+> **Note:** Define as many `act_{N}_start_time` and `act_{N}_end_time` pairs in your REDCap instrument as the maximum number of stations/activities planned in your lab protocol.
 
-## Contributing
+---
 
-Contributions are welcome! Please fork the repository and submit a pull request for any feature additions or bug fixes.
+## Funding & Acknowledgments
+
+This software was developed as part of the **RUN4HEALTH** research project, funded by the **Universidad de Granada (UGR)**.
+
+- **Lead Developer & Protocol Adaptation:** Jairo Hidalgo Migueles (Universidad de Granada).
+- **RUN4HEALTH Co-PI:** Marta de la Flor Alemany (Universidad de Granada)
+- **Base Upstream Project:** Forked and extended from [plinkr/training_timer](https://github.com/plinkr/training_timer) by Aliet Expósito García (licensed under the MIT License).
+
+---
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-

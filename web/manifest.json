@@ -1,11 +1,11 @@
 {
-    "name": "training_timer",
-    "short_name": "training_timer",
+    "name": "Lab Protocol Timer",
+    "short_name": "LabTimer",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A timer for interval training (MMA, Boxing).",
+    "background_color": "#0B0F19",
+    "theme_color": "#38BDF8",
+    "description": "Lab Protocol Timer with REDCap Synchronization for Accelerometer Research.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
@@ -18,6 +18,18 @@
             "src": "icons/Icon-512.png",
             "sizes": "512x512",
             "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
         }
     ]
 }
