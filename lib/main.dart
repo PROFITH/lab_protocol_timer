@@ -1,14 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:js_interop';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:web/web.dart' as web;
-
+import 'package:lab_protocol_timer/utils/web_exit_guard.dart';
 import 'services/lab_redcap_service.dart';
 
 void main() {
@@ -97,10 +94,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   @override
   void dispose() {
+    unregisterWebExitGuard();
     for (final p in _participants) {
       p.controller.dispose();
     }
     _activityController.dispose();
+
     super.dispose();
   }
 
@@ -465,8 +464,6 @@ class TimerPageState extends State<TimerPage>
   bool _isRunning = false;
   bool _isPaused = false;
 
-  web.EventListener? _beforeUnloadListener;
-
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
 
@@ -485,18 +482,7 @@ class TimerPageState extends State<TimerPage>
     _seconds = _prepSeconds;
     _initTts();
 
-    if (kIsWeb) {
-      _beforeUnloadListener = ((web.Event event) {
-        final hasActiveSession =
-            _isRunning || _completedActivities.isNotEmpty || _currentActivityStartTime != null;
-        if (hasActiveSession) {
-          event.preventDefault();
-          (event as web.BeforeUnloadEvent).returnValue = '';
-        }
-      } as void Function(web.Event)).toJS;
-
-      web.window.addEventListener('beforeunload', _beforeUnloadListener);
-    }
+    registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
 
     _pulseController = AnimationController(
       vsync: this,
@@ -506,6 +492,7 @@ class TimerPageState extends State<TimerPage>
     _pulseAnimation = Tween<double>(begin: 0.96, end: 1.04).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
   }
 
   void _initTts() async {
@@ -539,9 +526,7 @@ class TimerPageState extends State<TimerPage>
 
   @override
   void dispose() {
-    if (kIsWeb && _beforeUnloadListener != null) {
-      web.window.removeEventListener('beforeunload', _beforeUnloadListener);
-    }
+    unregisterWebExitGuard();
     _timer?.cancel();
     _pulseController.dispose();
     _audioPlayer.dispose();

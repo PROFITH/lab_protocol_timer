@@ -34,7 +34,7 @@ Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) 
 
 1. **Clone the repository:**
    ```sh
-   git clone [https://github.com/YOUR_USERNAME/lab_protocol_timer.git](https://github.com/YOUR_USERNAME/lab_protocol_timer.git)
+   git clone [https://github.com/PROFITH/lab_protocol_timer.git](https://github.com/PROFITH/lab_protocol_timer.git)
    cd lab_protocol_timer
    ```
 
