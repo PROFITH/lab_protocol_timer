@@ -7,27 +7,37 @@ import '../models/polar_hr_sample.dart';
 
 class PolarBleService {
   // ===========================================================================
+  // DEBUG
+  // ===========================================================================
+
+  // Keep this false during real recordings.
+  //
+  // At 200 Hz, printing every PMD frame can generate a very large amount of
+  // console output and can itself affect the timing of the application.
+  static const bool debugPmdFrames = true;
+
+  // ===========================================================================
   // STANDARD HEART RATE SERVICE
   // ===========================================================================
 
   static const String hrServiceUuid =
-      "0000180d-0000-1000-8000-00805f9b34fb";
+      '0000180d-0000-1000-8000-00805f9b34fb';
 
   static const String hrMeasurementUuid =
-      "00002a37-0000-1000-8000-00805f9b34fb";
+      '00002a37-0000-1000-8000-00805f9b34fb';
 
   // ===========================================================================
   // POLAR MEASUREMENT DATA (PMD)
   // ===========================================================================
 
   static const String pmdServiceUuid =
-      "fb005c80-02e7-f387-1cad-8acd2d8df0c8";
+      'fb005c80-02e7-f387-1cad-8acd2d8df0c8';
 
   static const String pmdControlPointUuid =
-      "fb005c81-02e7-f387-1cad-8acd2d8df0c8";
+      'fb005c81-02e7-f387-1cad-8acd2d8df0c8';
 
   static const String pmdDataUuid =
-      "fb005c82-02e7-f387-1cad-8acd2d8df0c8";
+      'fb005c82-02e7-f387-1cad-8acd2d8df0c8';
 
   // ===========================================================================
   // PMD MEASUREMENT TYPES
@@ -41,17 +51,87 @@ class PolarBleService {
   static const int pmdTypeMagnetometer = 0x06;
 
   // ===========================================================================
+  // PMD CONTROL POINT
+  // ===========================================================================
+
+  static const int pmdResponse = 0xF0;
+
+  static const int pmdOpGetMeasurementSettings = 0x01;
+  static const int pmdOpStartMeasurement = 0x02;
+  static const int pmdOpStopMeasurement = 0x03;
+
+  // PMD setting types.
+  static const int pmdSettingSampleRate = 0x00;
+  static const int pmdSettingResolution = 0x01;
+  static const int pmdSettingRange = 0x02;
+  static const int pmdSettingRangeMilliUnit = 0x03;
+  static const int pmdSettingChannels = 0x04;
+  static const int pmdSettingFactor = 0x05;
+
+  // ===========================================================================
+  // TIME CALIBRATION
+  // ===========================================================================
+  
+  // Diferencia calculada: (Host UTC Microseconds) - (Polar Timestamp Microseconds)
+  int? _sensorToHostEpochOffsetMicros;
+
+  void _resetClockSync() {
+    _sensorToHostEpochOffsetMicros = null;
+  }
+
+  DateTime _convertPmdTimestampToHostUtc(int timestampNs) {
+    final sampleMicrosFromPolar = timestampNs ~/ 1000;
+    final nowHostMicros = DateTime.now().toUtc().microsecondsSinceEpoch;
+
+    // Se calibra con el primer paquete recibido en la sesión
+    _sensorToHostEpochOffsetMicros ??= (nowHostMicros - sampleMicrosFromPolar);
+
+    final synchronizedMicros = sampleMicrosFromPolar + _sensorToHostEpochOffsetMicros!;
+    return DateTime.fromMicrosecondsSinceEpoch(synchronizedMicros, isUtc: true);
+  }
+
+  // ===========================================================================
   // ACC SETTINGS
   // ===========================================================================
 
-  static const int accSampleRateHz = 200;
+  static const int defaultAccSampleRateHz = 200;
 
-  // At 200 Hz:
+  int _accSampleRateHz = defaultAccSampleRateHz;
+
+  // PMD ACC factor.
   //
-  // 1 sample = 5 ms
+  // This is NOT assumed to be 1.0 permanently.
   //
-  // DateTime has microsecond precision, therefore this is exact.
-  static const int accSamplePeriodMicros = 5000;
+  // Polar's SDK obtains the factor from PMD settings/start-response data.
+  // For compressed ACC:
+  //
+  //     TYPE_0 -> value * factor * 1000 = mG
+  //
+  // We start with 1.0 as a safe fallback until the device provides the
+  // actual factor.
+  double _accFactor = 1.0;
+
+  // ===========================================================================
+  // ECG SETTINGS
+  // ===========================================================================
+
+  static const int ecgSampleRateHz = 130;
+
+  // ===========================================================================
+  // POLAR PSFTP / PFTP
+  // ===========================================================================
+
+  static const String psftpServiceUuid =
+      '0000feee-0000-1000-8000-00805f9b34fb';
+
+  static const String psftp51Uuid =
+      'fb005c51-02e7-f387-1cad-8acd2d8df0c8';
+
+  static const String psftp52Uuid =
+      'fb005c52-02e7-f387-1cad-8acd2d8df0c8';
+
+  static const String psftp53Uuid =
+      'fb005c53-02e7-f387-1cad-8acd2d8df0c8';
 
   // ===========================================================================
   // CONNECTION
@@ -64,6 +144,10 @@ class PolarBleService {
   BleCharacteristic? _pmdControlPoint;
   BleCharacteristic? _pmdData;
 
+  BleCharacteristic? _psftp51;
+  BleCharacteristic? _psftp52;
+  BleCharacteristic? _psftp53;
+
   // ===========================================================================
   // SUBSCRIPTIONS
   // ===========================================================================
@@ -72,21 +156,29 @@ class PolarBleService {
   StreamSubscription<Uint8List>? _pmdDataSubscription;
   StreamSubscription<Uint8List>? _pmdControlSubscription;
 
+  StreamSubscription? _psftp51Subscription;
+  StreamSubscription? _psftp52Subscription;
+  StreamSubscription? _psftp53Subscription;
+
   // ===========================================================================
   // HR
   // ===========================================================================
 
   final List<PolarHrSample> recordedSamples = [];
+
   final List<PolarAccelerationSample> recordedAccelerationSamples = [];
+
   final List<PolarEcgSample> recordedEcgSamples = [];
 
   int currentHeartRate = 0;
 
   List<int> currentRrIntervals = [];
 
-  final _hrStreamController = StreamController<int>.broadcast();
+  final _hrStreamController =
+      StreamController<int>.broadcast();
 
-  Stream<int> get hrStream => _hrStreamController.stream;
+  Stream<int> get hrStream =>
+      _hrStreamController.stream;
 
   // ===========================================================================
   // ECG
@@ -94,12 +186,15 @@ class PolarBleService {
 
   final _ecgStreamController =
       StreamController<PolarEcgSample>.broadcast();
+
   Stream<PolarEcgSample> get ecgStream =>
       _ecgStreamController.stream;
 
   final _ecgUiStreamController =
       StreamController<PolarEcgSample>.broadcast();
-  Stream<PolarEcgSample> get ecgUiStream => _ecgUiStreamController.stream;
+
+  Stream<PolarEcgSample> get ecgUiStream =>
+      _ecgUiStreamController.stream;
 
   int _lastEcgUiEmitMillis = 0;
 
@@ -112,17 +207,17 @@ class PolarBleService {
 
   Stream<PolarAccelerationSample> get accelerationStream =>
       _accStreamController.stream;
-  
-  // Limited stream for UI (updates ~10 Hz)
+
   final _accUiStreamController =
       StreamController<PolarAccelerationSample>.broadcast();
+
   Stream<PolarAccelerationSample> get accelerationUiStream =>
       _accUiStreamController.stream;
-  
+
   int _lastUiEmitMillis = 0;
 
   // ===========================================================================
-  // PROTOCOL CONTEXT FOR ACC
+  // PROTOCOL CONTEXT FOR ACC / ECG
   // ===========================================================================
 
   String currentParticipantId = '';
@@ -168,27 +263,50 @@ class PolarBleService {
       _accStreaming;
 
   // ===========================================================================
-  // ACC TIMING STATE
+  // PMD CONTROL POINT STATE
   // ===========================================================================
 
-  // Timestamp of the last ACC sample emitted by the decoder.
+  Completer<_PmdControlResponse>? _pendingPmdResponse;
+
+  // ===========================================================================
+  // PMD TIMESTAMP STATE
+  // ===========================================================================
   //
-  // This is NOT used to replace the timestamp provided by the H10.
-  // It is used to:
+  // Polar maintains previous timestamps separately for measurement type and
+  // frame type. We additionally distinguish compressed/raw because they are
+  // different logical streams from the decoder's point of view.
   //
-  //   1. detect discontinuities between PMD frames;
-  //   2. detect unexpectedly large gaps;
-  //   3. verify that the stream is behaving as expected at 200 Hz.
+  // Key examples:
   //
-  // The H10 frame timestamp remains authoritative.
-  int? _lastAccFrameTimestampNs;
+  //     acc_raw_0
+  //     acc_raw_1
+  //     acc_raw_2
+  //     acc_compressed_0
+  //     acc_compressed_1
+  //
+  // ECG currently uses:
+  //
+  //     ecg_raw_0
+  //
+  final Map<String, int> _lastPmdFrameTimestampNs = {};
+
   int? _lastAccSampleTimestampNs;
 
-  void _resetAccTimingState() {
-    _lastAccFrameTimestampNs = null;
+  void _resetPmdTimingState() {
+    _lastPmdFrameTimestampNs.clear();
     _lastAccSampleTimestampNs = null;
+    _resetClockSync();
   }
-  
+
+  String _pmdTimestampKey({
+    required int measurementType,
+    required bool compressed,
+    required int frameType,
+  }) {
+    return '${measurementType}_'
+        '${compressed ? 'compressed' : 'raw'}_'
+        '$frameType';
+  }
 
   // ===========================================================================
   // CONSTRUCTOR
@@ -202,24 +320,43 @@ class PolarBleService {
     ) {
       if (!isConnected &&
           deviceId == _connectedDevice?.deviceId) {
-        
-        _connectedDevice = null;
-
-        _hrCharacteristic = null;
-        _pmdControlPoint = null;
-        _pmdData = null;
-
-        _ecgStreaming = false;
-        _accStreaming = false;
-
-        _resetAccTimingState();
-
-        currentHeartRate = 0;
-        currentRrIntervals = [];
-
-        _hrStreamController.add(0);
+        _handleUnexpectedDisconnect();
       }
     };
+  }
+
+  // ===========================================================================
+  // UNEXPECTED DISCONNECT
+  // ===========================================================================
+
+  void _handleUnexpectedDisconnect() {
+    _connectedDevice = null;
+
+    _hrCharacteristic = null;
+    _pmdControlPoint = null;
+    _pmdData = null;
+
+    _psftp51 = null;
+    _psftp52 = null;
+    _psftp53 = null;
+
+    _ecgStreaming = false;
+    _accStreaming = false;
+
+    _resetPmdTimingState();
+
+    _completePendingPmdResponse(
+      error: StateError(
+        'PMD connection lost',
+      ),
+    );
+
+    currentHeartRate = 0;
+    currentRrIntervals = [];
+
+    if (!_hrStreamController.isClosed) {
+      _hrStreamController.add(0);
+    }
   }
 
   // ===========================================================================
@@ -227,15 +364,16 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startScan() async {
-    
     _discoveredDevices.clear();
 
     UniversalBle.onScanResult = (device) {
       _discoveredDevices[device.deviceId] = device;
 
-      _scanStreamController.add(
-        _discoveredDevices.values.toList(),
-      );
+      if (!_scanStreamController.isClosed) {
+        _scanStreamController.add(
+          _discoveredDevices.values.toList(),
+        );
+      }
     };
 
     await UniversalBle.startScan();
@@ -272,6 +410,63 @@ class PolarBleService {
 
       _connectedDevice = device;
 
+      final services =
+          await device.discoverServices();
+
+      for (final service in services) {
+        for (final characteristic
+            in service.characteristics) {
+          final uuid =
+              characteristic.uuid.toLowerCase();
+
+          if (uuid == psftp51Uuid) {
+            _psftp51 = characteristic;
+          } else if (uuid == psftp52Uuid) {
+            _psftp52 = characteristic;
+          } else if (uuid == psftp53Uuid) {
+            _psftp53 = characteristic;
+          }
+        }
+      }
+
+      debugPrint(
+        '[PSFTP] FB005C51: '
+        '${_psftp51 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
+      );
+
+      debugPrint(
+        '[PSFTP] FB005C52: '
+        '${_psftp52 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
+      );
+
+      debugPrint(
+        '[PSFTP] FB005C53: '
+        '${_psftp53 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
+      );
+
+      if (_psftp51 != null) {
+        debugPrint(
+          '[PSFTP] 51 properties: '
+          '${_psftp51!.properties.map((p) => p.toString()).join(", ")}',
+        );
+      }
+
+      if (_psftp52 != null) {
+        debugPrint(
+          '[PSFTP] 52 properties: '
+          '${_psftp52!.properties.map((p) => p.toString()).join(", ")}',
+        );
+      }
+
+      if (_psftp53 != null) {
+        debugPrint(
+          '[PSFTP] 53 properties: '
+          '${_psftp53!.properties.map((p) => p.toString()).join(", ")}',
+        );
+      }
+
+      await _setupPsftpNotifications();
+
       final state =
           await device.connectionState;
 
@@ -282,20 +477,33 @@ class PolarBleService {
         );
       }
 
-      // =====================================================================
+      // -----------------------------------------------------------------------
       // HR
-      // =====================================================================
+      // -----------------------------------------------------------------------
 
       await _setupHeartRate(device);
 
-      // =====================================================================
+      // -----------------------------------------------------------------------
       // PMD
-      // =====================================================================
+      // -----------------------------------------------------------------------
 
       await _setupPmd(device);
 
+      // -----------------------------------------------------------------------
+      // ACCELEROMETER
+      // -----------------------------------------------------------------------
+
+      await startAcceleration();
+
       return true;
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint(
+        '[POLAR DEBUG] Error conectando: $e',
+      );
+
+      debugPrint(
+        '[POLAR DEBUG] $stack',
+      );
 
       await disconnect();
 
@@ -317,7 +525,8 @@ class PolarBleService {
       preferCached: false,
     );
 
-    _hrCharacteristic = characteristic;
+    _hrCharacteristic =
+        characteristic;
 
     if (!characteristic
         .notifications.isSupported) {
@@ -389,8 +598,7 @@ class PolarBleService {
       },
       onError: (error, stack) {
         debugPrint(
-          '[POLAR DEBUG] ERROR PMD DATA: '
-          '$error',
+          '[POLAR DEBUG] ERROR PMD DATA: $error',
         );
       },
     );
@@ -418,8 +626,7 @@ class PolarBleService {
       );
     }
 
-    await _pmdControlSubscription
-        ?.cancel();
+    await _pmdControlSubscription?.cancel();
 
     _pmdControlSubscription =
         _pmdControlPoint!
@@ -430,8 +637,11 @@ class PolarBleService {
       },
       onError: (error, stack) {
         debugPrint(
-          '[POLAR DEBUG] ERROR PMD CONTROL: '
-          '$error',
+          '[POLAR DEBUG] ERROR PMD CONTROL: $error',
+        );
+
+        _completePendingPmdResponse(
+          error: error,
         );
       },
     );
@@ -450,6 +660,114 @@ class PolarBleService {
   }
 
   // ===========================================================================
+  // SET UP PSFTP NOTIFICATIONS
+  // ===========================================================================
+
+  Future<void> _setupPsftpNotifications() async {
+    // -------------------------------------------------------------------------
+    // PSFTP 51
+    // -------------------------------------------------------------------------
+
+    if (_psftp51 != null) {
+      try {
+        await _psftp51Subscription?.cancel();
+
+        _psftp51Subscription =
+            _psftp51!.onValueReceived.listen(
+          (value) {
+            debugPrint(
+              '[PSFTP RX 51] ${_hex(value)}',
+            );
+          },
+        );
+
+        if (_psftp51!
+            .notifications.isSupported) {
+          await _psftp51!
+              .notifications
+              .subscribe();
+
+          debugPrint(
+            '[PSFTP] FB005C51 SUSCRITA',
+          );
+        }
+      } catch (e) {
+        debugPrint(
+          '[PSFTP] Error configurando 51: $e',
+        );
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // PSFTP 52
+    // -------------------------------------------------------------------------
+
+    if (_psftp52 != null) {
+      try {
+        await _psftp52Subscription?.cancel();
+
+        _psftp52Subscription =
+            _psftp52!.onValueReceived.listen(
+          (value) {
+            debugPrint(
+              '[PSFTP RX 52] ${_hex(value)}',
+            );
+          },
+        );
+
+        if (_psftp52!
+            .notifications.isSupported) {
+          await _psftp52!
+              .notifications
+              .subscribe();
+
+          debugPrint(
+            '[PSFTP] FB005C52 SUSCRITA',
+          );
+        }
+      } catch (e) {
+        debugPrint(
+          '[PSFTP] Error configurando 52: $e',
+        );
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // PSFTP 53
+    // -------------------------------------------------------------------------
+
+    if (_psftp53 != null) {
+      try {
+        await _psftp53Subscription?.cancel();
+
+        _psftp53Subscription =
+            _psftp53!.onValueReceived.listen(
+          (value) {
+            debugPrint(
+              '[PSFTP RX 53] ${_hex(value)}',
+            );
+          },
+        );
+
+        if (_psftp53!
+            .notifications.isSupported) {
+          await _psftp53!
+              .notifications
+              .subscribe();
+
+          debugPrint(
+            '[PSFTP] FB005C53 SUSCRITA',
+          );
+        }
+      } catch (e) {
+        debugPrint(
+          '[PSFTP] Error configurando 53: $e',
+        );
+      }
+    }
+  }
+
+  // ===========================================================================
   // START ECG
   // ===========================================================================
 
@@ -464,7 +782,6 @@ class PolarBleService {
       debugPrint(
         '[POLAR DEBUG] ECG ya está activo',
       );
-
       return;
     }
 
@@ -479,9 +796,10 @@ class PolarBleService {
     // 00 01 82 00 = 130 Hz
     // 01 01 0E 00 = 14-bit resolution
 
-    final command = Uint8List.fromList([
+    final command =
+        Uint8List.fromList([
       0x02,
-      0x00,
+      pmdTypeEcg,
       0x00,
       0x01,
       0x82,
@@ -492,14 +810,25 @@ class PolarBleService {
       0x00,
     ]);
 
-    await _pmdControlPoint!.write(
+    final response =
+        await _sendPmdCommandAndWaitForResponse(
       command,
-      withResponse: true,
-      timeout: const Duration(seconds: 30),
+      expectedOpcode: pmdOpStartMeasurement,
+      expectedMeasurementType: pmdTypeEcg,
     );
+
+    if (!response.isSuccess) {
+      throw Exception(
+        'ECG START rechazado por PMD: '
+        '${response.errorCode}',
+      );
+    }
 
     _ecgStreaming = true;
 
+    debugPrint(
+      '[POLAR DEBUG] ECG START aceptado por PMD',
+    );
   }
 
   // ===========================================================================
@@ -532,9 +861,10 @@ class PolarBleService {
     // 16 bit = 10 00
     // 8 G    = 08 00
 
-    final command = Uint8List.fromList([
+    final command =
+        Uint8List.fromList([
       0x02,
-      0x02,
+      pmdTypeAcc,
       0x00,
       0x01,
       0xC8,
@@ -549,15 +879,47 @@ class PolarBleService {
       0x00,
     ]);
 
-    await _pmdControlPoint!.write(
-      command,
-      withResponse: true,
-      timeout: const Duration(seconds: 30),
+    debugPrint(
+      '[POLAR DEBUG] ACC START TX: '
+      '${_hex(command)}',
     );
 
-    _resetAccTimingState();
+    final response =
+        await _sendPmdCommandAndWaitForResponse(
+      command,
+      expectedOpcode: pmdOpStartMeasurement,
+      expectedMeasurementType: pmdTypeAcc,
+    );
+
+    debugPrint(
+      '[POLAR DEBUG] ACC START RESPONSE PAYLOAD: '
+      '${_hex(response.payload)}',
+    );
+
+    if (!response.isSuccess) {
+      throw Exception(
+        'ACC START rechazado por PMD: '
+        '${response.errorCode}',
+      );
+    }
+
+    // The requested configuration is 200 Hz. If the start response contains
+    // a PMD sample-rate setting, _updatePmdSettingsFromResponse() may replace
+    // this with the actual value reported by the sensor.
+    _updatePmdSettingsFromResponse(
+      response.payload,
+      measurementType: pmdTypeAcc,
+    );
+
+    _resetPmdTimingState();
 
     _accStreaming = true;
+
+    debugPrint(
+      '[POLAR DEBUG] ACC START aceptado por PMD; '
+      'sampleRate=$_accSampleRateHz Hz; '
+      'factor=$_accFactor',
+    );
   }
 
   // ===========================================================================
@@ -570,21 +932,32 @@ class PolarBleService {
       return;
     }
 
-
     final command =
         Uint8List.fromList([
       0x03,
       pmdTypeEcg,
     ]);
 
-    await _pmdControlPoint!.write(
-      command,
-      withResponse: true,
-      timeout: const Duration(seconds: 30),
-    );
+    try {
+      final response =
+          await _sendPmdCommandAndWaitForResponse(
+        command,
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: pmdTypeEcg,
+      );
 
-    _ecgStreaming = false;
-
+      if (!response.isSuccess) {
+        debugPrint(
+          '[POLAR DEBUG] ECG STOP rechazado: '
+          '${response.errorCode}',
+        );
+      }
+    } finally {
+      _ecgStreaming = false;
+      _removePmdTimingKeys(
+        measurementType: pmdTypeEcg,
+      );
+    }
   }
 
   // ===========================================================================
@@ -603,14 +976,103 @@ class PolarBleService {
       pmdTypeAcc,
     ]);
 
-    await _pmdControlPoint!.write(
-      command,
-      withResponse: true,
-      timeout: const Duration(seconds: 30),
-    );
+    try {
+      final response =
+          await _sendPmdCommandAndWaitForResponse(
+        command,
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: pmdTypeAcc,
+      );
 
-    _accStreaming = false;
+      if (!response.isSuccess) {
+        debugPrint(
+          '[POLAR DEBUG] ACC STOP rechazado: '
+          '${response.errorCode}',
+        );
+      }
+    } finally {
+      _accStreaming = false;
+      _removePmdTimingKeys(
+        measurementType: pmdTypeAcc,
+      );
+      _lastAccSampleTimestampNs = null;
+    }
+  }
 
+  // ===========================================================================
+  // PMD CONTROL COMMAND
+  // ===========================================================================
+
+  Future<_PmdControlResponse>
+      _sendPmdCommandAndWaitForResponse(
+    Uint8List command, {
+    required int expectedOpcode,
+    required int expectedMeasurementType,
+  }) async {
+    final controlPoint =
+        _pmdControlPoint;
+
+    if (controlPoint == null) {
+      throw Exception(
+        'PMD Control Point no disponible',
+      );
+    }
+
+    if (_pendingPmdResponse != null) {
+      throw StateError(
+        'Ya existe una petición PMD pendiente',
+      );
+    }
+
+    final completer =
+        Completer<_PmdControlResponse>();
+
+    _pendingPmdResponse = completer;
+
+    try {
+      await controlPoint.write(
+        command,
+        withResponse: true,
+        timeout: const Duration(seconds: 30),
+      );
+
+      // Important:
+      //
+      // write() only confirms that the BLE write completed. It does NOT by
+      // itself prove that PMD accepted the command.
+      //
+      // We therefore wait for the PMD Control Point indication.
+      final response =
+          await completer.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException(
+            'Timeout esperando respuesta PMD '
+            'opcode=0x${expectedOpcode.toRadixString(16)} '
+            'measurementType=0x'
+            '${expectedMeasurementType.toRadixString(16)}',
+          );
+        },
+      );
+
+      if (response.opcode != expectedOpcode ||
+          response.measurementType !=
+              expectedMeasurementType) {
+        throw StateError(
+          'Respuesta PMD inesperada: '
+          '${_hex(response.raw)}',
+        );
+      }
+
+      return response;
+    } finally {
+      if (identical(
+        _pendingPmdResponse,
+        completer,
+      )) {
+        _pendingPmdResponse = null;
+      }
+    }
   }
 
   // ===========================================================================
@@ -620,12 +1082,266 @@ class PolarBleService {
   void _handlePmdControlResponse(
     Uint8List data,
   ) {
-    debugPrint(
-      '[POLAR DEBUG] PMD CONTROL RESPONSE: '
-      '${_hex(data)}',
+    if (data.isEmpty) {
+      return;
+    }
+
+    if (debugPmdFrames) {
+      debugPrint(
+        '[POLAR DEBUG] PMD CONTROL RESPONSE: '
+        '${_hex(data)}',
+      );
+    }
+
+    final response =
+        _parsePmdControlResponse(data);
+
+    if (response == null) {
+      debugPrint(
+        '[POLAR DEBUG] PMD Control response inválida: '
+        '${_hex(data)}',
+      );
+      return;
+    }
+
+    if (response.errorCode != 0) {
+      debugPrint(
+        '[POLAR DEBUG] PMD command rechazado: '
+        'opcode=0x'
+        '${response.opcode.toRadixString(16)} '
+        'measurement=0x'
+        '${response.measurementType.toRadixString(16)} '
+        'error=${response.errorCode}',
+      );
+    } else {
+      debugPrint(
+        '[POLAR DEBUG] PMD command OK: '
+        'opcode=0x'
+        '${response.opcode.toRadixString(16)} '
+        'measurement=0x'
+        '${response.measurementType.toRadixString(16)}',
+      );
+    }
+
+    _completePendingPmdResponse(
+      response: response,
     );
   }
 
+  _PmdControlResponse?
+      _parsePmdControlResponse(
+    Uint8List data,
+  ) {
+    // Standard PMD response:
+    //
+    // byte 0 = 0xF0
+    // byte 1 = response opcode
+    // byte 2 = measurement type
+    // byte 3 = error code
+    // byte 4.. = optional response payload/settings
+
+    if (data.length < 4) {
+      return null;
+    }
+
+    if (data[0] != pmdResponse) {
+      return null;
+    }
+
+    return _PmdControlResponse(
+      raw: Uint8List.fromList(data),
+      opcode: data[1],
+      measurementType: data[2] & 0x3F,
+      errorCode: data[3],
+      payload: data.length > 4
+          ? Uint8List.fromList(
+              data.sublist(4),
+            )
+          : Uint8List(0),
+    );
+  }
+
+  void _completePendingPmdResponse({
+    _PmdControlResponse? response,
+    Object? error,
+  }) {
+    final completer =
+        _pendingPmdResponse;
+
+    if (completer == null ||
+        completer.isCompleted) {
+      return;
+    }
+
+    if (error != null) {
+      completer.completeError(error);
+    } else if (response != null) {
+      completer.complete(response);
+    }
+  }
+
+  // ===========================================================================
+  // UPDATE PMD SETTINGS FROM START RESPONSE
+  // ===========================================================================
+
+  void _updatePmdSettingsFromResponse(
+    Uint8List payload, {
+    required int measurementType,
+  }) {
+    if (payload.isEmpty) {
+      return;
+    }
+
+    try {
+      final settings =
+          _parsePmdSettings(payload);
+
+      final sampleRate =
+          settings[pmdSettingSampleRate];
+
+      if (sampleRate != null) {
+        if (measurementType == pmdTypeAcc &&
+            sampleRate > 0) {
+          _accSampleRateHz =
+              sampleRate;
+
+          debugPrint(
+            '[POLAR DEBUG] PMD ACC sample rate '
+            'reported by sensor: '
+            '$_accSampleRateHz Hz',
+          );
+        }
+      }
+
+      final factor =
+          settings[pmdSettingFactor];
+
+      if (factor != null) {
+        _accFactor =
+            _uint32ToDouble(factor);
+
+        debugPrint(
+          '[POLAR DEBUG] PMD ACC factor '
+          'reported by sensor: '
+          '$_accFactor',
+        );
+      }
+    } catch (e) {
+      debugPrint(
+        '[POLAR DEBUG] Error parsing PMD settings '
+        'from response: $e',
+      );
+    }
+  }
+
+  // ===========================================================================
+  // PMD SETTINGS PARSER
+  // ===========================================================================
+
+  Map<int, int> _parsePmdSettings(
+    Uint8List data,
+  ) {
+    final result = <int, int>{};
+
+    int offset = 0;
+
+    while (offset + 2 <= data.length) {
+      final settingType =
+          data[offset];
+
+      final count =
+          data[offset + 1];
+
+      offset += 2;
+
+      final fieldSize =
+          _pmdSettingFieldSize(
+        settingType,
+      );
+
+      if (fieldSize <= 0) {
+        // Unknown setting type.
+        //
+        // We cannot safely advance without knowing its width.
+        break;
+      }
+
+      if (count <= 0) {
+        continue;
+      }
+
+      for (int i = 0; i < count; i++) {
+        if (offset + fieldSize >
+            data.length) {
+          throw StateError(
+            'Truncated PMD setting '
+            'type=$settingType',
+          );
+        }
+
+        final value =
+            _readUnsignedLittleEndian(
+          data,
+          offset,
+          fieldSize,
+        );
+
+        // Polar's PmdSetting.selected keeps one selected value for each
+        // setting type. For our purposes the first value is sufficient.
+        result.putIfAbsent(
+          settingType,
+          () => value,
+        );
+
+        offset += fieldSize;
+      }
+    }
+
+    return result;
+  }
+
+  static int _pmdSettingFieldSize(
+    int settingType,
+  ) {
+    switch (settingType) {
+      case pmdSettingSampleRate:
+        return 2;
+
+      case pmdSettingResolution:
+        return 2;
+
+      case pmdSettingRange:
+        return 2;
+
+      case pmdSettingRangeMilliUnit:
+        return 4;
+
+      case pmdSettingChannels:
+        return 1;
+
+      case pmdSettingFactor:
+        return 4;
+
+      default:
+        return 0;
+    }
+  }
+
+  static double _uint32ToDouble(
+    int value,
+  ) {
+    final bytes = ByteData(4)
+      ..setUint32(
+        0,
+        value,
+        Endian.little,
+      );
+
+    return bytes.getFloat32(
+      0,
+      Endian.little,
+    );
+  }
   // ===========================================================================
   // PMD DATA
   // ===========================================================================
@@ -636,6 +1352,15 @@ class PolarBleService {
     if (data.isEmpty) {
       return;
     }
+
+    if (debugPmdFrames) {
+      debugPrint(
+        '[POLAR DEBUG] PMD DATA RX: '
+        '${_hex(data)}',
+      );
+    }
+
+    // PMD measurement type occupies the lower 6 bits.
     final measurementType =
         data[0] & 0x3F;
 
@@ -649,6 +1374,7 @@ class PolarBleService {
         break;
 
       default:
+        break;
     }
   }
 
@@ -656,50 +1382,157 @@ class PolarBleService {
   // ECG FRAME
   // ===========================================================================
 
-  void _parseEcgFrame(Uint8List data) {
-    if (data.length < 10) return;
-
-    final timestampNs = _readUint64LittleEndian(data, 1);
-    final isDelta = (data[9] & 0x80) != 0;
-
-    if (isDelta) {
-      debugPrint('[POLAR DEBUG] ECG delta no implementado en firmware H10');
+  void _parseEcgFrame(
+    Uint8List data,
+  ) {
+    if (data.length < 13) {
+      debugPrint(
+        '[POLAR DEBUG] ECG frame demasiado corto: '
+        '${data.length} bytes',
+      );
       return;
     }
 
+    // PMD header:
+    //
+    // byte 0      = measurement type
+    // bytes 1..8  = frame timestamp (uint64 LE)
+    // byte 9      = frame type
+    // bytes 10..  = samples
+
+    final timestampNs =
+        _readUint64LittleEndian(
+      data,
+      1,
+    );
+
+    final frameTypeByte =
+        data[9];
+
+    final isCompressed =
+        (frameTypeByte & 0x80) != 0;
+
+    final frameType =
+        frameTypeByte & 0x7F;
+
+    if (isCompressed) {
+      debugPrint(
+        '[POLAR DEBUG] ECG compressed frame recibido; '
+        'ECG delta no está soportado por PMD',
+      );
+      return;
+    }
+
+    if (frameType != 0) {
+      debugPrint(
+        '[POLAR DEBUG] ECG frame type no soportado: '
+        '$frameType',
+      );
+      return;
+    }
+
+    const bytesPerSample = 3;
+
+    final payloadLength =
+        data.length - 10;
+
+    if (payloadLength <= 0 ||
+        payloadLength % bytesPerSample != 0) {
+      debugPrint(
+        '[POLAR DEBUG] ECG payload inválido: '
+        '$payloadLength bytes',
+      );
+      return;
+    }
+
+    final sampleCount =
+        payloadLength ~/ bytesPerSample;
+
+    if (sampleCount <= 0) {
+      return;
+    }
+
+    final timestampKey =
+        _pmdTimestampKey(
+      measurementType: pmdTypeEcg,
+      compressed: false,
+      frameType: frameType,
+    );
+
+    final previousTimestamp =
+        _lastPmdFrameTimestampNs[
+            timestampKey];
+
+    final timestamps =
+        _buildPmdTimestamps(
+      timestampNs: timestampNs,
+      previousTimestampNs:
+          previousTimestamp,
+      sampleCount: sampleCount,
+      sampleRateHz:
+          ecgSampleRateHz,
+    );
+
+    _lastPmdFrameTimestampNs[
+        timestampKey] =
+        timestampNs;
+
     int offset = 10;
-    int sampleIndex = 0;
-    final totalEcgSamples = (data.length - 10) ~/ 3;
-    const double ecgIntervalNs = 1000000000.0 / 130.0;
 
-    while (offset + 2 < data.length) {
-      final rawUv = _readSigned24LittleEndian(data, offset);
-      final currentSampleNs = timestampNs -
-          ((totalEcgSamples - 1 - sampleIndex) * ecgIntervalNs).round();
-      final sampleTime = _pmdTimestampToDateTime(currentSampleNs);
+    for (int i = 0;
+        i < sampleCount;
+        i++) {
+      final rawUv =
+          _readSigned24LittleEndian(
+        data,
+        offset,
+      );
 
-      final sample = PolarEcgSample(
-        timestamp: sampleTime,
-        participantId: currentParticipantId,
-        activityIndex: currentActivityIndex,
-        phaseName: currentPhaseName,
-        microVolts: rawUv,
+      final sample =
+          PolarEcgSample(
+        timestamp:
+            _convertPmdTimestampToHostUtc(
+          timestamps[i],
+        ),
+        participantId:
+            currentParticipantId,
+        activityIndex:
+            currentActivityIndex,
+        phaseName:
+            currentPhaseName,
+        microVolts:
+            rawUv,
+      );
+
+      recordedEcgSamples.add(
+        sample,
       );
 
       if (!_ecgStreamController.isClosed) {
-        _ecgStreamController.add(sample);
+        _ecgStreamController.add(
+          sample,
+        );
       }
 
-      final nowMs = DateTime.now().millisecondsSinceEpoch;
-      if (nowMs - _lastEcgUiEmitMillis >= 100) {
-        _lastEcgUiEmitMillis = nowMs;
-        if (!_ecgUiStreamController.isClosed) {
-          _ecgUiStreamController.add(sample);
+      final nowMs =
+          DateTime.now()
+              .millisecondsSinceEpoch;
+
+      if (nowMs -
+              _lastEcgUiEmitMillis >=
+          100) {
+        _lastEcgUiEmitMillis =
+            nowMs;
+
+        if (!_ecgUiStreamController
+            .isClosed) {
+          _ecgUiStreamController
+              .add(sample);
         }
       }
 
-      offset += 3;
-      sampleIndex++;
+      offset +=
+          bytesPerSample;
     }
   }
 
@@ -712,16 +1545,11 @@ class PolarBleService {
   ) {
     if (data.length < 10) {
       debugPrint(
-        '[POLAR DEBUG] ACC frame demasiado corto',
+        '[POLAR DEBUG] ACC frame demasiado corto: '
+        '${data.length} bytes',
       );
-
       return;
     }
-
-
-    // -------------------------------------------------------------------------
-    // PMD HEADER
-    // -------------------------------------------------------------------------
 
     final timestampNs =
         _readUint64LittleEndian(
@@ -729,26 +1557,30 @@ class PolarBleService {
       1,
     );
 
-    // Bit 7 indicates delta compression.
-    //
-    // Bits 0-6 indicate the frame type:
-    //
-    //   0 = 8-bit XYZ
-    //   1 = 16-bit XYZ
-    //   2 = 24-bit XYZ
-    //   128 = delta frame (0x80)
-    //
+    final frameTypeByte =
+        data[9];
+
+    final isCompressed =
+        (frameTypeByte & 0x80) != 0;
+
     final frameType =
-        data[9] & 0x7F;
+        frameTypeByte & 0x7F;
 
-    final isDelta =
-        (data[9] & 0x80) != 0;
+    if (debugPmdFrames) {
+      debugPrint(
+        '[POLAR DEBUG] ACC frame: '
+        'timestamp=$timestampNs '
+        'frameType=$frameType '
+        'compressed=$isCompressed '
+        'payload=${data.length - 10} bytes',
+      );
+    }
 
-    if (isDelta) {
-
+    if (isCompressed) {
       _parseAccelerationDeltaFrame(
         data,
         timestampNs,
+        frameType,
       );
     } else {
       _parseAccelerationNormalFrame(
@@ -768,88 +1600,185 @@ class PolarBleService {
     int timestampNs,
     int frameType,
   ) {
-    // -------------------------------------------------------------------------
-    // Determine sample size from frame type.
-    //
-    // Each sample consists of:
-    //
-    //   X + Y + Z
-    //
-    // Therefore:
-    //
-    //   type 0 -> 3 bytes/sample
-    //   type 1 -> 6 bytes/sample
-    //   type 2 -> 9 bytes/sample
-    // -------------------------------------------------------------------------
-
     final int bytesPerAxis;
+
     switch (frameType) {
       case 0:
         bytesPerAxis = 1;
         break;
+
       case 1:
         bytesPerAxis = 2;
         break;
+
       case 2:
         bytesPerAxis = 3;
         break;
+
       default:
+        debugPrint(
+          '[POLAR DEBUG] ACC raw frame type no soportado: '
+          '$frameType',
+        );
         return;
     }
 
-    final bytesPerSample = bytesPerAxis * 3;
-    final payloadLength = data.length - 10;
-    if (payloadLength < bytesPerSample) return;
+    final bytesPerSample =
+        bytesPerAxis * 3;
 
-    final sampleCount = payloadLength ~/ bytesPerSample;
+    final payloadLength =
+        data.length - 10;
 
-    // Intervalo exacto de reloj entre la trama previa y la actual
-    final double actualIntervalNs;
-    if (_lastAccFrameTimestampNs != null && timestampNs > _lastAccFrameTimestampNs!) {
-      actualIntervalNs = (timestampNs - _lastAccFrameTimestampNs!) / sampleCount;
-    } else {
-      actualIntervalNs = 1000000000.0 / accSampleRateHz;
+    if (payloadLength <= 0 ||
+        payloadLength % bytesPerSample != 0) {
+      debugPrint(
+        '[POLAR DEBUG] ACC raw payload inválido: '
+        '$payloadLength bytes; '
+        'bytes/sample=$bytesPerSample',
+      );
+      return;
     }
-    _lastAccFrameTimestampNs = timestampNs;
+
+    final sampleCount =
+        payloadLength ~/ bytesPerSample;
+
+    if (sampleCount <= 0) {
+      return;
+    }
+
+    final timestampKey =
+        _pmdTimestampKey(
+      measurementType: pmdTypeAcc,
+      compressed: false,
+      frameType: frameType,
+    );
+
+    final previousTimestamp =
+        _lastPmdFrameTimestampNs[
+            timestampKey];
+
+    final timestamps =
+        _buildPmdTimestamps(
+      timestampNs: timestampNs,
+      previousTimestampNs:
+          previousTimestamp,
+      sampleCount: sampleCount,
+      sampleRateHz:
+          _accSampleRateHz,
+    );
+
+    _lastPmdFrameTimestampNs[
+        timestampKey] =
+        timestampNs;
 
     int offset = 10;
 
-    for (int i = 0; i < sampleCount; i++) {
+    for (int i = 0;
+        i < sampleCount;
+        i++) {
       final int x;
       final int y;
       final int z;
 
       switch (bytesPerAxis) {
         case 1:
-          x = _readSigned8(data, offset);
-          y = _readSigned8(data, offset + 1);
-          z = _readSigned8(data, offset + 2);
+          x = _readSigned8(
+            data,
+            offset,
+          );
+
+          y = _readSigned8(
+            data,
+            offset + 1,
+          );
+
+          z = _readSigned8(
+            data,
+            offset + 2,
+          );
           break;
+
         case 2:
-          x = _readSigned16LittleEndian(data, offset);
-          y = _readSigned16LittleEndian(data, offset + 2);
-          z = _readSigned16LittleEndian(data, offset + 4);
+          x =
+              _readSigned16LittleEndian(
+            data,
+            offset,
+          );
+
+          y =
+              _readSigned16LittleEndian(
+            data,
+            offset + 2,
+          );
+
+          z =
+              _readSigned16LittleEndian(
+            data,
+            offset + 4,
+          );
           break;
+
         case 3:
-          x = _readSigned24LittleEndian(data, offset);
-          y = _readSigned24LittleEndian(data, offset + 3);
-          z = _readSigned24LittleEndian(data, offset + 6);
+          x =
+              _readSigned24LittleEndian(
+            data,
+            offset,
+          );
+
+          y =
+              _readSigned24LittleEndian(
+            data,
+            offset + 3,
+          );
+
+          z =
+              _readSigned24LittleEndian(
+            data,
+            offset + 6,
+          );
           break;
+
         default:
           return;
       }
 
-      final currentSampleNs = timestampNs + (i * actualIntervalNs).round();
-
+      // Raw frames are kept as the values represented by the PMD raw frame.
+      //
+      // We intentionally do NOT apply the compressed-frame factor here.
       _emitAccelerationSampleDirect(
-        sampleNs: currentSampleNs,
-        xMg: x.toDouble(),
-        yMg: y.toDouble(),
-        zMg: z.toDouble(),
+        sampleNs: timestamps[i],
+        xMg:
+            _convertRawAccelerationToMg(
+          x,
+          frameType,
+        ),
+        yMg:
+            _convertRawAccelerationToMg(
+          y,
+          frameType,
+        ),
+        zMg:
+            _convertRawAccelerationToMg(
+          z,
+          frameType,
+        ),
       );
 
-      offset += bytesPerSample;
+      offset +=
+          bytesPerSample;
     }
+  }
+
+  double _convertRawAccelerationToMg(
+    int value,
+    int frameType,
+  ) {
+    // For uncompressed PMD ACC frames, Polar's decoder exposes the raw
+    // representation according to the frame type rather than applying the
+    // compressed factor transformation.
+    //
+    // Keep the current CSV/API semantics unchanged here.
+    return value.toDouble();
   }
 
   // ===========================================================================
@@ -859,82 +1788,656 @@ class PolarBleService {
   void _parseAccelerationDeltaFrame(
     Uint8List data,
     int timestampNs,
+    int frameType,
   ) {
-    int offset = 10;
-    const int referenceBytes = 6;
+    // Polar's official ACC decoder supports compressed TYPE_0 and TYPE_1.
+    //
+    // ACC compressed data uses:
+    //
+    //   channels   = 3
+    //   resolution = 16 bits
+    //
+    // The dataContent starts immediately after the PMD 10-byte header:
+    //
+    //   reference sample:
+    //       X = 16-bit signed LE
+    //       Y = 16-bit signed LE
+    //       Z = 16-bit signed LE
+    //
+    //   followed by one or more delta blocks:
+    //
+    //       deltaSize   : 1 byte
+    //       sampleCount : 1 byte
+    //       deltas      : bit-packed signed values
+    //
+    // This follows Polar's:
+    //
+    //   Pmd.parseDeltaFramesToSamples(
+    //       data,
+    //       channels: 3,
+    //       resolution: 16
+    //   )
+    //
+    // and AccData.dataFromCompressedType0 / Type1.
 
-    if (data.length < offset + referenceBytes + 2) return;
-
-    final referenceX = _readSigned16LittleEndian(data, offset);
-    final referenceY = _readSigned16LittleEndian(data, offset + 2);
-    final referenceZ = _readSigned16LittleEndian(data, offset + 4);
-
-    offset += referenceBytes;
-
-    final deltaBits = data[offset];
-    final sampleCount = data[offset + 1];
-
-    offset += 2;
-
-    if (deltaBits <= 0 || deltaBits > 32) return;
-
-    final totalSamples = sampleCount + 1;
-
-    final double actualIntervalNs;
-    if (_lastAccFrameTimestampNs != null && timestampNs > _lastAccFrameTimestampNs!) {
-      actualIntervalNs = (timestampNs - _lastAccFrameTimestampNs!) / totalSamples;
-    } else {
-      actualIntervalNs = 1000000000.0 / accSampleRateHz;
+    if (frameType != 0 &&
+        frameType != 1) {
+      debugPrint(
+        '[POLAR DEBUG] ACC compressed frame type '
+        'no soportado: $frameType',
+      );
+      return;
     }
-    _lastAccFrameTimestampNs = timestampNs;
 
-    int currentX = referenceX;
-    int currentY = referenceY;
-    int currentZ = referenceZ;
-    int sampleIndex = 0;
+    const int channels = 3;
+    const int resolutionBits = 16;
 
-    // Muestra de referencia
-    _emitAccelerationSampleDirect(
-      sampleNs: timestampNs,
-      xMg: currentX.toDouble(),
-      yMg: currentY.toDouble(),
-      zMg: currentZ.toDouble(),
+    if (data.length <= 10) {
+      debugPrint(
+        '[POLAR DEBUG] ACC compressed frame sin dataContent',
+      );
+      return;
+    }
+
+    final dataContent =
+        Uint8List.fromList(
+      data.sublist(10),
     );
 
-    sampleIndex++;
+    final samples =
+        _parsePolarDeltaFramesToSamples(
+      dataContent,
+      channels: channels,
+      resolution: resolutionBits,
+    );
 
-    final totalBits = sampleCount * 3 * deltaBits;
-    final totalBytes = (totalBits + 7) ~/ 8;
-    final availableBytes = data.length - offset;
+    if (samples.isEmpty) {
+      return;
+    }
 
-    if (availableBytes < totalBytes) return;
+    // -------------------------------------------------------------------------
+    // Timestamp reconstruction
+    // -------------------------------------------------------------------------
+    //
+    // Polar passes:
+    //
+    //   previousFrameTimeStamp
+    //   frameTimeStamp
+    //   samples.count
+    //   sampleRate
+    //
+    // to PmdTimeStampUtils.getTimeStamps().
+    //
+    // We reproduce that logic here through the existing timestamp helper.
+    final timestampKey =
+        _pmdTimestampKey(
+      measurementType: pmdTypeAcc,
+      compressed: true,
+      frameType: frameType,
+    );
 
-    final deltaReader = _BitReader(data, offset);
+    final previousTimestamp =
+        _lastPmdFrameTimestampNs[
+            timestampKey];
 
-    try {
-      for (int i = 0; i < sampleCount; i++) {
-        final dx = _readSignedBits(deltaReader, deltaBits);
-        final dy = _readSignedBits(deltaReader, deltaBits);
-        final dz = _readSignedBits(deltaReader, deltaBits);
+    final timestamps =
+        _buildPmdTimestamps(
+      timestampNs: timestampNs,
+      previousTimestampNs:
+          previousTimestamp,
+      sampleCount: samples.length,
+      sampleRateHz:
+          _accSampleRateHz,
+    );
 
-        currentX += dx;
-        currentY += dy;
-        currentZ += dz;
+    _lastPmdFrameTimestampNs[
+        timestampKey] = timestampNs;
 
-        final currentSampleNs = timestampNs + (sampleIndex * actualIntervalNs).round();
+    // -------------------------------------------------------------------------
+    // Unit conversion
+    // -------------------------------------------------------------------------
+    //
+    // Polar's official ACC TYPE_0 decoder:
+    //
+    //     accFactor = frame.factor * 1000
+    //     x = Int32(Float(sample[0]) * accFactor)
+    //
+    // i.e. the compressed TYPE_0 values are in G and are converted to milli-G.
+    //
+    // TYPE_1 uses the factor only when factor != 1.0.
+    //
+    // Preserve the same semantics here.
 
-        _emitAccelerationSampleDirect(
-          sampleNs: currentSampleNs,
-          xMg: currentX.toDouble(),
-          yMg: currentY.toDouble(),
-          zMg: currentZ.toDouble(),
+    final double conversionFactor;
+
+    if (frameType == 0) {
+      conversionFactor =
+          _accFactor * 1000.0;
+    } else {
+      conversionFactor =
+          _accFactor != 1.0
+              ? _accFactor
+              : 1.0;
+    }
+
+    for (int i = 0;
+        i < samples.length;
+        i++) {
+      final sample =
+          samples[i];
+
+      final double xMg =
+          sample[0] *
+              conversionFactor;
+
+      final double yMg =
+          sample[1] *
+              conversionFactor;
+
+      final double zMg =
+          sample[2] *
+              conversionFactor;
+
+      if (debugPmdFrames &&
+          i == 0) {
+        debugPrint(
+          '[ACC DEBUG] Polar delta decode: '
+          'frameType=$frameType '
+          'samples=${samples.length} '
+          'rawFirst=('
+          '${sample[0]}, '
+          '${sample[1]}, '
+          '${sample[2]}'
+          ') '
+          'factor=$_accFactor '
+          'convertedFirst=('
+          '$xMg, '
+          '$yMg, '
+          '$zMg'
+          ')',
+        );
+      }
+
+      _emitAccelerationSampleDirect(
+        sampleNs:
+            timestamps[i],
+        xMg: xMg,
+        yMg: yMg,
+        zMg: zMg,
+      );
+    }
+  }
+
+  // ===========================================================================
+  // POLAR DELTA FRAME DECODER
+  // ===========================================================================
+  //
+  // Direct Dart equivalent of Polar's:
+  //
+  //   Pmd.parseDeltaFramesToSamples()
+  //
+  // The important point is that this function does NOT assume that there is
+  // exactly one delta block per BLE frame. Polar iterates until all dataContent
+  // has been consumed.
+  //
+
+  List<List<int>>
+      _parsePolarDeltaFramesToSamples(
+    Uint8List data, {
+    required int channels,
+    required int resolution,
+  }) {
+    if (channels <= 0 ||
+        resolution <= 0) {
+      debugPrint(
+        '[POLAR DEBUG] Invalid delta decoder configuration: '
+        'channels=$channels resolution=$resolution',
+      );
+      return const [];
+    }
+
+    // Polar:
+    //
+    // resolutionInBytes =
+    //     ceil(resolution / 8)
+    //
+    // requiredBytes =
+    //     resolutionInBytes * channels
+    //
+    final resolutionInBytes =
+        (resolution + 7) ~/ 8;
+
+    final referenceBytes =
+        resolutionInBytes *
+            channels;
+
+    if (data.length <
+        referenceBytes) {
+      debugPrint(
+        '[POLAR DEBUG] ACC delta frame too short for '
+        'reference sample: '
+        'required=$referenceBytes '
+        'available=${data.length}',
+      );
+      return const [];
+    }
+
+    // -------------------------------------------------------------------------
+    // Reference sample
+    // -------------------------------------------------------------------------
+    //
+    // Polar's parseDeltaFrameRefSamples() reads one signed integer for each
+    // channel using resolutionInBytes bytes.
+    //
+    // For ACC:
+    //
+    //   resolution = 16
+    //   channels   = 3
+    //
+    // therefore:
+    //
+    //   X = bytes 0..1
+    //   Y = bytes 2..3
+    //   Z = bytes 4..5
+    //
+    final reference =
+        <int>[];
+
+    for (int channel = 0;
+        channel < channels;
+        channel++) {
+      final offset =
+          channel *
+              resolutionInBytes;
+
+      reference.add(
+        _readSignedLittleEndian(
+          data,
+          offset,
+          resolutionInBytes,
+        ),
+      );
+    }
+
+    final samples =
+        <List<int>>[
+      reference,
+    ];
+
+    int offset =
+        referenceBytes;
+
+    // -------------------------------------------------------------------------
+    // Delta blocks
+    // -------------------------------------------------------------------------
+    //
+    // Each block is:
+    //
+    //   byte 0 = deltaSize
+    //   byte 1 = sampleCount
+    //   remaining = sampleCount * deltaSize * channels bits
+    //
+    while (offset <
+        data.length) {
+      // Polar explicitly checks for a complete 2-byte block header.
+      if (offset + 2 >
+          data.length) {
+        debugPrint(
+          '[POLAR DEBUG] ACC delta header truncado: '
+          'offset=$offset',
         );
 
-        sampleIndex++;
+        // Polar returns the samples decoded so far.
+        return samples;
       }
-    } catch (e) {
-      debugPrint('[POLAR DEBUG] ERROR DECODING ACC DELTA: $e');
+
+      final deltaSize =
+          data[offset];
+
+      offset++;
+
+      final sampleCount =
+          data[offset];
+
+      offset++;
+
+      // Polar explicitly guards deltaSize == 0.
+      if (deltaSize == 0) {
+        debugPrint(
+          '[POLAR DEBUG] ACC deltaSize=0; '
+          'bloque ignorado',
+        );
+
+        continue;
+      }
+
+      if (sampleCount == 0) {
+        continue;
+      }
+
+      // This is the exact bit length used by Polar:
+      //
+      //   sampleCount * deltaSize * channels
+      //
+      final totalBitLength =
+          sampleCount *
+              deltaSize *
+              channels;
+
+      final payloadLength =
+          (totalBitLength + 7) ~/ 8;
+
+      if (offset +
+              payloadLength >
+          data.length) {
+        debugPrint(
+          '[POLAR DEBUG] ACC delta payload truncado: '
+          'offset=$offset '
+          'needed=$payloadLength '
+          'available=${data.length - offset}',
+        );
+
+        // Same effective behaviour as the official decoder:
+        // return samples decoded before the malformed/truncated block.
+        return samples;
+      }
+
+      final reader =
+          _PolarBitReader(
+        data,
+        offset,
+      );
+
+      // -----------------------------------------------------------------------
+      // Decode every delta sample in this block.
+      // -----------------------------------------------------------------------
+
+      for (int sampleIndex = 0;
+          sampleIndex < sampleCount;
+          sampleIndex++) {
+        final delta =
+            <int>[];
+
+        for (int channel = 0;
+            channel < channels;
+            channel++) {
+          delta.add(
+            _readPolarSignedBits(
+              reader,
+              deltaSize,
+            ),
+          );
+        }
+
+        final previous =
+            samples.last;
+
+        final next =
+            <int>[];
+
+        bool overflow = false;
+
+        for (int channel = 0;
+            channel < channels;
+            channel++) {
+          final sum =
+              _addInt32WithOverflow(
+            previous[channel],
+            delta[channel],
+          );
+
+          if (sum == null) {
+            overflow = true;
+            break;
+          }
+
+          next.add(sum);
+        }
+
+        // Polar uses addingReportingOverflow().
+        //
+        // If an overflow occurs, that reconstructed sample is not appended.
+        if (!overflow &&
+            next.length ==
+                channels) {
+          samples.add(next);
+        }
+      }
+
+      offset +=
+          payloadLength;
     }
+
+    return samples;
+  }
+
+  // ===========================================================================
+  // SIGNED LITTLE-ENDIAN READER
+  // ===========================================================================
+  //
+  // Equivalent to Polar's arrayToInt() for the reference sample.
+  //
+  // Polar reads resolutionInBytes bytes and sign-extends according to the
+  // number of bytes.
+  //
+
+  int _readSignedLittleEndian(
+    Uint8List data,
+    int offset,
+    int byteCount,
+  ) {
+    int value = 0;
+
+    for (int i = 0;
+        i < byteCount;
+        i++) {
+      value |=
+          data[offset + i]
+              << (8 * i);
+    }
+
+    final signBit =
+        1 <<
+            (byteCount * 8 - 1);
+
+    if ((value & signBit) !=
+        0) {
+      value -=
+          1 <<
+              (byteCount * 8);
+    }
+
+    return value;
+  }
+
+  // ===========================================================================
+  // POLAR SIGNED DELTA
+  // ===========================================================================
+  //
+  // Direct equivalent of Polar:
+  //
+  //   let mask = Int32.max << Int32(bitWidth - 1)
+  //
+  //   if (sample & mask) != 0 {
+  //       sample |= mask
+  //   }
+  //
+  //   return sample
+  //
+  // This is sign extension from the actual delta bit width.
+  //
+
+  int _readPolarSignedBits(
+    _PolarBitReader reader,
+    int bitWidth,
+  ) {
+    if (bitWidth <= 0 ||
+        bitWidth > 32) {
+      throw ArgumentError(
+        'Invalid Polar delta bit width: '
+        '$bitWidth',
+      );
+    }
+
+    final unsignedValue =
+        reader.readBits(
+      bitWidth,
+    );
+
+    // Equivalent to:
+    //
+    //   Int32.max << (bitWidth - 1)
+    //
+    // but expressed in a way that is easier to reason about in Dart.
+
+    final signBit =
+        1 <<
+            (bitWidth - 1);
+
+    if ((unsignedValue &
+            signBit) ==
+        0) {
+      return unsignedValue;
+    }
+
+    // Two's complement sign extension.
+    return unsignedValue -
+        (1 << bitWidth);
+  }
+
+  // ===========================================================================
+  // INT32 ADDITION WITH OVERFLOW
+  // ===========================================================================
+  //
+  // Equivalent to Swift's:
+  //
+  //   last[i].addingReportingOverflow(delta[i])
+  //
+  // Dart integers themselves do not overflow like Int32, so we explicitly
+  // reproduce the Int32 range check.
+  //
+
+  int? _addInt32WithOverflow(
+    int a,
+    int b,
+  ) {
+    final sum =
+        a + b;
+
+    if (sum <
+            -2147483648 ||
+        sum >
+            2147483647) {
+      return null;
+    }
+
+    return sum;
+  }
+
+  // ===========================================================================
+  // PMD TIMESTAMP RECONSTRUCTION
+  // ===========================================================================
+
+  List<int> _buildPmdTimestamps({
+    required int timestampNs,
+    required int? previousTimestampNs,
+    required int sampleCount,
+    required int sampleRateHz,
+  }) {
+    if (sampleCount <= 0 || sampleRateHz <= 0) {
+      return const [];
+    }
+
+    final samplePeriodNs =
+        (1000000000.0 / sampleRateHz);
+
+    // -------------------------------------------------------------------------
+    // First frame
+    // -------------------------------------------------------------------------
+    //
+    // With no previous frame timestamp, the frame timestamp corresponds to the
+    // end of the sample block. Reconstruct backwards from that timestamp.
+    //
+    // This is also the only safe fallback when starting a stream.
+    //
+    if (previousTimestampNs == null ||
+        previousTimestampNs <= 0) {
+      final firstTimestamp =
+          timestampNs -
+              (sampleCount - 1) *
+                  samplePeriodNs;
+
+      return List<int>.generate(
+        sampleCount,
+        (index) =>
+            (firstTimestamp +
+                    index * samplePeriodNs)
+                .round(),
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Consecutive frames
+    // -------------------------------------------------------------------------
+    //
+    // Polar's PMD timestamp utility uses the frame timestamps as the temporal
+    // anchors and the configured sample rate to reconstruct individual sample
+    // timestamps.
+    //
+    // We deliberately do NOT derive the sample interval from:
+    //
+    //     (timestampNs - previousTimestampNs) / sampleCount
+    //
+    // because BLE notification timing and frame boundaries are not a substitute
+    // for the sensor sample clock.
+    //
+    // The sample period therefore remains determined by the PMD sample rate.
+    //
+    final timestamps =
+        List<int>.generate(
+      sampleCount,
+      (index) =>
+          timestampNs -
+          ((sampleCount - 1 - index) *
+                  samplePeriodNs)
+              .round(),
+    );
+
+    // -------------------------------------------------------------------------
+    // Continuity check
+    // -------------------------------------------------------------------------
+    //
+    // This is diagnostic only. We do not modify Polar timestamps merely because
+    // a frame arrives with a gap.
+    //
+    final expectedFirstTimestamp =
+        previousTimestampNs +
+            samplePeriodNs.round();
+
+    final actualFirstTimestamp =
+        timestamps.first;
+
+    final error =
+        actualFirstTimestamp -
+            expectedFirstTimestamp;
+
+    // Small differences are normal because timestamps are integer nanoseconds.
+    // A larger difference indicates a genuine discontinuity / dropped data /
+    // sensor-side timing event and should be visible during development.
+    if (error.abs() >
+        (samplePeriodNs * 2).round()) {
+      if (debugPmdFrames) {
+        debugPrint(
+          '[POLAR DEBUG] PMD timestamp discontinuity: '
+          'previous=$previousTimestampNs '
+          'expectedFirst=$expectedFirstTimestamp '
+          'actualFirst=$actualFirstTimestamp '
+          'error=${error}ns',
+        );
+      }
+    }
+
+    return timestamps;
   }
 
   // ===========================================================================
@@ -947,40 +2450,76 @@ class PolarBleService {
     required double yMg,
     required double zMg,
   }) {
-    if (_lastAccSampleTimestampNs != null) {
-      final deltaNs = sampleNs - _lastAccSampleTimestampNs!;
-      // Alerta únicamente si el salto supera 50 ms (pérdida de paquetes BLE)
-      if (deltaNs > 50000000 || deltaNs < 0) {
+    if (_lastAccSampleTimestampNs !=
+        null) {
+      final deltaNs =
+          sampleNs -
+              _lastAccSampleTimestampNs!;
+
+      // Alert on unexpectedly large timestamp gaps.
+      //
+      // This does NOT necessarily mean that BLE packets were lost. A gap may
+      // also reflect sensor-side timing, frame changes, notification delays,
+      // or another timestamp discontinuity.
+      if (deltaNs >
+              50000000 ||
+          deltaNs < 0) {
         debugPrint(
-          '[POLAR ALERTA] Paquete perdido / Discontinuidad BLE: salto de ${deltaNs ~/ 1000000} ms',
+          '[POLAR ALERTA] ACC timestamp gap: '
+          'salto de '
+          '${deltaNs ~/ 1000000} ms',
         );
       }
     }
 
-    _lastAccSampleTimestampNs = sampleNs;
+    _lastAccSampleTimestampNs =
+        sampleNs;
 
-    final sampleTime = _pmdTimestampToDateTime(sampleNs);
-
-    final sample = PolarAccelerationSample(
-      timestamp: sampleTime,
-      participantId: currentParticipantId,
-      activityIndex: currentActivityIndex,
-      phaseName: currentPhaseName,
-      xMg: xMg.round(),
-      yMg: yMg.round(),
-      zMg: zMg.round(),
+    final sampleTime =
+        _convertPmdTimestampToHostUtc(
+      sampleNs,
     );
 
-    recordedAccelerationSamples.add(sample);
+    final sample =
+        PolarAccelerationSample(
+      timestamp:
+          sampleTime,
+      participantId:
+          currentParticipantId,
+      activityIndex:
+          currentActivityIndex,
+      phaseName:
+          currentPhaseName,
+      xMg: xMg,
+      yMg: yMg,
+      zMg: zMg,
+    );
+
+    recordedAccelerationSamples.add(
+      sample,
+    );
+
     if (!_accStreamController.isClosed) {
-      _accStreamController.add(sample);
+      _accStreamController.add(
+        sample,
+      );
     }
 
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    if (nowMs - _lastUiEmitMillis >= 100) {
-      _lastUiEmitMillis = nowMs;
-      if (!_accUiStreamController.isClosed) {
-        _accUiStreamController.add(sample);
+    final nowMs =
+        DateTime.now()
+            .millisecondsSinceEpoch;
+
+    if (nowMs -
+            _lastUiEmitMillis >=
+        100) {
+      _lastUiEmitMillis =
+          nowMs;
+
+      if (!_accUiStreamController
+          .isClosed) {
+        _accUiStreamController.add(
+          sample,
+        );
       }
     }
   }
@@ -998,7 +2537,9 @@ class PolarBleService {
 
     try {
       final byteData =
-          ByteData.sublistView(data);
+          ByteData.sublistView(
+        data,
+      );
 
       final flags =
           byteData.getUint8(0);
@@ -1014,7 +2555,8 @@ class PolarBleService {
 
       int offset = 1;
 
-      if (offset >= data.length) {
+      if (offset >=
+          data.length) {
         return;
       }
 
@@ -1031,19 +2573,20 @@ class PolarBleService {
           is16Bit ? 2 : 1;
 
       if (hasEnergyExpended) {
-        if (offset + 1 >= data.length) {
+        if (offset + 1 >=
+            data.length) {
           return;
         }
 
         offset += 2;
       }
 
-      final rrList = <int>[];
+      final rrList =
+          <int>[];
 
       if (hasRr) {
-        while (
-            offset + 1 <
-                data.length) {
+        while (offset + 1 <
+            data.length) {
           final rawRr =
               byteData.getUint16(
             offset,
@@ -1055,18 +2598,24 @@ class PolarBleService {
                       1000.0)
                   .round();
 
-          rrList.add(rrMs);
+          rrList.add(
+            rrMs,
+          );
 
           offset += 2;
         }
       }
 
-      currentHeartRate = bpm;
+      currentHeartRate =
+          bpm;
+
       currentRrIntervals =
           rrList;
 
       if (!_hrStreamController.isClosed) {
-        _hrStreamController.add(bpm);
+        _hrStreamController.add(
+          bpm,
+        );
       }
     } catch (e, stack) {
       debugPrint(
@@ -1089,18 +2638,27 @@ class PolarBleService {
     required int activityIndex,
     required String phaseName,
   }) {
-    if (!isConnected || currentHeartRate == 0) {
+    if (!isConnected ||
+        currentHeartRate == 0) {
       return;
     }
 
     recordedSamples.add(
       PolarHrSample(
-        timestamp: DateTime.now().toUtc(),
-        participantId: participantId,
-        activityIndex: activityIndex,
-        phaseName: phaseName,
-        heartRateBpm: currentHeartRate,
-        rrIntervalsMs: List.from(currentRrIntervals),
+        timestamp:
+            DateTime.now().toUtc(),
+        participantId:
+            participantId,
+        activityIndex:
+            activityIndex,
+        phaseName:
+            phaseName,
+        heartRateBpm:
+            currentHeartRate,
+        rrIntervalsMs:
+            List.from(
+          currentRrIntervals,
+        ),
       ),
     );
   }
@@ -1132,11 +2690,19 @@ class PolarBleService {
   // ===========================================================================
 
   String exportAccelerationCsv() {
-    final buffer = StringBuffer();
-    buffer.writeln(PolarAccelerationSample.csvHeader);
+    final buffer =
+        StringBuffer();
 
-    for (final sample in recordedAccelerationSamples) {
-      buffer.writeln(sample.toCsvRow());
+    buffer.writeln(
+      PolarAccelerationSample
+          .csvHeader,
+    );
+
+    for (final sample
+        in recordedAccelerationSamples) {
+      buffer.writeln(
+        sample.toCsvRow(),
+      );
     }
 
     return buffer.toString();
@@ -1147,14 +2713,37 @@ class PolarBleService {
   // ===========================================================================
 
   String exportEcgCsv() {
-    final buffer = StringBuffer();
-    buffer.writeln(PolarEcgSample.csvHeader);
+    final buffer =
+        StringBuffer();
 
-    for (final sample in recordedEcgSamples) {
-      buffer.writeln(sample.toCsvRow());
+    buffer.writeln(
+      PolarEcgSample.csvHeader,
+    );
+
+    for (final sample
+        in recordedEcgSamples) {
+      buffer.writeln(
+        sample.toCsvRow(),
+      );
     }
 
     return buffer.toString();
+  }
+
+  // ===========================================================================
+  // REMOVE TIMESTAMP KEYS
+  // ===========================================================================
+
+  void _removePmdTimingKeys({
+    required int measurementType,
+  }) {
+    _lastPmdFrameTimestampNs
+        .removeWhere(
+      (key, value) =>
+          key.startsWith(
+        '${measurementType}_',
+      ),
+    );
   }
 
   // ===========================================================================
@@ -1166,6 +2755,10 @@ class PolarBleService {
         _connectedDevice;
 
     if (device == null) {
+      // Still clean up subscriptions in case the connection disappeared
+      // before the normal disconnect path completed.
+      await _cancelAllSubscriptions();
+      _resetConnectionState();
       return;
     }
 
@@ -1173,6 +2766,10 @@ class PolarBleService {
       '[POLAR DEBUG] Desconectando '
       '${device.deviceId}...',
     );
+
+    // -------------------------------------------------------------------------
+    // Stop active PMD measurements first.
+    // -------------------------------------------------------------------------
 
     try {
       if (_ecgStreaming) {
@@ -1196,24 +2793,15 @@ class PolarBleService {
       );
     }
 
-    try {
-      await _hrValueSubscription
-          ?.cancel();
-    } catch (_) {}
+    // -------------------------------------------------------------------------
+    // Cancel subscriptions.
+    // -------------------------------------------------------------------------
 
-    try {
-      await _pmdDataSubscription
-          ?.cancel();
-    } catch (_) {}
+    await _cancelAllSubscriptions();
 
-    try {
-      await _pmdControlSubscription
-          ?.cancel();
-    } catch (_) {}
-
-    _hrValueSubscription = null;
-    _pmdDataSubscription = null;
-    _pmdControlSubscription = null;
+    // -------------------------------------------------------------------------
+    // Unsubscribe characteristics.
+    // -------------------------------------------------------------------------
 
     try {
       await _hrCharacteristic
@@ -1231,6 +2819,25 @@ class PolarBleService {
     } catch (_) {}
 
     try {
+      await _psftp51
+          ?.unsubscribe();
+    } catch (_) {}
+
+    try {
+      await _psftp52
+          ?.unsubscribe();
+    } catch (_) {}
+
+    try {
+      await _psftp53
+          ?.unsubscribe();
+    } catch (_) {}
+
+    // -------------------------------------------------------------------------
+    // Disconnect BLE device.
+    // -------------------------------------------------------------------------
+
+    try {
       await device.disconnect(
         timeout:
             const Duration(
@@ -1244,23 +2851,93 @@ class PolarBleService {
       );
     }
 
+    _resetConnectionState();
+
+    if (!_hrStreamController.isClosed) {
+      _hrStreamController.add(0);
+    }
+  }
+
+  // ===========================================================================
+  // CANCEL ALL SUBSCRIPTIONS
+  // ===========================================================================
+
+  Future<void>
+      _cancelAllSubscriptions() async {
+    try {
+      await _hrValueSubscription
+          ?.cancel();
+    } catch (_) {}
+
+    try {
+      await _pmdDataSubscription
+          ?.cancel();
+    } catch (_) {}
+
+    try {
+      await _pmdControlSubscription
+          ?.cancel();
+    } catch (_) {}
+
+    try {
+      await _psftp51Subscription
+          ?.cancel();
+    } catch (_) {}
+
+    try {
+      await _psftp52Subscription
+          ?.cancel();
+    } catch (_) {}
+
+    try {
+      await _psftp53Subscription
+          ?.cancel();
+    } catch (_) {}
+
+    _hrValueSubscription = null;
+    _pmdDataSubscription = null;
+    _pmdControlSubscription = null;
+
+    _psftp51Subscription = null;
+    _psftp52Subscription = null;
+    _psftp53Subscription = null;
+  }
+
+  // ===========================================================================
+  // RESET CONNECTION STATE
+  // ===========================================================================
+
+  void _resetConnectionState() {
+    _completePendingPmdResponse(
+      error: StateError(
+        'PMD connection closed',
+      ),
+    );
+
     _connectedDevice = null;
 
     _hrCharacteristic = null;
+
     _pmdControlPoint = null;
     _pmdData = null;
+
+    _psftp51 = null;
+    _psftp52 = null;
+    _psftp53 = null;
 
     _ecgStreaming = false;
     _accStreaming = false;
 
-    _resetAccTimingState();
+    _resetPmdTimingState();
+
+    // Reset to configured fallback values for the next connection.
+    _accSampleRateHz =
+        defaultAccSampleRateHz;
+
+    _accFactor = 1.0;
 
     currentHeartRate = 0;
     currentRrIntervals = [];
-
-    if (!_hrStreamController.isClosed) {
-        _hrStreamController.add(0);
-      }
   }
 
   // ===========================================================================
@@ -1294,6 +2971,22 @@ class PolarBleService {
     return value;
   }
 
+  static int _readUnsignedLittleEndian(
+    Uint8List data,
+    int offset,
+    int length,
+  ) {
+    int value = 0;
+
+    for (int i = 0; i < length; i++) {
+      value |=
+          data[offset + i] <<
+              (8 * i);
+    }
+
+    return value;
+  }
+
   static int _readSigned8(
     Uint8List data,
     int offset,
@@ -1314,7 +3007,8 @@ class PolarBleService {
   ) {
     int value =
         data[offset] |
-        (data[offset + 1] << 8);
+        (data[offset + 1] <<
+            8);
 
     if ((value & 0x8000) != 0) {
       value -= 0x10000;
@@ -1329,8 +3023,10 @@ class PolarBleService {
   ) {
     int value =
         data[offset] |
-        (data[offset + 1] << 8) |
-        (data[offset + 2] << 16);
+        (data[offset + 1] <<
+            8) |
+        (data[offset + 2] <<
+            16);
 
     if ((value & 0x800000) != 0) {
       value -= 0x1000000;
@@ -1340,47 +3036,42 @@ class PolarBleService {
   }
 
   // ===========================================================================
-  // PMD TIMESTAMP
-  // ===========================================================================
-
-  static DateTime _pmdTimestampToDateTime(
-    int timestampNs,
-  ) {
-    final epoch =
-        DateTime.utc(
-      2000,
-      1,
-      1,
-    );
-
-    final micros =
-        timestampNs ~/ 1000;
-
-    return epoch.add(
-      Duration(
-        microseconds: micros,
-      ),
-    );
-  }
-
-  // ===========================================================================
   // DISPOSE
   // ===========================================================================
 
-  void dispose() {
-    _hrValueSubscription?.cancel();
-    _pmdDataSubscription?.cancel();
-    _pmdControlSubscription?.cancel();
+  Future<void> dispose() async {
+    await disconnect();
 
-    disconnect();
-
-    _hrStreamController.close();
-    _ecgStreamController.close();
-    _ecgUiStreamController.close();
-    _accStreamController.close();
-    _accUiStreamController.close();
-    _scanStreamController.close();
+    await _hrStreamController.close();
+    await _ecgStreamController.close();
+    await _ecgUiStreamController.close();
+    await _accStreamController.close();
+    await _accUiStreamController.close();
+    await _scanStreamController.close();
   }
+}
+
+// =============================================================================
+// PMD CONTROL RESPONSE
+// =============================================================================
+
+class _PmdControlResponse {
+  final Uint8List raw;
+  final int opcode;
+  final int measurementType;
+  final int errorCode;
+  final Uint8List payload;
+
+  const _PmdControlResponse({
+    required this.raw,
+    required this.opcode,
+    required this.measurementType,
+    required this.errorCode,
+    required this.payload,
+  });
+
+  bool get isSuccess =>
+      errorCode == 0;
 }
 
 // =============================================================================
@@ -1406,7 +3097,11 @@ class PolarEcgSample {
       'timestamp_iso,participant_id,activity_index,phase_name,ecg_uv';
 
   String toCsvRow() {
-    return '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,$microVolts';
+    return '${timestamp.toIso8601String()},'
+        '$participantId,'
+        '$activityIndex,'
+        '$phaseName,'
+        '$microVolts';
   }
 }
 
@@ -1419,9 +3114,9 @@ class PolarAccelerationSample {
   final String participantId;
   final int activityIndex;
   final String phaseName;
-  final int xMg;
-  final int yMg;
-  final int zMg;
+  final double xMg;
+  final double yMg;
+  final double zMg;
 
   const PolarAccelerationSample({
     required this.timestamp,
@@ -1434,25 +3129,41 @@ class PolarAccelerationSample {
   });
 
   static const String csvHeader =
-      'timestamp_iso,participant_id,activity_index,phase_name,acc_x_mg,acc_y_mg,acc_z_mg';
+      'timestamp_iso,participant_id,activity_index,phase_name,'
+      'acc_x_mg,acc_y_mg,acc_z_mg';
 
   String toCsvRow() {
-    return '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,$xMg,$yMg,$zMg';
+    return '${timestamp.toIso8601String()},'
+        '$participantId,'
+        '$activityIndex,'
+        '$phaseName,'
+        '$xMg,'
+        '$yMg,'
+        '$zMg';
   }
 }
 
-// =============================================================================
-// BIT READER
-// =============================================================================
 
-class _BitReader {
+// ===========================================================================
+// POLAR BIT READER
+// ===========================================================================
+//
+// Polar converts every byte to:
+//
+//   bit 0, bit 1, ..., bit 7
+//
+// and then reconstructs each delta using those bits in that order.
+//
+// Therefore the PMD delta stream is read LSB-first.
+//
+
+class _PolarBitReader {
   final Uint8List data;
 
   int byteOffset;
-
   int bitOffset = 0;
 
-  _BitReader(
+  _PolarBitReader(
     this.data,
     this.byteOffset,
   );
@@ -1460,8 +3171,11 @@ class _BitReader {
   int readBits(
     int count,
   ) {
-    if (count <= 0) {
-      return 0;
+    if (count <= 0 ||
+        count > 32) {
+      throw ArgumentError(
+        'Invalid bit count: $count',
+      );
     }
 
     int value = 0;
@@ -1472,7 +3186,8 @@ class _BitReader {
       if (byteOffset >=
           data.length) {
         throw StateError(
-          'BitReader: fuera de rango',
+          'PolarBitReader: '
+          'out of range',
         );
       }
 
@@ -1494,22 +3209,4 @@ class _BitReader {
 
     return value;
   }
-}
-
-// =============================================================================
-// SIGNED BIT READER
-// =============================================================================
-
-int _readSignedBits(
-  _BitReader reader,
-  int bits,
-) {
-  final int unsignedValue = reader.readBits(bits);
-  final int signBit = 1 << (bits - 1);
-
-  if ((unsignedValue & signBit) != 0) {
-    return unsignedValue - (1 << bits);
-  }
-
-  return unsignedValue;
 }

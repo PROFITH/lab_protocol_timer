@@ -205,33 +205,27 @@ class VideoRecordingService {
     }
 
     try {
-      debugPrint('[VIDEO] Iniciando grabación...');
+      debugPrint('[VIDEO] Iniciando pipeline de grabación...');
 
+      // El await completa una vez que Windows MediaFoundation inicia la captura
       await _controller!.startVideoRecording();
 
+      // Marca temporal precisa de inicio (Fotograma 0)
       _currentRecordingStartTime = DateTime.now().toUtc();
       _isRecording = true;
 
       debugPrint(
-        '[VIDEO] Grabación iniciada correctamente a '
+        '[VIDEO] Grabación iniciada en: '
         '${_currentRecordingStartTime!.toIso8601String()}',
       );
 
       return true;
     } on CameraException catch (e) {
-      debugPrint(
-        '[VIDEO] CAMERA EXCEPTION al iniciar grabación\n'
-        'code: ${e.code}\n'
-        'description: ${e.description}',
-      );
-
+      debugPrint('[VIDEO] CameraException: ${e.code} - ${e.description}');
       _isRecording = false;
       return false;
     } catch (e, stackTrace) {
-      debugPrint(
-        '[VIDEO] Error al iniciar grabación: $e\n$stackTrace',
-      );
-
+      debugPrint('[VIDEO] Error iniciando grabación: $e\n$stackTrace');
       _isRecording = false;
       return false;
     }
