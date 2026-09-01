@@ -10,6 +10,8 @@ import 'services/lab_redcap_service.dart';
 import 'windows/research_monitor_window.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'windows/research_monitor_bridge.dart';
+import 'dart:io';
+import 'package:file_selector/file_selector.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -631,101 +633,6 @@ class TimerPageState extends State<TimerPage>
     // _initCamera();
   }
 
-  /* Future<void> _initCamera() async {
-    try {
-      debugPrint('[VIDEO] Buscando cámaras disponibles...');
-
-      final cameras = await availableCameras();
-
-      debugPrint('[VIDEO] Cámaras encontradas: ${cameras.length}');
-
-      if (cameras.isEmpty) {
-        debugPrint('[VIDEO] No se encontraron cámaras.');
-
-        if (mounted) {
-          setState(() {
-            _cameraReady = false;
-          });
-        }
-
-        return;
-      }
-
-      for (final camera in cameras) {
-        debugPrint(
-          '[VIDEO] Cámara: '
-          'name=${camera.name}, '
-          'lensDirection=${camera.lensDirection}, '
-          'sensorOrientation=${camera.sensorOrientation}',
-        );
-      }
-      // Buscar "Integrated Camera" como opción por defecto.
-      CameraDescription defaultCamera = cameras.first;
-
-      for (final camera in cameras) {
-        final name = camera.name.toLowerCase();
-
-        if (name.contains('integrated')) {
-          defaultCamera = camera;
-          break;
-        }
-      }
-
-      debugPrint(
-        '[VIDEO] Cámara seleccionada por defecto: '
-        '${defaultCamera.name}',
-      );
-
-      // Mostrar diálogo para que el usuario pueda seleccionar la cámara.
-      if (!mounted) return;
-
-      final selectedCamera = await _showCameraSelectionDialog(
-        cameras,
-        defaultCamera,
-      );
-
-      // El usuario ha elegido "Sin cámara".
-      if (selectedCamera == null) {
-        debugPrint('[VIDEO] Usuario ha seleccionado: Sin cámara.');
-
-        if (mounted) {
-          setState(() {
-            _cameraReady = false;
-          });
-        }
-
-        return;
-      }
-
-      debugPrint(
-        '[VIDEO] Cámara seleccionada por el usuario: '
-        '${selectedCamera.name}',
-      );
-
-      // Inicializar la cámara seleccionada.
-      final success = await _videoService.initializeCamera(
-        selectedCamera,
-      );
-
-      if (mounted) {
-        setState(() {
-          _cameraReady = success;
-        });
-      }
-    } catch (e, stackTrace) {
-      debugPrint(
-        '[VIDEO] Error buscando/inicializando cámaras: '
-        '$e\n$stackTrace',
-      );
-
-      if (mounted) {
-        setState(() {
-          _cameraReady = false;
-        });
-      }
-    }
-  } */
-
   void _initTts() async {
     await _flutterTts.setLanguage("es-ES");
     await _flutterTts.setSpeechRate(0.5);
@@ -759,11 +666,9 @@ class TimerPageState extends State<TimerPage>
   void dispose() {
     unregisterWebExitGuard();
     _timer?.cancel();
-    // _polarService.dispose();
     _pulseController.dispose();
     _audioPlayer.dispose();
     _flutterTts.stop();
-    // _videoService.dispose();
     super.dispose();
   }
 
@@ -964,15 +869,46 @@ class TimerPageState extends State<TimerPage>
     _timer?.cancel();
     _flutterTts.stop();
 
-    final participantSummary = _participants.map((p) => p.participantId).join(';');
+    final participantSummary =
+        _participants.map((p) => p.participantId).join(';');
 
-    // Detener vídeo en el monitor
+    // ========================================================================
+    // 1. STOP VIDEO RECORDING
+    // ========================================================================
+
     await ResearchMonitorBridge.instance.stopVideoRecording(
-      participantSummary, 
-      _completedActivities.length
+      participantSummary,
+      _completedActivities.length,
     );
 
-    await ResearchMonitorBridge.instance.sessionFinished();
+    // ========================================================================
+    // 2. FINISH SESSION AND GET GENERATED FILES
+    // ========================================================================
+
+    final generatedFiles =
+        await ResearchMonitorBridge.instance.sessionFinished();
+
+    final files = generatedFiles is List
+        ? generatedFiles.whereType<String>().toList()
+        : <String>[];
+
+    // ========================================================================
+    // 3. ASK USER WHERE TO EXPORT FILES (IF ANY)
+    // ========================================================================
+
+    if (files.isNotEmpty) {
+      final exported = await _exportSessionFiles(files);
+
+      if (!exported) {
+        // El usuario canceló el selector de carpeta.
+        // No continuamos con la sincronización.
+        return;
+      }
+    }
+
+    // ========================================================================
+    // 4. TEMPORARY SESSION DATA
+    // ========================================================================
 
     final sessionEndTime = DateTime.now();
     final sessionStartTime = _sessionStartTime ?? sessionEndTime;
@@ -980,68 +916,29 @@ class TimerPageState extends State<TimerPage>
     final double totalProtocolSeconds =
         sessionEndTime.difference(sessionStartTime).inMilliseconds / 1000.0;
 
-    final double totalActivitySeconds = _completedActivities.fold<double>(
+    final double totalActivitySeconds =
+        _completedActivities.fold<double>(
       0.0,
       (sum, item) => sum + item.durationSeconds,
     );
 
     final double totalTransitionSeconds =
-        (totalProtocolSeconds - totalActivitySeconds).clamp(0.0, double.infinity);
+        (totalProtocolSeconds - totalActivitySeconds)
+            .clamp(0.0, double.infinity);
 
     final int totalStations = _completedActivities.length;
+
+    // ========================================================================
+    // 5. REDCAP SYNC
+    // ========================================================================
+
+    if (!mounted) return;
 
     setState(() {
       _isRunning = false;
       _isPaused = false;
       _isSyncingRedCap = true;
     });
-
-    /* // Export HR csv (POLAR)
-    if (_polarService.recordedSamples.isNotEmpty) {
-      final csvContent = _polarService.exportCsv();
-      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-      final fileName = 'polar_hr_session_$timestampStr.csv';
-      
-      await saveCsvFile(fileName, csvContent);
-    }
-
-    // Export accelerometer csv (POLAR)
-    if (_polarService.recordedAccelerationSamples.isNotEmpty) {
-      final accCsvContent = _polarService.exportAccelerationCsv();
-      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-      final accFileName = 'polar_acc_raw_200hz_$timestampStr.csv';
-      
-      await saveCsvFile(accFileName, accCsvContent);
-      debugPrint('[POLAR DEBUG] Guardadas ${_polarService.recordedAccelerationSamples.length} muestras ACC en $accFileName');
-    }
-
-    // Export ECG csv (POLAR)
-    if (_polarService.recordedEcgSamples.isNotEmpty) {
-      final ecgCsvContent = _polarService.exportEcgCsv();
-      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-      final ecgFileName = 'polar_ecg_raw_130hz_$timestampStr.csv';
-      
-      await saveCsvFile(ecgFileName, ecgCsvContent);
-      debugPrint('[POLAR DEBUG] Guardadas ${_polarService.recordedEcgSamples.length} muestras ECG en $ecgFileName');
-    }
-
-    // Export video
-    if (_videoService.isRecording) {
-      final participantSummary =
-          _participants.map((p) => p.participantId).join(';');
-      await _videoService.stopSessionRecording(
-        participantSummary: participantSummary,
-        totalActivities: _completedActivities.length,
-      );
-
-      // Exportar CSV de sincronización de vídeo
-      if (_videoService.recordedVideoLogs.isNotEmpty) {
-        final videoSyncContent = _videoService.exportVideoSyncCsv();
-        final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
-        final videoSyncFileName = 'video_sync_session_$timestampStr.csv';
-        await saveCsvFile(videoSyncFileName, videoSyncContent);
-      }
-    } */
 
     final success = await LabRedCapService.sendFlatProtocolSession(
       participants: _participants,
@@ -1054,6 +951,10 @@ class TimerPageState extends State<TimerPage>
       totalStations: totalStations,
     );
 
+    // ========================================================================
+    // 6. RESULT DIALOG
+    // ========================================================================
+
     if (mounted) {
       setState(() => _isSyncingRedCap = false);
 
@@ -1063,10 +964,14 @@ class TimerPageState extends State<TimerPage>
 
       if (!mounted) return;
 
-      final totalMins = (totalProtocolSeconds / 60).toStringAsFixed(1);
-      final actMins = (totalActivitySeconds / 60).toStringAsFixed(1);
-      final transMins = (totalTransitionSeconds / 60).toStringAsFixed(1);
-      final summaryNames = _participants.map((p) => p.participantId).join(', ');
+      final totalMins =
+          (totalProtocolSeconds / 60).toStringAsFixed(1);
+      final actMins =
+          (totalActivitySeconds / 60).toStringAsFixed(1);
+      final transMins =
+          (totalTransitionSeconds / 60).toStringAsFixed(1);
+      final summaryNames =
+          _participants.map((p) => p.participantId).join(', ');
 
       await showDialog(
         context: context,
@@ -1075,39 +980,56 @@ class TimerPageState extends State<TimerPage>
           return AlertDialog(
             backgroundColor: const Color(0xFF1E293B),
             shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(Radius.circular(24)),
+              borderRadius: BorderRadius.all(
+                Radius.circular(24),
+              ),
             ),
             title: Row(
               children: [
                 Icon(
-                  success ? Icons.check_circle_rounded : Icons.error_rounded,
-                  color: success ? const Color(0xFF34D399) : Colors.redAccent,
+                  success
+                      ? Icons.check_circle_rounded
+                      : Icons.error_rounded,
+                  color: success
+                      ? const Color(0xFF34D399)
+                      : Colors.redAccent,
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  success ? 'Sincronización Batch Exitosa' : 'Aviso de Conexión',
-                  style: const TextStyle(color: Colors.white),
+                  success
+                      ? 'Sincronización Batch Exitosa'
+                      : 'Aviso de Conexión',
+                  style: const TextStyle(
+                    color: Colors.white,
+                  ),
                 ),
               ],
             ),
             content: Text(
               success
-                  ? 'Sesión registrada para ${_participants.length} sujeto(s):\n[$summaryNames]\n\n'
+                  ? 'Sesión registrada para '
+                      '${_participants.length} sujeto(s):\n'
+                      '[$summaryNames]\n\n'
                       '⏱ Total: $totalMins min\n'
                       '🏃 En Actividad: $actMins min\n'
                       '⏳ En Transiciones: $transMins min\n'
                       '📊 Total Actividades: $totalStations'
-                  : 'No se pudo conectar con REDCap. La sesión permanece guardada localmente.',
-              style: const TextStyle(color: Colors.white70),
+                  : 'No se pudo conectar con REDCap. '
+                      'La sesión permanece guardada localmente.',
+              style: const TextStyle(
+                color: Colors.white70,
+              ),
             ),
             actions: [
               FilledButton(
                 onPressed: () {
                   Navigator.of(dialogContext).pop();
+
                   if (success && mounted) {
                     Navigator.of(context).pushReplacement(
                       MaterialPageRoute(
-                        builder: (context) => const ParticipantSetupPage(),
+                        builder: (context) =>
+                            const ParticipantSetupPage(),
                       ),
                     );
                   }
@@ -1116,13 +1038,66 @@ class TimerPageState extends State<TimerPage>
                   backgroundColor: const Color(0xFF38BDF8),
                   foregroundColor: Colors.black,
                 ),
-                child: Text(success ? 'Nueva Evaluación' : 'Reintentar luego'),
+                child: Text(
+                  success
+                      ? 'Nueva Evaluación'
+                      : 'Reintentar luego',
+                ),
               ),
             ],
           );
         },
       );
     }
+  }
+
+  Future<bool> _exportSessionFiles(
+    List<String> generatedFiles,
+  ) async {
+    if (generatedFiles.isEmpty) {
+      return true;
+    }
+
+    final selectedDirectory = await getDirectoryPath(
+      confirmButtonText: 'Guardar aquí',
+    );
+
+    if (selectedDirectory == null) {
+      debugPrint(
+        '[EXPORT] El usuario canceló la selección de carpeta.',
+      );
+      return false;
+    }
+
+    debugPrint(
+      '[EXPORT] Carpeta seleccionada: $selectedDirectory',
+    );
+
+    for (final sourcePath in generatedFiles) {
+      final sourceFile = File(sourcePath);
+
+      if (!await sourceFile.exists()) {
+        debugPrint(
+          '[EXPORT] Archivo no encontrado: $sourcePath',
+        );
+        continue;
+      }
+
+      final fileName = sourceFile.uri.pathSegments.last;
+
+      final destinationPath = [
+        selectedDirectory,
+        fileName,
+      ].join(Platform.pathSeparator);
+
+      await sourceFile.copy(destinationPath);
+
+      debugPrint(
+        '[EXPORT] Copiado: $destinationPath',
+      );
+    }
+
+    return true;
   }
 
   void _startProtocolTimer() {

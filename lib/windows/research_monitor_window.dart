@@ -6,9 +6,9 @@ import 'dart:math' as math;
 
 import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
-import '../utils/file_saver.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
+import 'dart:io';
 
 
 class ResearchMonitorWindow extends StatefulWidget {
@@ -32,6 +32,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   String _phaseName = 'idle';
   bool _sessionActive = false;
   bool _cameraReady = false;
+  Directory? _sessionExportDirectory;
 
   // Valores de visualización en tiempo real
   int _heartRate = 0;
@@ -109,6 +110,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
 
       // Mostrar diálogo para que elijas qué cámara usar
+      if (!mounted) return;
       final CameraDescription? selectedCamera = await showDialog<CameraDescription>(
         context: context,
         barrierDismissible: false,
@@ -159,10 +161,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
       // Invocamos tu método pasándole la cámara elegida
       final success = await _videoService.initializeCamera(chosenCamera);
-
-      if (mounted) {
-        setState(() => _cameraReady = success);
-      }
+      if (!mounted) return;
+      setState(() => _cameraReady = success);
     } catch (e, stackTrace) {
       debugPrint('[VIDEO] Error inicializando cámara: $e\n$stackTrace');
       if (mounted) setState(() => _cameraReady = false);
@@ -207,8 +207,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         break;
 
       case WindowMessages.sessionFinished:
-        await _handleSessionFinished();
-        break;
+        return await _handleSessionFinished();
 
       case 'START_VIDEO_RECORDING':
         if (_cameraReady && !_videoService.isRecording) {
@@ -276,42 +275,106 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
   }
 
-  Future<void> _handleSessionFinished() async {
+  Future<List<String>> _handleSessionFinished() async {
     setState(() => _sessionActive = false);
 
-    final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+    final timestampStr = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .split('.')
+        .first;
 
-    // 1. Exportar CSV de HR
+    final generatedFiles = <String>[];
+
+    // ========================================================================
+    // 1. HEART RATE
+    // ========================================================================
+
     if (_polarService.recordedSamples.isNotEmpty) {
       final csvContent = _polarService.exportCsv();
-      final fileName = 'polar_hr_session_$timestampStr.csv';
-      await saveCsvFile(fileName, csvContent);
-      debugPrint('[MONITOR] Guardado $fileName');
+
+      final filePath = await _createTemporaryCsvFile(
+        'polar_hr_session_$timestampStr.csv',
+        csvContent,
+      );
+
+      generatedFiles.add(filePath);
+
+      debugPrint('[MONITOR] Preparado HR CSV: $filePath');
     }
 
-    // 2. Exportar CSV de Acelerometría
+    // ========================================================================
+    // 2. ACCELEROMETRÍA
+    // ========================================================================
+
     if (_polarService.recordedAccelerationSamples.isNotEmpty) {
-      final accCsvContent = _polarService.exportAccelerationCsv();
-      final accFileName = 'polar_acc_raw_200hz_$timestampStr.csv';
-      await saveCsvFile(accFileName, accCsvContent);
-      debugPrint('[MONITOR] Guardado $accFileName');
+      final csvContent =
+          _polarService.exportAccelerationCsv();
+
+      final filePath = await _createTemporaryCsvFile(
+        'polar_acc_raw_200hz_$timestampStr.csv',
+        csvContent,
+      );
+
+      generatedFiles.add(filePath);
+
+      debugPrint('[MONITOR] Preparado ACC CSV: $filePath');
     }
 
-    // 3. Exportar CSV de ECG
+    // ========================================================================
+    // 3. ECG
+    // ========================================================================
+
     if (_polarService.recordedEcgSamples.isNotEmpty) {
-      final ecgCsvContent = _polarService.exportEcgCsv();
-      final ecgFileName = 'polar_ecg_raw_130hz_$timestampStr.csv';
-      await saveCsvFile(ecgFileName, ecgCsvContent);
-      debugPrint('[MONITOR] Guardado $ecgFileName');
+      final csvContent =
+          _polarService.exportEcgCsv();
+
+      final filePath = await _createTemporaryCsvFile(
+        'polar_ecg_raw_130hz_$timestampStr.csv',
+        csvContent,
+      );
+
+      generatedFiles.add(filePath);
+
+      debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
     }
 
-    // 4. Exportar CSV de Sincronización de Vídeo
+    // ========================================================================
+    // 4. VIDEO SYNC CSV
+    // ========================================================================
+
     if (_videoService.recordedVideoLogs.isNotEmpty) {
-      final videoSyncContent = _videoService.exportVideoSyncCsv();
-      final videoSyncFileName = 'video_sync_session_$timestampStr.csv';
-      await saveCsvFile(videoSyncFileName, videoSyncContent);
-      debugPrint('[MONITOR] Guardado $videoSyncFileName');
+      final csvContent =
+          _videoService.exportVideoSyncCsv();
+
+      final filePath = await _createTemporaryCsvFile(
+        'video_sync_session_$timestampStr.csv',
+        csvContent,
+      );
+
+      generatedFiles.add(filePath);
+
+      debugPrint(
+        '[MONITOR] Preparado Video Sync CSV: $filePath',
+      );
+
+      // ======================================================================
+      // 5. VIDEO
+      // ======================================================================
+
+      for (final videoLog
+          in _videoService.recordedVideoLogs) {
+        if (await File(videoLog.filePath).exists()) {
+          generatedFiles.add(videoLog.filePath);
+
+          debugPrint(
+            '[MONITOR] Vídeo preparado: ${videoLog.filePath}',
+          );
+        }
+      }
     }
+
+    return generatedFiles;
   }
 
   // ===========================================================================
@@ -757,6 +820,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
       ),
     );
+  }
+
+  Future<String> _createTemporaryCsvFile(
+    String fileName,
+    String content,
+  ) async {
+    _sessionExportDirectory ??=
+        await Directory.systemTemp.createTemp(
+      'lab_protocol_timer_session_',
+    );
+
+    final file = File(
+      '${_sessionExportDirectory!.path}'
+      '${Platform.pathSeparator}'
+      '$fileName',
+    );
+
+    await file.writeAsString(content);
+
+    return file.path;
   }
 }
 

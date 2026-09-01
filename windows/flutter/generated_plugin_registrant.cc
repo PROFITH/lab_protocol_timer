@@ -8,6 +8,7 @@
 
 #include <audioplayers_windows/audioplayers_windows_plugin.h>
 #include <camera_windows/camera_windows.h>
+#include <file_selector_windows/file_selector_windows.h>
 #include <flutter_tts/flutter_tts_plugin.h>
 #include <multi_window_manager/multi_window_manager_plugin.h>
 #include <universal_ble/universal_ble_plugin_c_api.h>
@@ -17,6 +18,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("AudioplayersWindowsPlugin"));
   CameraWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("CameraWindows"));
+  FileSelectorWindowsRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("FileSelectorWindows"));
   FlutterTtsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("FlutterTtsPlugin"));
   MultiWindowManagerPluginRegisterWithRegistrar(

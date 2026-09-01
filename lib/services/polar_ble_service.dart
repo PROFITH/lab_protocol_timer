@@ -14,7 +14,7 @@ class PolarBleService {
   //
   // At 200 Hz, printing every PMD frame can generate a very large amount of
   // console output and can itself affect the timing of the application.
-  static const bool debugPmdFrames = true;
+  static const bool debugPmdFrames = false;
 
   // ===========================================================================
   // STANDARD HEART RATE SERVICE

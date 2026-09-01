@@ -16,20 +16,23 @@ class ResearchMonitorBridge {
     debugPrint('[IPC] Research Monitor registrado. ID=${window.id}');
   }
 
-  Future<void> send(String method, [dynamic arguments]) async {
+  Future<dynamic> send(String method, [dynamic arguments]) async {
     final window = _monitorWindow;
+
     if (window == null) {
       debugPrint('[IPC] Ignorado "$method": No existe Research Monitor.');
-      return;
+      return null;
     }
+
     try {
-      await MultiWindowManager.current.invokeMethodToWindow(
+      return await MultiWindowManager.current.invokeMethodToWindow(
         window.id,
         method,
         arguments,
       );
     } catch (e) {
       debugPrint('[IPC] Error enviando "$method": $e');
+      return null;
     }
   }
 
@@ -51,7 +54,8 @@ class ResearchMonitorBridge {
 
   Future<void> sessionPaused() => send(WindowMessages.sessionPaused);
   Future<void> sessionResumed() => send(WindowMessages.sessionResumed);
-  Future<void> sessionFinished() => send(WindowMessages.sessionFinished);
+  Future<dynamic> sessionFinished() =>
+    send(WindowMessages.sessionFinished);
 
   Future<void> updateProtocolContext({
     required String participantIds,
