@@ -7,8 +7,65 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lab_protocol_timer/utils/web_exit_guard.dart';
 import 'services/lab_redcap_service.dart';
+import 'windows/research_monitor_window.dart';
+import 'package:multi_window_manager/multi_window_manager.dart';
+import 'windows/research_monitor_bridge.dart';
 
-void main() {
+Future<void> main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  debugPrint('[MAIN] args=$args');
+
+  final windowId = args.isEmpty
+      ? 0
+      : int.tryParse(args[0]) ?? 0;
+
+  debugPrint('[MAIN] windowId=$windowId');
+
+  if (windowId == 0) {
+    await MultiWindowManager.ensureInitialized(windowId);
+  } else {
+    await MultiWindowManager.ensureInitializedSecondary(
+      windowId,
+      isEnabledReuse: false,
+    );
+  }
+
+  final isResearchMonitor =
+      args.length > 1 && args[1] == 'research_monitor';
+
+  debugPrint(
+    '[MAIN] isResearchMonitor=$isResearchMonitor',
+  );
+
+  if (isResearchMonitor) {
+    debugPrint('[MAIN] Iniciando Research Monitor...');
+
+    await MultiWindowManager.current.waitUntilReadyToShow(
+      const WindowOptions(
+        size: Size(1400, 900),
+        minimumSize: Size(1100, 700),
+        center: true,
+        title: 'Research Monitor',
+      ),
+      () async {
+        await MultiWindowManager.current.show();
+        await MultiWindowManager.current.focus();
+      },
+    );
+
+    runApp(
+      const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'Research Monitor',
+        home: ResearchMonitorWindow(),
+      ),
+    );
+    return;
+  }
+
+  debugPrint('[MAIN] Iniciando Participant Timer...');
+
   runApp(const LabTimerApp());
 }
 
@@ -194,26 +251,33 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     await prefs.remove('saved_current_activity');
   }
 
-  void _submitAndStart() {
-    if (_formKey.currentState?.validate() ?? false) {
-      final List<ParticipantEntry> entries = _participants.map((p) {
-        return ParticipantEntry(
-          participantId: p.controller.text.trim(),
-          redcapEventName: p.eventName,
-        );
-      }).toList();
-
-      final activity = int.tryParse(_activityController.text.trim()) ?? 1;
-
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (context) => TimerPage(
-            initialParticipants: entries,
-            initialActivity: activity,
-          ),
-        ),
-      );
+  Future<void> _submitAndStart() async {
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      return;
     }
+
+    final List<ParticipantEntry> entries = _participants.map((p) {
+      return ParticipantEntry(
+        participantId: p.controller.text.trim(),
+        redcapEventName: p.eventName,
+      );
+    }).toList();
+
+    final activity =
+        int.tryParse(_activityController.text.trim()) ?? 1;
+
+    await _openResearchMonitorWindow();
+
+    if (!mounted) return;
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => TimerPage(
+          initialParticipants: entries,
+          initialActivity: activity,
+        ),
+      ),
+    );
   }
 
   @override
@@ -416,6 +480,56 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       ),
     );
   }
+
+  Future<void> _openResearchMonitorWindow() async {
+    try {
+      debugPrint('[WINDOW] Creando Research Monitor...');
+
+      final window = await MultiWindowManager.createWindow([
+        'research_monitor',
+      ]);
+
+      if (window == null) {
+        debugPrint(
+          '[WINDOW] No se pudo crear Research Monitor.',
+        );
+        return;
+      }
+
+      debugPrint(
+        '[WINDOW] Ventana creada. ID=${window.id}',
+      );
+
+      ResearchMonitorBridge.instance.setMonitorWindow(window);
+
+      /* await window.waitUntilReadyToShow(
+        const WindowOptions(
+          size: Size(1400, 900),
+          minimumSize: Size(1100, 700),
+          center: true,
+          title: 'Research Monitor',
+        ),
+        () async {
+          debugPrint(
+            '[WINDOW] Research Monitor preparada. '
+            'Mostrando ventana ID=${window.id}',
+          );
+
+          await window.show();
+          await window.focus();
+        },
+      ); */
+
+      debugPrint(
+        '[WINDOW] Research Monitor lista. ID=${window.id}',
+      );
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[WINDOW] Error creando Research Monitor: '
+        '$e\n$stackTrace',
+      );
+    }
+  }
 }
 
 // ==========================================
@@ -463,12 +577,33 @@ class TimerPageState extends State<TimerPage>
   Timer? _timer;
   bool _isRunning = false;
   bool _isPaused = false;
+  // bool _cameraReady = false;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
+  // final PolarBleService _polarService = PolarBleService();
+  // final VideoRecordingService _videoService = VideoRecordingService();
 
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+
+  /* String _cameraDisplayName(CameraDescription? camera) {
+    if (camera == null) {
+      return 'Sin Cámara';
+    }
+
+    final name = camera.name.toLowerCase();
+
+    if (name.contains('integrated')) {
+      return 'Cámara integrada';
+    }
+
+    if (name.contains('mobile') || name.contains('phone')) {
+      return 'Cámara del móvil';
+    }
+
+    return camera.name;
+  } */
 
   @override
   void initState() {
@@ -482,8 +617,6 @@ class TimerPageState extends State<TimerPage>
     _seconds = _prepSeconds;
     _initTts();
 
-    registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
-
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 500),
@@ -492,8 +625,106 @@ class TimerPageState extends State<TimerPage>
     _pulseAnimation = Tween<double>(begin: 0.96, end: 1.04).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+
     registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
+    
+    // _initCamera();
   }
+
+  /* Future<void> _initCamera() async {
+    try {
+      debugPrint('[VIDEO] Buscando cámaras disponibles...');
+
+      final cameras = await availableCameras();
+
+      debugPrint('[VIDEO] Cámaras encontradas: ${cameras.length}');
+
+      if (cameras.isEmpty) {
+        debugPrint('[VIDEO] No se encontraron cámaras.');
+
+        if (mounted) {
+          setState(() {
+            _cameraReady = false;
+          });
+        }
+
+        return;
+      }
+
+      for (final camera in cameras) {
+        debugPrint(
+          '[VIDEO] Cámara: '
+          'name=${camera.name}, '
+          'lensDirection=${camera.lensDirection}, '
+          'sensorOrientation=${camera.sensorOrientation}',
+        );
+      }
+      // Buscar "Integrated Camera" como opción por defecto.
+      CameraDescription defaultCamera = cameras.first;
+
+      for (final camera in cameras) {
+        final name = camera.name.toLowerCase();
+
+        if (name.contains('integrated')) {
+          defaultCamera = camera;
+          break;
+        }
+      }
+
+      debugPrint(
+        '[VIDEO] Cámara seleccionada por defecto: '
+        '${defaultCamera.name}',
+      );
+
+      // Mostrar diálogo para que el usuario pueda seleccionar la cámara.
+      if (!mounted) return;
+
+      final selectedCamera = await _showCameraSelectionDialog(
+        cameras,
+        defaultCamera,
+      );
+
+      // El usuario ha elegido "Sin cámara".
+      if (selectedCamera == null) {
+        debugPrint('[VIDEO] Usuario ha seleccionado: Sin cámara.');
+
+        if (mounted) {
+          setState(() {
+            _cameraReady = false;
+          });
+        }
+
+        return;
+      }
+
+      debugPrint(
+        '[VIDEO] Cámara seleccionada por el usuario: '
+        '${selectedCamera.name}',
+      );
+
+      // Inicializar la cámara seleccionada.
+      final success = await _videoService.initializeCamera(
+        selectedCamera,
+      );
+
+      if (mounted) {
+        setState(() {
+          _cameraReady = success;
+        });
+      }
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[VIDEO] Error buscando/inicializando cámaras: '
+        '$e\n$stackTrace',
+      );
+
+      if (mounted) {
+        setState(() {
+          _cameraReady = false;
+        });
+      }
+    }
+  } */
 
   void _initTts() async {
     await _flutterTts.setLanguage("es-ES");
@@ -528,9 +759,11 @@ class TimerPageState extends State<TimerPage>
   void dispose() {
     unregisterWebExitGuard();
     _timer?.cancel();
+    // _polarService.dispose();
     _pulseController.dispose();
     _audioPlayer.dispose();
     _flutterTts.stop();
+    // _videoService.dispose();
     super.dispose();
   }
 
@@ -554,6 +787,20 @@ class TimerPageState extends State<TimerPage>
     await prefs.remove('saved_completed_activities');
     await prefs.remove('saved_session_start');
     await prefs.remove('saved_current_activity');
+  }
+
+  String get _currentPhaseName {
+    switch (_currentPhase) {
+      case 0:
+        return 'static_prep';
+      case 1:
+        return 'activity_main';
+      case 2:
+        return 'static_post';
+      case 3:
+      default:
+        return 'transition_lap';
+    }
   }
 
   Future<void> _cancelSession() async {
@@ -604,33 +851,50 @@ class TimerPageState extends State<TimerPage>
     }
   }
 
-  void _startPauseTimer() {
+  Future<void> _startPauseTimer() async {
+    if (_isPaused) {
+      _resumeTimer();
+      return;
+    }
+    if (_isRunning) {
+      setState(() {
+        _isRunning = false;
+        _isPaused = true;
+      });
+      _timer?.cancel();
+      await ResearchMonitorBridge.instance.sessionPaused();
+      await _speak("Pausado");
+      return;
+    }
+
     setState(() {
-      if (_isRunning) {
-        _isPaused = !_isPaused;
-        if (_isPaused) {
-          _timer?.cancel();
-          _isRunning = false;
-          _isPaused = true;
-          _speak("Pausado");
-        } else {
-          _resumeTimer();
-        }
-      } else {
-        _isRunning = true;
-        _isPaused = false;
-        _hasSpokenActionWindow = false;
-        _sessionStartTime ??= DateTime.now();
-        _persistSessionLocally();
-        _speak("Preparación estática. Permanezcan inmóviles.");
-        _startProtocolTimer();
-      }
+      _isRunning = true;
+      _isPaused = false;
+      _hasSpokenActionWindow = false;
+      _sessionStartTime ??= DateTime.now();
     });
+
+    final participantSummary = _participants.map((p) => p.participantId).join(';');
+
+    await ResearchMonitorBridge.instance.sessionStarted(
+      participantIds: participantSummary,
+      activityIndex: _currentActivity,
+      phaseName: _currentPhaseName,
+    );
+
+    await _persistSessionLocally();
+
+    // Enviar orden de grabar al monitor de investigación
+    await ResearchMonitorBridge.instance.startVideoRecording(participantSummary);
+
+    await _speak("Preparación estática. Permanezcan inmóviles.");
+    _startProtocolTimer();
   }
 
   void _resumeTimer() {
     _isRunning = true;
     _isPaused = false;
+    ResearchMonitorBridge.instance.sessionResumed();
     _speak("Reanudando");
     _startProtocolTimer();
   }
@@ -700,6 +964,16 @@ class TimerPageState extends State<TimerPage>
     _timer?.cancel();
     _flutterTts.stop();
 
+    final participantSummary = _participants.map((p) => p.participantId).join(';');
+
+    // Detener vídeo en el monitor
+    await ResearchMonitorBridge.instance.stopVideoRecording(
+      participantSummary, 
+      _completedActivities.length
+    );
+
+    await ResearchMonitorBridge.instance.sessionFinished();
+
     final sessionEndTime = DateTime.now();
     final sessionStartTime = _sessionStartTime ?? sessionEndTime;
 
@@ -721,6 +995,53 @@ class TimerPageState extends State<TimerPage>
       _isPaused = false;
       _isSyncingRedCap = true;
     });
+
+    /* // Export HR csv (POLAR)
+    if (_polarService.recordedSamples.isNotEmpty) {
+      final csvContent = _polarService.exportCsv();
+      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      final fileName = 'polar_hr_session_$timestampStr.csv';
+      
+      await saveCsvFile(fileName, csvContent);
+    }
+
+    // Export accelerometer csv (POLAR)
+    if (_polarService.recordedAccelerationSamples.isNotEmpty) {
+      final accCsvContent = _polarService.exportAccelerationCsv();
+      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      final accFileName = 'polar_acc_raw_200hz_$timestampStr.csv';
+      
+      await saveCsvFile(accFileName, accCsvContent);
+      debugPrint('[POLAR DEBUG] Guardadas ${_polarService.recordedAccelerationSamples.length} muestras ACC en $accFileName');
+    }
+
+    // Export ECG csv (POLAR)
+    if (_polarService.recordedEcgSamples.isNotEmpty) {
+      final ecgCsvContent = _polarService.exportEcgCsv();
+      final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      final ecgFileName = 'polar_ecg_raw_130hz_$timestampStr.csv';
+      
+      await saveCsvFile(ecgFileName, ecgCsvContent);
+      debugPrint('[POLAR DEBUG] Guardadas ${_polarService.recordedEcgSamples.length} muestras ECG en $ecgFileName');
+    }
+
+    // Export video
+    if (_videoService.isRecording) {
+      final participantSummary =
+          _participants.map((p) => p.participantId).join(';');
+      await _videoService.stopSessionRecording(
+        participantSummary: participantSummary,
+        totalActivities: _completedActivities.length,
+      );
+
+      // Exportar CSV de sincronización de vídeo
+      if (_videoService.recordedVideoLogs.isNotEmpty) {
+        final videoSyncContent = _videoService.exportVideoSyncCsv();
+        final timestampStr = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+        final videoSyncFileName = 'video_sync_session_$timestampStr.csv';
+        await saveCsvFile(videoSyncFileName, videoSyncContent);
+      }
+    } */
 
     final success = await LabRedCapService.sendFlatProtocolSession(
       participants: _participants,
@@ -808,6 +1129,16 @@ class TimerPageState extends State<TimerPage>
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       setState(() {
+        final participantSummary =
+            _participants.map((p) => p.participantId).join(';');
+
+        // Notificar al Research Monitor del segundo y fase actual
+        ResearchMonitorBridge.instance.updateProtocolContext(
+          participantIds: participantSummary,
+          activityIndex: _currentActivity,
+          phaseName: _currentPhaseName,
+        );
+
         if (_currentPhase == 3) {
           _waitingElapsedSeconds++;
           return;
@@ -1084,29 +1415,25 @@ class TimerPageState extends State<TimerPage>
                       Row(
                         children: [
                           IconButton(
+                            icon: Icon(
+                              _enableTts ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                              color: _enableTts ? accentColor : Colors.white24,
+                            ),
+                            onPressed: () => setState(() => _enableTts = !_enableTts),
+                            tooltip: 'Voz',
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.settings_rounded, color: Colors.white54),
+                            onPressed: () => _showSettingsDialog(context),
+                            tooltip: 'Ajustes',
+                          ),
+                          IconButton(
                             icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
                             onPressed: _cancelSession,
                             tooltip: 'Cancelar Prueba',
                           ),
-                          IconButton(
-                            icon: Icon(
-                              _enableTts
-                                  ? Icons.volume_up_rounded
-                                  : Icons.volume_off_rounded,
-                              color: _enableTts ? accentColor : Colors.white24,
-                            ),
-                            onPressed: () =>
-                                setState(() => _enableTts = !_enableTts),
-                            tooltip: 'Voz',
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.settings_rounded,
-                                color: Colors.white54),
-                            onPressed: () => _showSettingsDialog(context),
-                            tooltip: 'Ajustes',
-                          ),
                         ],
-                      ),
+                      )
                     ],
                   ),
                 ),

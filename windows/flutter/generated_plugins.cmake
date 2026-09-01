@@ -4,7 +4,10 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
+  camera_windows
   flutter_tts
+  multi_window_manager
+  universal_ble
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
