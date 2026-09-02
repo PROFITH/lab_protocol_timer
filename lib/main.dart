@@ -597,8 +597,6 @@ class TimerPageState extends State<TimerPage>
   String? _sessionId;
   /// UTC timestamp at which the protocol session started.
   DateTime? _sessionStartTime;
-  /// UTC timestamp at which the protocol session finished.
-  // DateTime? _sessionEndTime;
   /// UTC timestamp at which the current main activity started.
   DateTime? _currentActivityStartTime;
   /// Synchronization windows announced during the protocol.
@@ -1070,28 +1068,6 @@ class TimerPageState extends State<TimerPage>
 
     final sessionEndTime = DateTime.now().toUtc();
 
-    // Registrar ventana de sincronización final.
-    final hasSyncEnd = _syncWindows.any(
-      (window) => window.eventId == 'sync_end',
-    );
-
-    if (!hasSyncEnd) {
-      final syncEndStart = sessionEndTime.subtract(
-        const Duration(seconds: 5),
-      );
-
-      _syncWindows.add(
-        SyncWindow(
-          eventId: 'sync_end',
-          eventType: 'accelerometer_clap',
-          activityIndex: _currentActivity,
-          phase: _currentPhaseName,
-          windowStartTime: syncEndStart,
-          windowEndTime: sessionEndTime,
-        ),
-      );
-    }
-
     final sessionStartTime =
         _sessionStartTime ?? sessionEndTime;
 
@@ -1356,47 +1332,81 @@ class TimerPageState extends State<TimerPage>
           return;
         }
 
-        if ((_currentPhase == 0 &&
-                _seconds <= 5 &&
-                _seconds > 0) ||
-            (_currentPhase == 2 &&
-                _seconds >= (_postSeconds - 5) &&
-                _seconds > (_postSeconds - 6))) {
-          if (!_hasSpokenActionWindow) {
-            _hasSpokenActionWindow = true;
+        // ========================================================================
+        // ACCELEROMETER SYNCHRONIZATION WINDOW
+        // ========================================================================
+        //
+        // A synchronization window is recorded before and after every activity.
+        // Post-syncing will later identify the actual physical accelerometer hit within
+        // each window and use the resulting anchors to estimate sensor <-> video
+        // alignment and detect possible non-linear drift.
+        //
+        // The first preparation window is the session-level sync_start.
+        // Subsequent preparation windows are sync_before_activity_N.
+        // Every post-activity window is sync_after_activity_N.
+        //
+        // We intentionally store the whole 5-second window rather than an exact
+        // event timestamp. The exact hit will be detected later by SAVES.
+        // ========================================================================
 
-            final now = DateTime.now().toUtc();
+        final isSyncWindow =
+            (_currentPhase == 0 &&
+                    _seconds <= 5 &&
+                    _seconds > 0) ||
+                (_currentPhase == 2 &&
+                    _seconds >= (_postSeconds - 5) &&
+                    _seconds > (_postSeconds - 6));
 
-            final eventId =
-                _currentPhase == 0
-                    ? 'sync_start'
-                    : 'sync_end';
+        if (isSyncWindow && !_hasSpokenActionWindow) {
+          _hasSpokenActionWindow = true;
 
-            final alreadyRegistered = _syncWindows.any(
-              (window) => window.eventId == eventId,
+          final now = DateTime.now().toUtc();
+
+          final String eventId;
+
+          if (_currentPhase == 0) {
+            // First preparation window = session start anchor.
+            // Later preparation windows = pre-activity anchors.
+            eventId = _syncWindows.isEmpty
+                ? 'sync_start'
+                : 'sync_before_activity_$_currentActivity';
+          } else {
+            // Post-activity synchronization anchor.
+            eventId = 'sync_after_activity_$_currentActivity';
+          }
+
+          final alreadyRegistered = _syncWindows.any(
+            (window) => window.eventId == eventId,
+          );
+
+          if (!alreadyRegistered) {
+            _syncWindows.add(
+              SyncWindow(
+                eventId: eventId,
+                eventType: 'accelerometer_clap',
+                activityIndex: _currentActivity,
+                phase: _currentPhaseName,
+                windowStartTime: now,
+                windowEndTime: now.add(
+                  const Duration(seconds: 5),
+                ),
+              ),
             );
 
-            if (!alreadyRegistered) {
-              _syncWindows.add(
-                SyncWindow(
-                  eventId: eventId,
-                  eventType: 'accelerometer_clap',
-                  activityIndex: _currentActivity,
-                  phase: _currentPhaseName,
-                  windowStartTime: now,
-                  windowEndTime: now.add(
-                    const Duration(seconds: 5),
-                  ),
-                ),
-              );
+            _persistSessionLocally();
 
-              _persistSessionLocally();
-            }
-
-            _speak(
-              "¡Entrechocar acelerómetros ahora!",
+            debugPrint(
+              '[SYNC] Registered synchronization window: '
+              '$eventId '
+              'activity=$_currentActivity '
+              'phase=$_currentPhaseName '
+              'start=${now.toIso8601String()}',
             );
           }
+
+          _speak(
+            "¡Entrechocar acelerómetros ahora!",
+          );
         }
 
         if (_seconds > 0) {
@@ -1407,12 +1417,12 @@ class TimerPageState extends State<TimerPage>
           if (_currentPhase == 0) {
             _currentPhase = 1;
             _seconds = _activitySeconds;
-            _currentActivityStartTime = DateTime.now();
+            _currentActivityStartTime = DateTime.now().toUtc();
 
             _speakThenPlaySound(
                 "Realice la actividad a ritmo constante.", 'gong.ogg');
           } else if (_currentPhase == 1) {
-            final now = DateTime.now();
+            final now = DateTime.now().toUtc();
             if (_currentActivityStartTime != null) {
               final duration = now
                       .difference(_currentActivityStartTime!)
