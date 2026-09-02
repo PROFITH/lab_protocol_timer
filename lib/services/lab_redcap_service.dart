@@ -24,9 +24,14 @@ class ParticipantEntry {
 }
 
 class ActivityLog {
+  /// Activity index
   final int activityIndex;
+
+  /// Start/end of the main activity itself.
   final DateTime activityStartTime;
   final DateTime activityEndTime;
+
+  /// Duration of the main activity in seconds.
   final double durationSeconds;
 
   ActivityLog({
@@ -38,18 +43,85 @@ class ActivityLog {
 
   Map<String, dynamic> toJson() => {
         'activity_index': activityIndex,
-        'activity_start_time': activityStartTime.toIso8601String(),
-        'activity_end_time': activityEndTime.toIso8601String(),
+        'activity_start_time_utc': activityStartTime.toIso8601String(),
+        'activity_end_time_utc': activityEndTime.toIso8601String(),
         'duration_seconds': durationSeconds,
       };
 
   factory ActivityLog.fromJson(Map<String, dynamic> json) => ActivityLog(
         activityIndex: json['activity_index'] as int,
-        activityStartTime:
-            DateTime.parse(json['activity_start_time'] as String),
-        activityEndTime: DateTime.parse(json['activity_end_time'] as String),
+        activityStartTime: 
+            DateTime.parse(
+              json['activity_start_time_utc'] ??
+                  json['activity_start_time'],
+            ).toUtc(),
+       activityEndTime:
+            DateTime.parse(
+              json['activity_end_time_utc'] ??
+                  json['activity_end_time'],
+            ).toUtc(),
         durationSeconds: (json['duration_seconds'] as num).toDouble(),
       );
+}
+
+class SyncWindow {
+  final String eventId;
+  final String eventType;
+  final int activityIndex;
+  final String phase;
+  final DateTime windowStartTime;
+  final DateTime windowEndTime;
+
+  SyncWindow({
+    required this.eventId,
+    required this.eventType,
+    required this.activityIndex,
+    required this.phase,
+    required this.windowStartTime,
+    required this.windowEndTime,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'event_id': eventId,
+        'event_type': eventType,
+        'activity_index': activityIndex,
+        'phase': phase,
+        'window_start_time_utc':
+            windowStartTime.toUtc().toIso8601String(),
+        'window_end_time_utc':
+            windowEndTime.toUtc().toIso8601String(),
+      };
+
+  factory SyncWindow.fromJson(Map<String, dynamic> json) =>
+      SyncWindow(
+        eventId: json['event_id'] as String,
+        eventType: json['event_type'] as String,
+        activityIndex: json['activity_index'] as int,
+        phase: json['phase'] as String,
+        windowStartTime:
+            DateTime.parse(
+              json['window_start_time_utc'] as String,
+            ).toUtc(),
+        windowEndTime:
+            DateTime.parse(
+              json['window_end_time_utc'] as String,
+            ).toUtc(),
+      );
+
+  static const String csvHeader =
+      'event_id,event_type,activity_index,phase,'
+      'window_start_time_utc,window_end_time_utc';
+
+  String toCsvRow() {
+    return [
+      eventId,
+      eventType,
+      activityIndex,
+      phase,
+      windowStartTime.toUtc().toIso8601String(),
+      windowEndTime.toUtc().toIso8601String(),
+    ].join(',');
+  }
 }
 
 class LabRedCapService {

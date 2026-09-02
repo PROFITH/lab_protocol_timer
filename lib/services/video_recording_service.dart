@@ -8,7 +8,16 @@ class VideoLogEntry {
   final String filePath;
   final String participantId;
   final int activityIndex;
+
+  /// Host UTC timestamp recorded when the camera recording
+  /// command has completed successfully.
+  ///
+  /// This is a recording-start reference timestamp, not a
+  /// guaranteed timestamp for encoded video frame 0.
   final DateTime recordingStartTime;
+
+  /// Host UTC timestamp recorded after stopVideoRecording()
+  /// has completed.
   final DateTime? recordingEndTime;
 
   VideoLogEntry({
@@ -19,17 +28,70 @@ class VideoLogEntry {
     this.recordingEndTime,
   });
 
+  Duration? get duration {
+    if (recordingEndTime == null) {
+      return null;
+    }
+
+    return recordingEndTime!.difference(recordingStartTime);
+  }
+
+  Map<String, dynamic> toJson() => {
+      'file_path': filePath,
+      'participant_id': participantId,
+      'activity_index': activityIndex,
+      'recording_start_time_utc':
+          recordingStartTime.toUtc().toIso8601String(),
+      'recording_end_time_utc':
+          recordingEndTime?.toUtc().toIso8601String(),
+      'duration_seconds': duration == null
+          ? null
+          : duration!.inMicroseconds / 1000000.0,
+    };
+
+  factory VideoLogEntry.fromJson(Map<String, dynamic> json) =>
+      VideoLogEntry(
+        filePath: json['file_path'] as String,
+        participantId: json['participant_id'] as String,
+        activityIndex: json['activity_index'] as int,
+        recordingStartTime:
+            DateTime.parse(
+              json['recording_start_time_utc'] ??
+                  json['start_time_iso'],
+            ).toUtc(),
+        recordingEndTime:
+            (json['recording_end_time_utc'] ??
+                    json['end_time_iso']) ==
+                null
+            ? null
+            : DateTime.parse(
+                json['recording_end_time_utc'] ??
+                    json['end_time_iso'],
+              ).toUtc(),
+      );
+
   static const String csvHeader =
-      'file_path,participant_id,activity_index,start_time_iso,end_time_iso,duration_seconds';
+      'file_path,participant_id,activity_index,'
+      'recording_start_time_utc,recording_end_time_utc,duration_seconds';
 
   String toCsvRow() {
-    final startIso = recordingStartTime.toIso8601String();
-    final endIso = recordingEndTime?.toIso8601String() ?? '';
-    final durationSec = recordingEndTime != null
-        ? (recordingEndTime!.difference(recordingStartTime).inMilliseconds / 1000.0)
-            .toStringAsFixed(3)
-        : '';
-    return '"$filePath",$participantId,$activityIndex,$startIso,$endIso,$durationSec';
+    final startIso =
+        recordingStartTime.toUtc().toIso8601String();
+
+    final endIso =
+        recordingEndTime?.toUtc().toIso8601String() ?? '';
+
+    final durationSec = duration == null
+        ? ''
+        : (duration!.inMicroseconds / 1000000.0)
+            .toStringAsFixed(6);
+
+    return '"$filePath",'
+        '"$participantId",'
+        '$activityIndex,'
+        '$startIso,'
+        '$endIso,'
+        '$durationSec';
   }
 }
 

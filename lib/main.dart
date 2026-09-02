@@ -167,6 +167,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final savedParticipantsRaw = prefs.getString('saved_participants_list');
     final savedActivitiesRaw = prefs.getString('saved_completed_activities');
     final savedGlobalStartRaw = prefs.getString('saved_session_start');
+    final savedSessionId = prefs.getString('saved_session_id');
+    final savedSyncWindowsRaw = prefs.getString('saved_sync_windows');
     final savedCurrentActivity = prefs.getInt('saved_current_activity') ?? 1;
 
     if (savedParticipantsRaw != null &&
@@ -181,6 +183,17 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       final List<ActivityLog> restoredActivities = decodedActivities
           .map((e) => ActivityLog.fromJson(e as Map<String, dynamic>))
           .toList();
+
+      final List<SyncWindow> restoredSyncWindows =
+        savedSyncWindowsRaw == null
+            ? []
+            : (jsonDecode(savedSyncWindowsRaw) as List<dynamic>)
+                .map(
+                  (e) => SyncWindow.fromJson(
+                    e as Map<String, dynamic>,
+                  ),
+                )
+                .toList();
 
       final DateTime restoredGlobalStart = DateTime.parse(savedGlobalStartRaw);
 
@@ -236,6 +249,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               initialActivity: savedCurrentActivity,
               restoredActivities: restoredActivities,
               restoredSessionStartTime: restoredGlobalStart,
+              restoredSessionId: savedSessionId,
+              restoredSyncWindows: restoredSyncWindows,
             ),
           ),
         );
@@ -251,6 +266,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     await prefs.remove('saved_completed_activities');
     await prefs.remove('saved_session_start');
     await prefs.remove('saved_current_activity');
+    await prefs.remove('saved_session_id');
+    await prefs.remove('saved_sync_windows');
   }
 
   Future<void> _submitAndStart() async {
@@ -542,6 +559,8 @@ class TimerPage extends StatefulWidget {
   final int initialActivity;
   final List<ActivityLog>? restoredActivities;
   final DateTime? restoredSessionStartTime;
+  final String? restoredSessionId;
+  final List<SyncWindow>? restoredSyncWindows;
 
   const TimerPage({
     super.key,
@@ -549,6 +568,8 @@ class TimerPage extends StatefulWidget {
     required this.initialActivity,
     this.restoredActivities,
     this.restoredSessionStartTime,
+    this.restoredSessionId,
+    this.restoredSyncWindows,
   });
 
   @override
@@ -572,50 +593,205 @@ class TimerPageState extends State<TimerPage>
   bool _hasSpokenActionWindow = false;
 
   List<ActivityLog> _completedActivities = [];
+  /// Unique identifier for the protocol session.
+  String? _sessionId;
+  /// UTC timestamp at which the protocol session started.
   DateTime? _sessionStartTime;
+  /// UTC timestamp at which the protocol session finished.
+  // DateTime? _sessionEndTime;
+  /// UTC timestamp at which the current main activity started.
   DateTime? _currentActivityStartTime;
+  /// Synchronization windows announced during the protocol.
+  /// These are intentionally 5-second windows rather than exact events.
+  final List<SyncWindow> _syncWindows = [];
+
   bool _isSyncingRedCap = false;
 
   Timer? _timer;
   bool _isRunning = false;
   bool _isPaused = false;
-  // bool _cameraReady = false;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
-  // final PolarBleService _polarService = PolarBleService();
-  // final VideoRecordingService _videoService = VideoRecordingService();
-
+  
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
-  /* String _cameraDisplayName(CameraDescription? camera) {
-    if (camera == null) {
-      return 'Sin Cámara';
+  // Generate session ID
+  String _generateSessionId() {
+    final timestamp = DateTime.now()
+        .toUtc()
+        .microsecondsSinceEpoch;
+
+    return 'session_$timestamp';
+  }
+
+  // Export sync windows
+  String _exportSyncWindowsCsv() {
+    final buffer = StringBuffer();
+
+    buffer.writeln(SyncWindow.csvHeader);
+
+    for (final window in _syncWindows) {
+      buffer.writeln(window.toCsvRow());
     }
 
-    final name = camera.name.toLowerCase();
+    return buffer.toString();
+  }
 
-    if (name.contains('integrated')) {
-      return 'Cámara integrada';
+  // Export activity markers
+  String _exportActivityMarkersCsv() {
+    final buffer = StringBuffer();
+
+    buffer.writeln(
+      'activity_index,'
+      'activity_start_time_utc,'
+      'activity_end_time_utc,'
+      'duration_seconds',
+    );
+
+    for (final activity in _completedActivities) {
+      buffer.writeln(
+        [
+          activity.activityIndex,
+          activity.activityStartTime.toUtc().toIso8601String(),
+          activity.activityEndTime.toUtc().toIso8601String(),
+          activity.durationSeconds.toStringAsFixed(6),
+        ].join(','),
+      );
     }
 
-    if (name.contains('mobile') || name.contains('phone')) {
-      return 'Cámara del móvil';
-    }
+    return buffer.toString();
+  }
 
-    return camera.name;
-  } */
+  Map<String, dynamic> _buildSessionManifest({
+    required DateTime sessionStartTime,
+    required DateTime sessionEndTime,
+    required List<String> generatedFiles,
+  }) {
+    return {
+      'schema_version': '1.0',
+
+      'session_id': _sessionId,
+
+      'created_by': 'lab_protocol_timer',
+
+      'session_start_time_utc':
+          sessionStartTime.toUtc().toIso8601String(),
+
+      'session_end_time_utc':
+          sessionEndTime.toUtc().toIso8601String(),
+
+      'participants': _participants
+          .map(
+            (participant) => {
+              'participant_id':
+                  participant.participantId,
+              'redcap_event_name':
+                  participant.redcapEventName,
+            },
+          )
+          .toList(),
+
+      'activities': _completedActivities
+          .map((activity) => activity.toJson())
+          .toList(),
+
+      'sync_windows':
+          _syncWindows.map((window) => window.toJson()).toList(),
+
+      'video': {
+        'files': generatedFiles
+            .where(
+              (path) =>
+                  path.toLowerCase().endsWith('.mp4') ||
+                  path.toLowerCase().endsWith('.mov') ||
+                  path.toLowerCase().endsWith('.avi'),
+            )
+            .map((path) => path.split(Platform.pathSeparator).last)
+            .toList(),
+      },
+
+      'sensors': {
+        'polar_h10': {
+          'present': true,
+          'timestamp_domain': 'native_plus_host_utc',
+        },
+        'offline_sensor_a': {
+          'present': false,
+          'timestamp_domain': 'unknown',
+        },
+        'offline_sensor_b': {
+          'present': false,
+          'timestamp_domain': 'unknown',
+        },
+      },
+    };
+  }
+
+  Future<List<String>> _writeSessionMetadata({
+    required String directory,
+    required DateTime sessionStartTime,
+    required DateTime sessionEndTime,
+    required List<String> generatedFiles,
+  }) async {
+    final outputFiles = <String>[];
+
+    final manifest = _buildSessionManifest(
+      sessionStartTime: sessionStartTime,
+      sessionEndTime: sessionEndTime,
+      generatedFiles: generatedFiles,
+    );
+
+    final manifestFile = File(
+      '$directory${Platform.pathSeparator}session_manifest.json',
+    );
+
+    await manifestFile.writeAsString(
+      const JsonEncoder.withIndent('  ').convert(manifest),
+    );
+
+    outputFiles.add(manifestFile.path);
+
+    final syncFile = File(
+      '$directory${Platform.pathSeparator}sync_windows.csv',
+    );
+
+    await syncFile.writeAsString(
+      _exportSyncWindowsCsv(),
+    );
+
+    outputFiles.add(syncFile.path);
+
+    final activityFile = File(
+      '$directory${Platform.pathSeparator}activity_markers.csv',
+    );
+
+    await activityFile.writeAsString(
+      _exportActivityMarkersCsv(),
+    );
+
+    outputFiles.add(activityFile.path);
+
+    return outputFiles;
+  }
 
   @override
   void initState() {
     super.initState();
     _participants = List.from(widget.initialParticipants);
     _currentActivity = widget.initialActivity;
+    _sessionId = widget.restoredSessionId ?? _generateSessionId();
+    _sessionStartTime = widget.restoredSessionStartTime;
     _completedActivities = widget.restoredActivities != null
         ? List.from(widget.restoredActivities!)
         : [];
-    _sessionStartTime = widget.restoredSessionStartTime;
+
+    _syncWindows.clear();
+    if (widget.restoredSyncWindows != null) {
+      _syncWindows.addAll(widget.restoredSyncWindows!);
+    }
+
     _seconds = _prepSeconds;
     _initTts();
 
@@ -674,8 +850,18 @@ class TimerPageState extends State<TimerPage>
 
   Future<void> _persistSessionLocally() async {
     final prefs = await SharedPreferences.getInstance();
+    
     final rawParticipants = jsonEncode(_participants.map((e) => e.toJson()).toList());
+    
     await prefs.setString('saved_participants_list', rawParticipants);
+    
+    if (_sessionId != null) {
+      await prefs.setString(
+        'saved_session_id',
+        _sessionId!,
+      );
+    }
+    
     await prefs.setInt('saved_current_activity', _currentActivity);
     if (_sessionStartTime != null) {
       await prefs.setString(
@@ -684,6 +870,10 @@ class TimerPageState extends State<TimerPage>
     final rawActivities =
         jsonEncode(_completedActivities.map((e) => e.toJson()).toList());
     await prefs.setString('saved_completed_activities', rawActivities);
+
+    final rawSyncWindows =
+        jsonEncode(_syncWindows.map((e) => e.toJson()).toList());
+    await prefs.setString('saved_sync_windows', rawSyncWindows);
   }
 
   Future<void> _clearLocalBackup() async {
@@ -692,6 +882,8 @@ class TimerPageState extends State<TimerPage>
     await prefs.remove('saved_completed_activities');
     await prefs.remove('saved_session_start');
     await prefs.remove('saved_current_activity');
+    await prefs.remove('saved_session_id');
+    await prefs.remove('saved_sync_windows');
   }
 
   String get _currentPhaseName {
@@ -776,7 +968,7 @@ class TimerPageState extends State<TimerPage>
       _isRunning = true;
       _isPaused = false;
       _hasSpokenActionWindow = false;
-      _sessionStartTime ??= DateTime.now();
+      _sessionStartTime ??= DateTime.now().toUtc();
     });
 
     final participantSummary = _participants.map((p) => p.participantId).join(';');
@@ -873,7 +1065,38 @@ class TimerPageState extends State<TimerPage>
         _participants.map((p) => p.participantId).join(';');
 
     // ========================================================================
-    // 1. STOP VIDEO RECORDING
+    // 1. CAPTURAR FIN DE SESIÓN
+    // ========================================================================
+
+    final sessionEndTime = DateTime.now().toUtc();
+
+    // Registrar ventana de sincronización final.
+    final hasSyncEnd = _syncWindows.any(
+      (window) => window.eventId == 'sync_end',
+    );
+
+    if (!hasSyncEnd) {
+      final syncEndStart = sessionEndTime.subtract(
+        const Duration(seconds: 5),
+      );
+
+      _syncWindows.add(
+        SyncWindow(
+          eventId: 'sync_end',
+          eventType: 'accelerometer_clap',
+          activityIndex: _currentActivity,
+          phase: _currentPhaseName,
+          windowStartTime: syncEndStart,
+          windowEndTime: sessionEndTime,
+        ),
+      );
+    }
+
+    final sessionStartTime =
+        _sessionStartTime ?? sessionEndTime;
+
+    // ========================================================================
+    // 2. STOP VIDEO RECORDING
     // ========================================================================
 
     await ResearchMonitorBridge.instance.stopVideoRecording(
@@ -882,7 +1105,7 @@ class TimerPageState extends State<TimerPage>
     );
 
     // ========================================================================
-    // 2. FINISH SESSION AND GET GENERATED FILES
+    // 3. FINISH SESSION AND GET GENERATED FILES
     // ========================================================================
 
     final generatedFiles =
@@ -893,28 +1116,40 @@ class TimerPageState extends State<TimerPage>
         : <String>[];
 
     // ========================================================================
-    // 3. ASK USER WHERE TO EXPORT FILES (IF ANY)
+    // 4. EXPORT FILES
     // ========================================================================
 
-    if (files.isNotEmpty) {
-      final exported = await _exportSessionFiles(files);
+    String? exportDirectory;
 
-      if (!exported) {
+    if (files.isNotEmpty) {
+      exportDirectory = await _exportSessionFiles(files);
+
+      if (exportDirectory == null) {
         // El usuario canceló el selector de carpeta.
-        // No continuamos con la sincronización.
         return;
       }
+
+      // ======================================================================
+      // 5. EXPORT SAVES METADATA
+      // ======================================================================
+
+      await _writeSessionMetadata(
+        directory: exportDirectory,
+        sessionStartTime: sessionStartTime,
+        sessionEndTime: sessionEndTime,
+        generatedFiles: files,
+      );
     }
 
     // ========================================================================
-    // 4. TEMPORARY SESSION DATA
+    // 6. TEMPORARY SESSION DATA
     // ========================================================================
 
-    final sessionEndTime = DateTime.now();
-    final sessionStartTime = _sessionStartTime ?? sessionEndTime;
-
     final double totalProtocolSeconds =
-        sessionEndTime.difference(sessionStartTime).inMilliseconds / 1000.0;
+        sessionEndTime
+            .difference(sessionStartTime)
+            .inMilliseconds /
+            1000.0;
 
     final double totalActivitySeconds =
         _completedActivities.fold<double>(
@@ -926,10 +1161,11 @@ class TimerPageState extends State<TimerPage>
         (totalProtocolSeconds - totalActivitySeconds)
             .clamp(0.0, double.infinity);
 
-    final int totalStations = _completedActivities.length;
+    final int totalStations =
+        _completedActivities.length;
 
     // ========================================================================
-    // 5. REDCAP SYNC
+    // 7. REDCAP SYNC
     // ========================================================================
 
     if (!mounted) return;
@@ -940,7 +1176,8 @@ class TimerPageState extends State<TimerPage>
       _isSyncingRedCap = true;
     });
 
-    final success = await LabRedCapService.sendFlatProtocolSession(
+    final success =
+        await LabRedCapService.sendFlatProtocolSession(
       participants: _participants,
       sessionStartTime: sessionStartTime,
       sessionEndTime: sessionEndTime,
@@ -952,7 +1189,7 @@ class TimerPageState extends State<TimerPage>
     );
 
     // ========================================================================
-    // 6. RESULT DIALOG
+    // 8. RESULT DIALOG
     // ========================================================================
 
     if (mounted) {
@@ -1051,11 +1288,11 @@ class TimerPageState extends State<TimerPage>
     }
   }
 
-  Future<bool> _exportSessionFiles(
+  Future<String?> _exportSessionFiles(
     List<String> generatedFiles,
   ) async {
     if (generatedFiles.isEmpty) {
-      return true;
+      return null;
     }
 
     final selectedDirectory = await getDirectoryPath(
@@ -1066,7 +1303,7 @@ class TimerPageState extends State<TimerPage>
       debugPrint(
         '[EXPORT] El usuario canceló la selección de carpeta.',
       );
-      return false;
+      return null;
     }
 
     debugPrint(
@@ -1097,7 +1334,7 @@ class TimerPageState extends State<TimerPage>
       );
     }
 
-    return true;
+    return selectedDirectory;
   }
 
   void _startProtocolTimer() {
@@ -1119,13 +1356,46 @@ class TimerPageState extends State<TimerPage>
           return;
         }
 
-        if ((_currentPhase == 0 && _seconds <= 5 && _seconds > 0) ||
+        if ((_currentPhase == 0 &&
+                _seconds <= 5 &&
+                _seconds > 0) ||
             (_currentPhase == 2 &&
                 _seconds >= (_postSeconds - 5) &&
                 _seconds > (_postSeconds - 6))) {
           if (!_hasSpokenActionWindow) {
             _hasSpokenActionWindow = true;
-            _speak("¡Entrechocar acelerómetros ahora!");
+
+            final now = DateTime.now().toUtc();
+
+            final eventId =
+                _currentPhase == 0
+                    ? 'sync_start'
+                    : 'sync_end';
+
+            final alreadyRegistered = _syncWindows.any(
+              (window) => window.eventId == eventId,
+            );
+
+            if (!alreadyRegistered) {
+              _syncWindows.add(
+                SyncWindow(
+                  eventId: eventId,
+                  eventType: 'accelerometer_clap',
+                  activityIndex: _currentActivity,
+                  phase: _currentPhaseName,
+                  windowStartTime: now,
+                  windowEndTime: now.add(
+                    const Duration(seconds: 5),
+                  ),
+                ),
+              );
+
+              _persistSessionLocally();
+            }
+
+            _speak(
+              "¡Entrechocar acelerómetros ahora!",
+            );
           }
         }
 
