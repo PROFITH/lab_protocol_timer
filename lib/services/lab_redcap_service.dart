@@ -43,8 +43,8 @@ class ActivityLog {
 
   Map<String, dynamic> toJson() => {
         'activity_index': activityIndex,
-        'activity_start_time_utc': activityStartTime.toIso8601String(),
-        'activity_end_time_utc': activityEndTime.toIso8601String(),
+        'activity_start_time_utc': activityStartTime.toUtc().toIso8601String(),
+        'activity_end_time_utc': activityEndTime.toUtc().toIso8601String(),
         'duration_seconds': durationSeconds,
       };
 
@@ -152,8 +152,8 @@ class LabRedCapService {
       final Map<String, dynamic> recordData = {
         'record_id': participant.participantId,
         'redcap_event_name': participant.redcapEventName,
-        'session_start_time': sessionStartTime.toIso8601String(),
-        'session_end_time': sessionEndTime.toIso8601String(),
+        'session_start_time': sessionStartTime.toUtc().toIso8601String(),
+        'session_end_time': sessionEndTime.toUtc().toIso8601String(),
         'lab_total_stations': totalStations,
         'total_protocol_seconds': totalProtocolSeconds.toStringAsFixed(2),
         'total_activity_seconds': totalActivitySeconds.toStringAsFixed(2),
@@ -164,9 +164,9 @@ class LabRedCapService {
       for (final act in activities) {
         final idx = act.activityIndex;
         recordData['act_${idx}_start_time'] =
-            act.activityStartTime.toIso8601String();
+            act.activityStartTime.toUtc().toIso8601String();
         recordData['act_${idx}_end_time'] =
-            act.activityEndTime.toIso8601String();
+            act.activityEndTime.toUtc().toIso8601String();
       }
 
       records.add(recordData);
