@@ -189,7 +189,7 @@ class VideoRecordingService {
       // Crear controlador para la cámara seleccionada.
       _controller = CameraController(
         camera,
-        ResolutionPreset.max,
+        ResolutionPreset.medium,
         enableAudio: false,
       );
 
@@ -272,7 +272,8 @@ class VideoRecordingService {
       // El await completa una vez que Windows MediaFoundation inicia la captura
       await _controller!.startVideoRecording();
 
-      // Marca temporal precisa de inicio (Fotograma 0)
+      // Timestamp del host registrado inmediatamente después de iniciar la grabación.
+      // No garantiza correspondencia exacta con el primer fotograma del vídeo.
       _currentRecordingStartTime = DateTime.now().toUtc();
       _isRecording = true;
 
