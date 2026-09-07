@@ -576,6 +576,72 @@ class TimerPage extends StatefulWidget {
   TimerPageState createState() => TimerPageState();
 }
 
+class VideoProcessingDialog extends StatelessWidget {
+  final String status;
+
+  const VideoProcessingDialog({
+    super.key,
+    required this.status,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(
+          Radius.circular(24),
+        ),
+      ),
+      title: const Row(
+        children: [
+          Icon(
+            Icons.videocam_rounded,
+            color: Color(0xFF38BDF8),
+          ),
+          SizedBox(width: 10),
+          Text(
+            'Procesando vídeo',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+        ],
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+
+          const LinearProgressIndicator(),
+
+          const SizedBox(height: 20),
+
+          Text(
+            status,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white70,
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          const Text(
+            'Esto puede tardar unos minutos en sesiones largas.\n'
+            'No cierres la aplicación.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white38,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class TimerPageState extends State<TimerPage>
     with SingleTickerProviderStateMixin {
   late List<ParticipantEntry> _participants;
@@ -603,17 +669,18 @@ class TimerPageState extends State<TimerPage>
   /// These are intentionally 5-second windows rather than exact events.
   final List<SyncWindow> _syncWindows = [];
 
-  bool _isSyncingRedCap = false;
-
   Timer? _timer;
   bool _isRunning = false;
   bool _isPaused = false;
+  bool _isSyncingRedCap = false;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
   
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+
+  String _videoProcessingStatus = 'Finalizando grabación...';
 
   // Generate session ID
   String _generateSessionId() {
@@ -1062,6 +1129,10 @@ class TimerPageState extends State<TimerPage>
     final participantSummary =
         _participants.map((p) => p.participantId).join(';');
 
+    if (mounted) {
+      _showVideoProcessingDialog();
+    }
+
     // ========================================================================
     // 1. CAPTURAR FIN DE SESIÓN
     // ========================================================================
@@ -1075,6 +1146,12 @@ class TimerPageState extends State<TimerPage>
     // 2. STOP VIDEO RECORDING
     // ========================================================================
 
+    if (mounted) {
+      setState(() {
+        _videoProcessingStatus = 'Finalizando grabación...';
+      });
+    }
+
     await ResearchMonitorBridge.instance.stopVideoRecording(
       participantSummary,
       _completedActivities.length,
@@ -1083,6 +1160,12 @@ class TimerPageState extends State<TimerPage>
     // ========================================================================
     // 3. FINISH SESSION AND GET GENERATED FILES
     // ========================================================================
+
+    if (mounted) {
+      setState(() {
+        _videoProcessingStatus = 'Preparando archivos...';
+      });
+    }
 
     final generatedFiles =
         await ResearchMonitorBridge.instance.sessionFinished();
@@ -1095,6 +1178,12 @@ class TimerPageState extends State<TimerPage>
     // 4. EXPORT FILES
     // ========================================================================
 
+    if (mounted) {
+      setState(() {
+        _videoProcessingStatus = 'Copiando archivos...';
+      });
+    }
+
     String? exportDirectory;
 
     if (files.isNotEmpty) {
@@ -1102,6 +1191,7 @@ class TimerPageState extends State<TimerPage>
 
       if (exportDirectory == null) {
         // El usuario canceló el selector de carpeta.
+        _closeVideoProcessingDialog();
         return;
       }
 
@@ -1115,11 +1205,19 @@ class TimerPageState extends State<TimerPage>
         sessionEndTime: sessionEndTime,
         generatedFiles: files,
       );
+
+      _closeVideoProcessingDialog();
     }
 
     // ========================================================================
     // 6. TEMPORARY SESSION DATA
     // ========================================================================
+
+    if (mounted) {
+      setState(() {
+        _videoProcessingStatus = 'Guardando metadatos...';
+      });
+    }
 
     final double totalProtocolSeconds =
         sessionEndTime
@@ -2220,5 +2318,75 @@ class TimerPageState extends State<TimerPage>
         ),
       ),
     );
+  }
+
+  void _showVideoProcessingDialog() {
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(
+              Radius.circular(24),
+            ),
+          ),
+          title: const Row(
+            children: [
+              Icon(
+                Icons.videocam_rounded,
+                color: Color(0xFF38BDF8),
+              ),
+              SizedBox(width: 10),
+              Text(
+                'Procesando vídeo',
+                style: TextStyle(
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(height: 10),
+
+              LinearProgressIndicator(),
+
+              SizedBox(height: 20),
+
+              Text(
+                _videoProcessingStatus,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white70,
+                ),
+              ),
+
+              SizedBox(height: 10),
+
+              Text(
+                'Esto puede tardar unos minutos en sesiones largas.\n'
+                'No cierres la aplicación.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white38,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _closeVideoProcessingDialog() {
+    if (!mounted) return;
+
+    Navigator.of(context, rootNavigator: true).pop();
   }
 }
