@@ -191,6 +191,7 @@ class VideoRecordingService {
         camera,
         ResolutionPreset.medium,
         enableAudio: false,
+        videoBitrate: 5 * 1024 * 1024, // 5 Mbps
       );
 
       debugPrint('[VIDEO] CameraController creado.');
