@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_linux
+  disk_space_2
   file_selector_linux
   multi_window_manager
 )

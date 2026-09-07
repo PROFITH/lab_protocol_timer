@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   audioplayers_windows
   camera_windows
+  disk_space_2
   file_selector_windows
   flutter_tts
   multi_window_manager

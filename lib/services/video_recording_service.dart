@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:disk_space_2/disk_space_2.dart';
 
 class VideoLogEntry {
   final String filePath;
@@ -102,6 +103,7 @@ class VideoRecordingService {
 
   bool _isInitialized = false;
   bool _isRecording = false;
+  static const double minimumFreeSpaceGB = 10.0;
 
   DateTime? _currentRecordingStartTime;
   final List<VideoLogEntry> recordedVideoLogs = [];
@@ -111,6 +113,51 @@ class VideoRecordingService {
   bool get isRecording => _isRecording;
   List<CameraDescription> get camerasList => _camerasList;
   CameraDescription? get selectedCamera => _selectedCamera;
+
+  // ===========================================================================
+  // DETECCIÓN DE ESPACIO EN DISCO DISPONIBLE
+  // ===========================================================================
+
+  Future<double?> getFreeDiskSpaceGB() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+
+      debugPrint(
+        '[VIDEO] Application documents path: ${directory.path}',
+      );
+
+      final freeSpaceMB =
+          await DiskSpace.getFreeDiskSpaceForPath(directory.path);
+
+      debugPrint(
+        '[VIDEO] Free space reported by disk_space_2: '
+        '$freeSpaceMB MB',
+      );
+
+      if (freeSpaceMB == null) {
+        debugPrint(
+          '[VIDEO] No se pudo obtener el espacio libre.',
+        );
+        return null;
+      }
+
+      final freeSpaceGB = freeSpaceMB / 1024;
+
+      debugPrint(
+        '[VIDEO] Espacio libre en disco: '
+        '${freeSpaceGB.toStringAsFixed(2)} GB',
+      );
+
+      return freeSpaceGB;
+    } catch (e, stackTrace) {
+      debugPrint(
+        '[VIDEO] Error comprobando espacio libre: '
+        '$e\n$stackTrace',
+      );
+
+      return null;
+    }
+  }
 
   // ===========================================================================
   // DETECCIÓN DE CÁMARAS
@@ -199,6 +246,13 @@ class VideoRecordingService {
       // Inicializar cámara.
       await _controller!.initialize();
 
+      final freeSpaceGB = await getFreeDiskSpaceGB();
+
+      debugPrint(
+        '[VIDEO] Prueba espacio disponible: '
+        '${freeSpaceGB?.toStringAsFixed(2) ?? 'desconocido'} GB',
+      );
+
       if (!_controller!.value.isInitialized) {
         debugPrint('[VIDEO] La cámara no quedó inicializada.');
 
@@ -268,6 +322,21 @@ class VideoRecordingService {
     }
 
     try {
+
+      final freeSpaceGB = await getFreeDiskSpaceGB();
+
+      if (freeSpaceGB != null &&
+          freeSpaceGB < minimumFreeSpaceGB) {
+        debugPrint(
+          '[VIDEO] Espacio insuficiente para iniciar la grabación: '
+          '${freeSpaceGB.toStringAsFixed(2)} GB disponibles '
+          '(mínimo ${minimumFreeSpaceGB.toStringAsFixed(1)} GB).',
+        );
+
+        return false;
+      }
+
+
       debugPrint('[VIDEO] Iniciando pipeline de grabación...');
 
       // El await completa una vez que Windows MediaFoundation inicia la captura
