@@ -63,6 +63,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     MultiWindowManager.current.addListener(this);
 
+    MultiWindowManager.current.invokeMethodToWindow(
+      0,
+      WindowMessages.researchMonitorReady,
+    );
+
     // Escuchar streams de Polar para refrescar el panel visual
     _polarService.hrStream.listen((bpm) {
       if (mounted) {

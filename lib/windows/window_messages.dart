@@ -7,6 +7,8 @@ class WindowMessages {
   static const String protocolContext = 'protocol_context';
   static const String protocolConfiguration = 'protocol_configuration';
 
+  static const String researchMonitorReady = 'research_monitor_ready';
+
   static const String sensorStatus = 'sensor_status';
 
   static const String videoStarted = 'video_started';
