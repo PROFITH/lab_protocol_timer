@@ -216,7 +216,25 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       case WindowMessages.protocolContext:
         _handleProtocolContext(arguments);
         break;
+      
+      case WindowMessages.protocolConfiguration:
+        if (arguments is Map) {
+          final configuration =
+              ProtocolConfiguration.fromJson(
+            Map<String, dynamic>.from(arguments),
+          );
 
+          setState(() {
+            _protocolConfiguration = configuration;
+          });
+
+          debugPrint(
+            '[MONITOR] Configuración de protocolo actualizada: '
+            '${configuration.devices.length} dispositivos',
+          );
+        }
+        break;
+      
       case WindowMessages.sessionFinished:
         return await _handleSessionFinished();
 
