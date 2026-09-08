@@ -14,4 +14,24 @@ class DeviceConfiguration {
   bool hasSensor(String sensorId) {
     return sensors.contains(sensorId);
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'deviceId': deviceId,
+      'deviceName': deviceName,
+      'sensors': sensors.toList(),
+    };
+  }
+
+  factory DeviceConfiguration.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return DeviceConfiguration(
+      deviceId: json['deviceId'] as String,
+      deviceName: json['deviceName'] as String,
+      sensors: Set<String>.from(
+        json['sensors'] as List<dynamic>? ?? const [],
+      ),
+    );
+  }
 }

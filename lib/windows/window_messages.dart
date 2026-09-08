@@ -5,6 +5,7 @@ class WindowMessages {
   static const String sessionFinished = 'session_finished';
 
   static const String protocolContext = 'protocol_context';
+  static const String protocolConfiguration = 'protocol_configuration';
 
   static const String sensorStatus = 'sensor_status';
 

@@ -524,24 +524,6 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
       ResearchMonitorBridge.instance.setMonitorWindow(window);
 
-      /* await window.waitUntilReadyToShow(
-        const WindowOptions(
-          size: Size(1400, 900),
-          minimumSize: Size(1100, 700),
-          center: true,
-          title: 'Research Monitor',
-        ),
-        () async {
-          debugPrint(
-            '[WINDOW] Research Monitor preparada. '
-            'Mostrando ventana ID=${window.id}',
-          );
-
-          await window.show();
-          await window.focus();
-        },
-      ); */
-
       debugPrint(
         '[WINDOW] Research Monitor lista. ID=${window.id}',
       );

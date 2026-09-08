@@ -16,4 +16,31 @@ class ProtocolConfiguration {
 
     return null;
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'devices': devices
+          .map((device) => device.toJson())
+          .toList(),
+    };
+  }
+
+  factory ProtocolConfiguration.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final rawDevices =
+        json['devices'] as List<dynamic>? ?? const [];
+
+    return ProtocolConfiguration(
+      devices: rawDevices
+          .map(
+            (device) => DeviceConfiguration.fromJson(
+              Map<String, dynamic>.from(
+                device as Map,
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
 }

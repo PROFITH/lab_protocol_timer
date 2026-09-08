@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'window_messages.dart';
+import '../models/protocol_configuration.dart';
 
 class ResearchMonitorBridge {
   ResearchMonitorBridge._();
@@ -67,6 +68,15 @@ class ResearchMonitorBridge {
       'activityIndex': activityIndex,
       'phaseName': phaseName,
     });
+  }
+
+  Future<void> sendProtocolConfiguration(
+    ProtocolConfiguration configuration,
+  ) {
+    return send(
+      WindowMessages.protocolConfiguration,
+      configuration.toJson(),
+    );
   }
 
   // ===========================================================================
