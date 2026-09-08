@@ -548,80 +548,106 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   List<DeviceStatus> get _deviceStatuses {
-    return [
-      DeviceStatus(
-        id: 'camera',
-        name: 'Cámara',
-        icon: Icons.videocam_rounded,
-        connectionStatus: _cameraReady
-            ? DeviceConnectionStatus.connected
-            : DeviceConnectionStatus.disconnected,
-        sensors: [
-          SensorStatus(
-            id: 'video',
-            name: 'Vídeo',
-            icon: Icons.videocam_rounded,
-            status: _videoService.isRecording
-                ? SensorAcquisitionStatus.acquiring
-                : _cameraReady
-                    ? SensorAcquisitionStatus.ready
-                    : SensorAcquisitionStatus.unavailable,
-          ),
-        ],
-      ),
-      DeviceStatus(
-        id: 'polar_h10',
-        name: 'Polar H10',
-        icon: Icons.favorite_rounded,
-        connectionStatus: _polarService.isConnected
-            ? DeviceConnectionStatus.connected
-            : DeviceConnectionStatus.disconnected,
-        sensors: [
-          SensorStatus(
-            id: 'hr',
-            name: 'HR',
-            icon: Icons.favorite_rounded,
-            status: _polarService.isHeartRateStreaming
-                ? SensorAcquisitionStatus.acquiring
-                : _polarService.isConnected
-                    ? SensorAcquisitionStatus.stopped
-                    : SensorAcquisitionStatus.unavailable,
-          ),
-          SensorStatus(
-            id: 'rr',
-            name: 'RR',
-            icon: Icons.timeline_rounded,
-            status: _polarService.isRrStreaming
-                ? SensorAcquisitionStatus.acquiring
-                : _polarService.isConnected
-                    ? SensorAcquisitionStatus.stopped
-                    : SensorAcquisitionStatus.unavailable,
-          ),
-          SensorStatus(
-            id: 'acc',
-            name: 'ACC',
-            icon: Icons.sensors_rounded,
-            status: _polarService.isAccelerationStreaming
-                ? SensorAcquisitionStatus.acquiring
-                : _polarService.isConnected
-                    ? SensorAcquisitionStatus.stopped
-                    : SensorAcquisitionStatus.unavailable,
-            detail: '200 Hz',
-          ),
-          SensorStatus(
-            id: 'ecg',
-            name: 'ECG',
-            icon: Icons.show_chart_rounded,
-            status: _polarService.isEcgStreaming
-                ? SensorAcquisitionStatus.acquiring
-                : _polarService.isConnected
-                    ? SensorAcquisitionStatus.stopped
-                    : SensorAcquisitionStatus.unavailable,
-            detail: '130 Hz',
-          ),
-        ],
-      ),
-    ];
+    final statuses = <DeviceStatus>[];
+
+    for (final device in _protocolConfiguration.devices) {
+      switch (device.deviceId) {
+        case 'camera':
+          statuses.add(
+            DeviceStatus(
+              id: device.deviceId,
+              name: device.deviceName,
+              icon: Icons.videocam_rounded,
+              connectionStatus: _cameraReady
+                  ? DeviceConnectionStatus.connected
+                  : DeviceConnectionStatus.disconnected,
+              sensors: [
+                if (device.hasSensor('video'))
+                  SensorStatus(
+                    id: 'video',
+                    name: 'Vídeo',
+                    icon: Icons.videocam_rounded,
+                    status: _videoService.isRecording
+                        ? SensorAcquisitionStatus.acquiring
+                        : _cameraReady
+                            ? SensorAcquisitionStatus.ready
+                            : SensorAcquisitionStatus.unavailable,
+                  ),
+              ],
+            ),
+          );
+          break;
+
+        case 'polar_h10':
+          statuses.add(
+            DeviceStatus(
+              id: device.deviceId,
+              name: device.deviceName,
+              icon: Icons.favorite_rounded,
+              connectionStatus: _polarService.isConnected
+                  ? DeviceConnectionStatus.connected
+                  : DeviceConnectionStatus.disconnected,
+              sensors: [
+                if (device.hasSensor('heart_rate')) ...[
+                  SensorStatus(
+                    id: 'hr',
+                    name: 'HR',
+                    icon: Icons.favorite_rounded,
+                    status: _polarService.isHeartRateStreaming
+                        ? SensorAcquisitionStatus.acquiring
+                        : _polarService.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                  ),
+                  SensorStatus(
+                    id: 'rr',
+                    name: 'RR',
+                    icon: Icons.timeline_rounded,
+                    status: _polarService.isRrStreaming
+                        ? SensorAcquisitionStatus.acquiring
+                        : _polarService.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                  ),
+                ],
+                if (device.hasSensor('acc'))
+                  SensorStatus(
+                    id: 'acc',
+                    name: 'ACC',
+                    icon: Icons.sensors_rounded,
+                    status: _polarService.isAccelerationStreaming
+                        ? SensorAcquisitionStatus.acquiring
+                        : _polarService.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                    detail: '200 Hz',
+                  ),
+                if (device.hasSensor('ecg'))
+                  SensorStatus(
+                    id: 'ecg',
+                    name: 'ECG',
+                    icon: Icons.show_chart_rounded,
+                    status: _polarService.isEcgStreaming
+                        ? SensorAcquisitionStatus.acquiring
+                        : _polarService.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                    detail: '130 Hz',
+                  ),
+              ],
+            ),
+          );
+          break;
+
+        default:
+          debugPrint(
+            '[MONITOR] Dispositivo no soportado: ${device.deviceId}',
+          );
+          break;
+      }
+    }
+
+    return statuses;
   }
 
   // ===========================================================================
