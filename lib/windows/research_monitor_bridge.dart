@@ -2,8 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'window_messages.dart';
 import '../models/protocol_configuration.dart';
+import '../config/default_protocol_configuration.dart';
 
-class ResearchMonitorBridge {
+class ResearchMonitorBridge extends WindowListener {
   ResearchMonitorBridge._();
 
   static final ResearchMonitorBridge instance = ResearchMonitorBridge._();
@@ -13,8 +14,33 @@ class ResearchMonitorBridge {
   int? get monitorWindowId => _monitorWindow?.id;
 
   void setMonitorWindow(MultiWindowManager window) {
+    MultiWindowManager.current.addListener(this);
+
     _monitorWindow = window;
     debugPrint('[IPC] Research Monitor registrado. ID=${window.id}');
+  }
+
+  @override
+  Future<dynamic> onEventFromWindow(
+    String eventName,
+    int fromWindowId,
+    dynamic arguments,
+  ) async {
+    debugPrint(
+      '[IPC] Evento recibido desde ventana $fromWindowId: $eventName',
+    );
+
+    if (eventName == WindowMessages.researchMonitorReady) {
+      debugPrint(
+        '[IPC] Research Monitor confirma que está listo.',
+      );
+
+      sendProtocolConfiguration(
+        defaultProtocolConfiguration,
+      );
+    }
+
+    return null;
   }
 
   Future<dynamic> send(String method, [dynamic arguments]) async {
