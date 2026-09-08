@@ -73,7 +73,7 @@ class ResearchMonitorBridge {
   // CONTROL REMOTO DE LA CÁMARA (De Principal -> Monitor)
   // ===========================================================================
 
-  Future<void> startVideoRecording(String participantSummary) {
+  Future<dynamic> startVideoRecording(String participantSummary) {
     return send('START_VIDEO_RECORDING', participantSummary);
   }
 

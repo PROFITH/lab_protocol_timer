@@ -1018,25 +1018,116 @@ class TimerPageState extends State<TimerPage>
       _resumeTimer();
       return;
     }
+
     if (_isRunning) {
       setState(() {
         _isRunning = false;
         _isPaused = true;
       });
+
       _timer?.cancel();
+
       await ResearchMonitorBridge.instance.sessionPaused();
+
       await _speak("Pausado");
+
       return;
     }
+
+    final participantSummary =
+        _participants.map((p) => p.participantId).join(';');
+
+    // ========================================================================
+    // 1. INICIAR VÍDEO Y COMPROBAR QUE REALMENTE HA COMENZADO
+    // ========================================================================
+
+    debugPrint(
+      '[SESSION] Solicitando inicio de grabación de vídeo...',
+    );
+
+    final videoStarted =
+        await ResearchMonitorBridge.instance.startVideoRecording(
+      participantSummary,
+    );
+
+    debugPrint(
+      '[SESSION] Resultado inicio vídeo: $videoStarted',
+    );
+
+    if (videoStarted != true) {
+      debugPrint(
+        '[SESSION] No se puede iniciar la sesión: '
+        'la grabación de vídeo no ha comenzado.',
+      );
+
+      if (!mounted) return;
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.all(
+                Radius.circular(24),
+              ),
+            ),
+            title: const Row(
+              children: [
+                Icon(
+                  Icons.error_outline_rounded,
+                  color: Colors.redAccent,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'No se puede iniciar la sesión',
+                  style: TextStyle(
+                    color: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            content: const Text(
+              'La grabación de vídeo no ha podido iniciarse.\n\n'
+              'Comprueba que la cámara está disponible y que hay '
+              'suficiente espacio libre en el disco.\n\n'
+              'El protocolo NO se ha iniciado.',
+              style: TextStyle(
+                color: Colors.white70,
+              ),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF38BDF8),
+                  foregroundColor: Colors.black,
+                ),
+                child: const Text('Aceptar'),
+              ),
+            ],
+          );
+        },
+      );
+
+      return;
+    }
+
+    // ========================================================================
+    // 2. EL VÍDEO YA ESTÁ GRABANDO → AHORA INICIAMOS LA SESIÓN
+    // ========================================================================
+
+    final sessionStartTime = DateTime.now().toUtc();
 
     setState(() {
       _isRunning = true;
       _isPaused = false;
       _hasSpokenActionWindow = false;
-      _sessionStartTime ??= DateTime.now().toUtc();
+      _sessionStartTime ??= sessionStartTime;
     });
-
-    final participantSummary = _participants.map((p) => p.participantId).join(';');
 
     await ResearchMonitorBridge.instance.sessionStarted(
       participantIds: participantSummary,
@@ -1046,10 +1137,10 @@ class TimerPageState extends State<TimerPage>
 
     await _persistSessionLocally();
 
-    // Enviar orden de grabar al monitor de investigación
-    await ResearchMonitorBridge.instance.startVideoRecording(participantSummary);
+    await _speak(
+      "Preparación estática. Permanezcan inmóviles.",
+    );
 
-    await _speak("Preparación estática. Permanezcan inmóviles.");
     _startProtocolTimer();
   }
 

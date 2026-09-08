@@ -210,12 +210,35 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return await _handleSessionFinished();
 
       case 'START_VIDEO_RECORDING':
-        if (_cameraReady && !_videoService.isRecording) {
-          final summary = arguments?.toString() ?? _participantIds;
-          await _videoService.startSessionRecording(participantSummary: summary);
-          if (mounted) setState(() {});
+        if (!_cameraReady) {
+          debugPrint(
+            '[VIDEO] No se puede iniciar: cámara no preparada.',
+          );
+          return false;
         }
-        break;
+
+        if (_videoService.isRecording) {
+          debugPrint(
+            '[VIDEO] No se puede iniciar: ya existe una grabación activa.',
+          );
+          return false;
+        }
+
+        final summary = arguments?.toString() ?? _participantIds;
+
+        final success = await _videoService.startSessionRecording(
+          participantSummary: summary,
+        );
+
+        if (mounted) {
+          setState(() {});
+        }
+
+        debugPrint(
+          '[VIDEO] Resultado inicio grabación: $success',
+        );
+
+        return success;
 
       case 'STOP_VIDEO_RECORDING':
         if (_videoService.isRecording && arguments is Map) {
