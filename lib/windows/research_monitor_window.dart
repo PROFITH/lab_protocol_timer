@@ -6,13 +6,20 @@ import 'dart:math' as math;
 
 import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
+import '../models/device_status.dart';
+import '../models/protocol_configuration.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
 import 'dart:io';
 
 
 class ResearchMonitorWindow extends StatefulWidget {
-  const ResearchMonitorWindow({super.key});
+  final ProtocolConfiguration protocolConfiguration;
+
+  const ResearchMonitorWindow({
+    super.key,
+    required this.protocolConfiguration,
+  });
 
   @override
   State<ResearchMonitorWindow> createState() =>
@@ -33,6 +40,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   bool _sessionActive = false;
   bool _cameraReady = false;
   Directory? _sessionExportDirectory;
+  late ProtocolConfiguration _protocolConfiguration;
 
   // Valores de visualización en tiempo real
   int _heartRate = 0;
@@ -50,6 +58,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   @override
   void initState() {
     super.initState();
+    
+    _protocolConfiguration = widget.protocolConfiguration;
+
     MultiWindowManager.current.addListener(this);
 
     // Escuchar streams de Polar para refrescar el panel visual
@@ -464,10 +475,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                               final connected = await _polarService.connectToDevice(device);
                               if (connected) {
                                 try {
-                                  await _polarService.startAcceleration();
-                                  await _polarService.startEcg();
+                                  final polarConfiguration =
+                                      _protocolConfiguration.deviceById('polar_h10');
+
+                                  if (polarConfiguration != null) {
+                                    await _polarService.startConfiguredSensors(
+                                      polarConfiguration,
+                                    );
+                                  }
                                 } catch (e) {
-                                  debugPrint('[POLAR DEBUG] Error al iniciar PMD: $e');
+                                  debugPrint(
+                                    '[POLAR DEBUG] Error al iniciar sensores: $e',
+                                  );
                                 }
                               }
                               if (dialogCtx.mounted) {
@@ -503,6 +522,83 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         );
       },
     );
+  }
+
+  List<DeviceStatus> get _deviceStatuses {
+    return [
+      DeviceStatus(
+        id: 'camera',
+        name: 'Cámara',
+        icon: Icons.videocam_rounded,
+        connectionStatus: _cameraReady
+            ? DeviceConnectionStatus.connected
+            : DeviceConnectionStatus.disconnected,
+        sensors: [
+          SensorStatus(
+            id: 'video',
+            name: 'Vídeo',
+            icon: Icons.videocam_rounded,
+            status: _videoService.isRecording
+                ? SensorAcquisitionStatus.acquiring
+                : _cameraReady
+                    ? SensorAcquisitionStatus.ready
+                    : SensorAcquisitionStatus.unavailable,
+          ),
+        ],
+      ),
+      DeviceStatus(
+        id: 'polar_h10',
+        name: 'Polar H10',
+        icon: Icons.favorite_rounded,
+        connectionStatus: _polarService.isConnected
+            ? DeviceConnectionStatus.connected
+            : DeviceConnectionStatus.disconnected,
+        sensors: [
+          SensorStatus(
+            id: 'hr',
+            name: 'HR',
+            icon: Icons.favorite_rounded,
+            status: _polarService.isHeartRateStreaming
+                ? SensorAcquisitionStatus.acquiring
+                : _polarService.isConnected
+                    ? SensorAcquisitionStatus.stopped
+                    : SensorAcquisitionStatus.unavailable,
+          ),
+          SensorStatus(
+            id: 'rr',
+            name: 'RR',
+            icon: Icons.timeline_rounded,
+            status: _polarService.isRrStreaming
+                ? SensorAcquisitionStatus.acquiring
+                : _polarService.isConnected
+                    ? SensorAcquisitionStatus.stopped
+                    : SensorAcquisitionStatus.unavailable,
+          ),
+          SensorStatus(
+            id: 'acc',
+            name: 'ACC',
+            icon: Icons.sensors_rounded,
+            status: _polarService.isAccelerationStreaming
+                ? SensorAcquisitionStatus.acquiring
+                : _polarService.isConnected
+                    ? SensorAcquisitionStatus.stopped
+                    : SensorAcquisitionStatus.unavailable,
+            detail: '200 Hz',
+          ),
+          SensorStatus(
+            id: 'ecg',
+            name: 'ECG',
+            icon: Icons.show_chart_rounded,
+            status: _polarService.isEcgStreaming
+                ? SensorAcquisitionStatus.acquiring
+                : _polarService.isConnected
+                    ? SensorAcquisitionStatus.stopped
+                    : SensorAcquisitionStatus.unavailable,
+            detail: '130 Hz',
+          ),
+        ],
+      ),
+    ];
   }
 
   // ===========================================================================
@@ -592,13 +688,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         ActionChip(
           avatar: Icon(
             Icons.bluetooth_rounded,
-            color: _polarService.isConnected ? const Color(0xFF38BDF8) : Colors.white24,
+            color: _polarService.isConnected
+                ? const Color(0xFF38BDF8)
+                : Colors.white24,
             size: 18,
           ),
           label: Text(
-            _polarService.isConnected ? 'Polar Conectado' : 'Conectar Polar',
+            _polarService.isConnected
+                ? 'Polar Conectado'
+                : 'Conectar Polar',
             style: TextStyle(
-              color: _polarService.isConnected ? Colors.white : Colors.white60,
+              color: _polarService.isConnected
+                  ? Colors.white
+                  : Colors.white60,
               fontWeight: FontWeight.bold,
               fontSize: 12,
             ),
@@ -607,27 +709,88 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ? const Color(0xFF38BDF8).withAlpha(40)
               : const Color(0xFF1E293B),
           side: BorderSide(
-            color: _polarService.isConnected ? const Color(0xFF38BDF8) : Colors.white24,
+            color: _polarService.isConnected
+                ? const Color(0xFF38BDF8)
+                : Colors.white24,
           ),
           onPressed: _showPolarConnectionDialog,
         ),
+
         const SizedBox(width: 10),
+
+        // Device status summary
+        PopupMenuButton<DeviceStatus>(
+          tooltip: 'Estado de dispositivos',
+          offset: const Offset(0, 45),
+          color: const Color(0xFF1E293B),
+          itemBuilder: (context) {
+            return _deviceStatuses.map((device) {
+              return PopupMenuItem<DeviceStatus>(
+                enabled: false,
+                child: _DeviceStatusCard(
+                  device: device,
+                ),
+              );
+            }).toList();
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 7,
+            ),
+            decoration: BoxDecoration(
+              color: const Color(0xFF334155),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.sensors_rounded,
+                  color: Colors.white70,
+                  size: 16,
+                ),
+                const SizedBox(width: 7),
+                Text(
+                  '${_deviceStatuses.length} dispositivos',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        const SizedBox(width: 10),
+
+        // Session status
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 7,
+          ),
           decoration: BoxDecoration(
-            color: _sessionActive ? const Color(0xFF14532D) : const Color(0xFF334155),
+            color: _sessionActive
+                ? const Color(0xFF14532D)
+                : const Color(0xFF334155),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
             children: [
               Icon(
                 Icons.circle,
-                color: _sessionActive ? const Color(0xFF34D399) : Colors.white38,
+                color: _sessionActive
+                    ? const Color(0xFF34D399)
+                    : Colors.white38,
                 size: 10,
               ),
               const SizedBox(width: 8),
               Text(
-                _sessionActive ? 'SESIÓN ACTIVA' : 'EN ESPERA',
+                _sessionActive
+                    ? 'SESIÓN ACTIVA'
+                    : 'EN ESPERA',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -907,6 +1070,132 @@ class _MonitorCard extends StatelessWidget {
           const SizedBox(height: 12),
           Expanded(child: child),
         ],
+      ),
+    );
+  }
+}
+
+class _DeviceStatusCard extends StatelessWidget {
+  final DeviceStatus device;
+
+  const _DeviceStatusCard({
+    required this.device,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(device.icon),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    device.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                _StatusDot(
+                  color: _deviceConnectionColor(
+                    device.connectionStatus,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ...device.sensors.map(
+              (sensor) => Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      sensor.icon,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(sensor.name),
+                    ),
+                    if (sensor.detail != null) ...[
+                      Text(
+                        sensor.detail!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    _StatusDot(
+                      color: _sensorStatusColor(
+                        sensor.status,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Color _deviceConnectionColor(
+    DeviceConnectionStatus status,
+  ) {
+    switch (status) {
+      case DeviceConnectionStatus.connected:
+        return Colors.green;
+      case DeviceConnectionStatus.connecting:
+        return Colors.orange;
+      case DeviceConnectionStatus.disconnected:
+        return Colors.grey;
+      case DeviceConnectionStatus.error:
+        return Colors.red;
+    }
+  }
+
+  Color _sensorStatusColor(
+    SensorAcquisitionStatus status,
+  ) {
+    switch (status) {
+      case SensorAcquisitionStatus.acquiring:
+        return Colors.green;
+      case SensorAcquisitionStatus.ready:
+        return Colors.blue;
+      case SensorAcquisitionStatus.stopped:
+        return Colors.orange;
+      case SensorAcquisitionStatus.unavailable:
+        return Colors.grey;
+      case SensorAcquisitionStatus.error:
+        return Colors.red;
+    }
+  }
+}
+
+
+class _StatusDot extends StatelessWidget {
+  final Color color;
+
+  const _StatusDot({
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 9,
+      height: 9,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
       ),
     );
   }

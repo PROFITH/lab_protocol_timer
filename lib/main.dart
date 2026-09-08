@@ -6,6 +6,7 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lab_protocol_timer/utils/web_exit_guard.dart';
+import 'config/default_protocol_configuration.dart';
 import 'services/lab_redcap_service.dart';
 import 'windows/research_monitor_window.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
@@ -60,7 +61,9 @@ Future<void> main(List<String> args) async {
       const MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Research Monitor',
-        home: ResearchMonitorWindow(),
+        home: ResearchMonitorWindow(
+          protocolConfiguration: defaultProtocolConfiguration,
+        ),
       ),
     );
     return;

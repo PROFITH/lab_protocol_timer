@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import '../models/polar_hr_sample.dart';
+import '../models/device_configuration.dart';
 
 class PolarBleService {
   // ===========================================================================
@@ -253,14 +254,15 @@ class PolarBleService {
   // STATE
   // ===========================================================================
 
+  bool _hrStreaming = false;
+  bool _rrStreaming = false;
   bool _ecgStreaming = false;
   bool _accStreaming = false;
 
-  bool get isEcgStreaming =>
-      _ecgStreaming;
-
-  bool get isAccelerationStreaming =>
-      _accStreaming;
+  bool get isHeartRateStreaming => _hrStreaming;
+  bool get isRrStreaming => _rrStreaming;
+  bool get isEcgStreaming => _ecgStreaming;
+  bool get isAccelerationStreaming => _accStreaming;
 
   // ===========================================================================
   // PMD CONTROL POINT STATE
@@ -481,19 +483,13 @@ class PolarBleService {
       // HR
       // -----------------------------------------------------------------------
 
-      await _setupHeartRate(device);
+      await _prepareHeartRate(device);
 
       // -----------------------------------------------------------------------
       // PMD
       // -----------------------------------------------------------------------
 
       await _setupPmd(device);
-
-      // -----------------------------------------------------------------------
-      // ACCELEROMETER
-      // -----------------------------------------------------------------------
-
-      await startAcceleration();
 
       return true;
     } catch (e, stack) {
@@ -515,7 +511,7 @@ class PolarBleService {
   // SETUP HR
   // ===========================================================================
 
-  Future<void> _setupHeartRate(
+  Future<void> _prepareHeartRate(
     BleDevice device,
   ) async {
     final characteristic =
@@ -535,22 +531,8 @@ class PolarBleService {
       );
     }
 
-    await _hrValueSubscription?.cancel();
-
-    _hrValueSubscription =
-        characteristic.onValueReceived.listen(
-      (value) {
-        _parseHeartRateData(value);
-      },
-    );
-
-    await characteristic
-        .notifications
-        .subscribe();
-
-    debugPrint(
-      '[POLAR DEBUG] HR notifications SUSCRITAS',
-    );
+    _hrStreaming = true;
+    _rrStreaming = true;
   }
 
   // ===========================================================================
@@ -2525,6 +2507,52 @@ class PolarBleService {
   }
 
   // ===========================================================================
+  // HR START
+  // ===========================================================================
+
+  Future<void> startHeartRate() async {
+    final characteristic = _hrCharacteristic;
+
+    if (characteristic == null) {
+      throw Exception(
+        'HR characteristic no preparada',
+      );
+    }
+
+    if (_hrStreaming) {
+      return;
+    }
+
+    await _hrValueSubscription?.cancel();
+
+    _hrValueSubscription =
+        characteristic.onValueReceived.listen(
+      (value) {
+        _parseHeartRateData(value);
+      },
+    );
+
+    if (!characteristic
+        .notifications
+        .isSupported) {
+      throw Exception(
+        'HR does not support notifications',
+      );
+    }
+
+    await characteristic
+        .notifications
+        .subscribe();
+
+    _hrStreaming = true;
+    _rrStreaming = true;
+
+    debugPrint(
+      '[POLAR DEBUG] HR notifications SUSCRITAS',
+    );
+  }
+
+  // ===========================================================================
   // HR PARSER
   // ===========================================================================
 
@@ -2925,6 +2953,8 @@ class PolarBleService {
     _psftp52 = null;
     _psftp53 = null;
 
+    _hrStreaming = false;
+    _rrStreaming = false;
     _ecgStreaming = false;
     _accStreaming = false;
 
@@ -3048,6 +3078,26 @@ class PolarBleService {
     await _accStreamController.close();
     await _accUiStreamController.close();
     await _scanStreamController.close();
+  }
+
+  // ===========================================================================
+  // START CONFIGURED SENSORS
+  // ===========================================================================
+
+  Future<void> startConfiguredSensors(
+    DeviceConfiguration configuration,
+  ) async {
+    if (configuration.hasSensor('heart_rate')) {
+      await startHeartRate();
+    }
+
+    if (configuration.hasSensor('acc')) {
+      await startAcceleration();
+    }
+
+    if (configuration.hasSensor('ecg')) {
+      await startEcg();
+    }
   }
 }
 
