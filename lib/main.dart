@@ -1995,18 +1995,18 @@ class TimerPageState extends State<TimerPage>
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Icon(
-                                Icons.sync_rounded,
+                                Icons.touch_app_rounded,
                                 size: 64,
                                 color: Colors.black,
                               ),
                               SizedBox(height: 8),
                               Text(
-                                '¡SINCRONIZAR!',
+                                '¡GOLPEA LOS DISPOSITIVOS!',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  fontSize: 24,
+                                  fontSize: 20,
                                   fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.5,
+                                  letterSpacing: 1.2,
                                   color: Colors.black,
                                 ),
                               ),
