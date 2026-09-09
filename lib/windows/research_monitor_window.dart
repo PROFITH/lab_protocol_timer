@@ -682,24 +682,37 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF07090E),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
             children: [
               _buildHeader(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
+
+              // ===============================================================
+              // CONTROL DE SESIÓN
+              // ===============================================================
+              _buildSessionControlPanel(),
+
+              const SizedBox(height: 16),
+
+              // ===============================================================
+              // MONITORIZACIÓN
+              // ===============================================================
               Expanded(
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
                       flex: 3,
-                      child: _buildVideoPanel(),
+                      child: _buildMonitoringArea(),
                     ),
-                    const SizedBox(width: 20),
+                    const SizedBox(width: 16),
                     Expanded(
                       flex: 2,
-                      child: _buildSensorPanel(),
+                      child: _buildDeviceStatusPanel(),
                     ),
                   ],
                 ),
@@ -711,50 +724,196 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildHeader() {
-    return Row(
-      children: [
-        const Icon(
-          Icons.monitor_heart_rounded,
-          color: Color(0xFF38BDF8),
-          size: 30,
-        ),
-        const SizedBox(width: 12),
-        const Expanded(
-          child: Text(
-            'RESEARCH MONITOR',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.5,
+  Widget _buildSessionControlPanel() {
+    return _MonitorCard(
+      title: 'CONTROL DE SESIÓN',
+      icon: Icons.tune_rounded,
+      child: Row(
+        children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.play_arrow_rounded),
+              label: const Text(
+                'INICIAR',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
             ),
           ),
-        ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(
-              'Participante: $_participantIds',
-              style: const TextStyle(
-                color: Colors.white70,
-                fontWeight: FontWeight.bold,
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton.tonalIcon(
+              onPressed: () {},
+              icon: const Icon(Icons.skip_next_rounded),
+              label: const Text(
+                'LAP',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
-            Text(
-              'Actividad $_activityIndex • $_phaseName',
-              style: const TextStyle(
-                color: Colors.white38,
-                fontSize: 12,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () {},
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.stop_rounded),
+              label: const Text(
+                'FINALIZAR Y SINCRONIZAR',
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
-          ],
+          ),
+          const SizedBox(width: 10),
+          IconButton(
+            tooltip: 'Voz',
+            onPressed: () {},
+            icon: const Icon(Icons.volume_up_rounded),
+          ),
+          IconButton(
+            tooltip: 'Ajustes',
+            onPressed: () {},
+            icon: const Icon(Icons.settings_rounded),
+          ),
+          IconButton(
+            tooltip: 'Cancelar prueba',
+            onPressed: () {},
+            icon: const Icon(
+              Icons.close_rounded,
+              color: Colors.redAccent,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMonitoringArea() {
+    return _MonitorCard(
+      title: 'MONITORIZACIÓN EN TIEMPO REAL',
+      icon: Icons.monitor_heart_rounded,
+      expandChild: true,
+      child: _buildVideoAndCharts(),
+    );
+  }
+
+  Widget _buildVideoAndCharts() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 3,
+          child: _buildVideoPanel(),
         ),
-        const SizedBox(width: 20),
-        _buildSyncButton(),
-        const SizedBox(width: 10),
-        _buildStatusIndicator(),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _buildSensorPanel(),
+        ),
       ],
+    );
+  }
+
+  Widget _buildDeviceStatusPanel() {
+    return _MonitorCard(
+      title: 'DISPOSITIVOS Y SENSORES',
+      icon: Icons.devices_other_rounded,
+      expandChild: true,
+      child: ListView.separated(
+        itemCount: _deviceStatuses.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          return _DeviceStatusCard(
+            device: _deviceStatuses[index],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return _MonitorCard(
+      title: 'SESIÓN',
+      icon: Icons.assignment_rounded,
+      child: Row(
+        children: [
+          // Identificación de la sesión
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$_participantIds · Día 0',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Actividad ${_activityIndex + 1} · $_phaseName',
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey.shade400,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Número de actividades guardadas
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 8,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: Colors.white.withValues(alpha: 0.06),
+            ),
+            child: Text(
+              '${_hrHistory.length} guardadas',
+              style: const TextStyle(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+
+          const SizedBox(width: 16),
+
+          // Estado de la sesión
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _StatusDot(
+                color: _sessionActive
+                    ? Colors.greenAccent
+                    : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _sessionActive ? 'SESIÓN ACTIVA' : 'EN ESPERA',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  color: _sessionActive
+                      ? Colors.greenAccent
+                      : Colors.grey.shade400,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1139,11 +1298,13 @@ class _MonitorCard extends StatelessWidget {
   final String title;
   final IconData icon;
   final Widget child;
+  final bool expandChild;
 
   const _MonitorCard({
     required this.title,
     required this.icon,
     required this.child,
+    this.expandChild = false,
   });
 
   @override
@@ -1160,7 +1321,11 @@ class _MonitorCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, color: const Color(0xFF38BDF8), size: 20),
+              Icon(
+                icon,
+                color: const Color(0xFF38BDF8),
+                size: 20,
+              ),
               const SizedBox(width: 8),
               Text(
                 title,
@@ -1174,7 +1339,11 @@ class _MonitorCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Expanded(child: child),
+
+          if (expandChild)
+            Expanded(child: child)
+          else
+            child,
         ],
       ),
     );
