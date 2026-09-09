@@ -103,7 +103,7 @@ class VideoRecordingService {
 
   bool _isInitialized = false;
   bool _isRecording = false;
-  static const double minimumFreeSpaceGB = 100.0;
+  static const double minimumFreeSpaceGB = 10.0;
 
   DateTime? _currentRecordingStartTime;
   final List<VideoLogEntry> recordedVideoLogs = [];

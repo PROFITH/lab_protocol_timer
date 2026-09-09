@@ -10,6 +10,7 @@ class ResearchMonitorBridge extends WindowListener {
 
   MultiWindowManager? _monitorWindow;
   ProtocolConfiguration? _protocolConfiguration;
+  VoidCallback? _onSyncWindowRequested;
 
   int? get monitorWindowId => _monitorWindow?.id;
 
@@ -28,6 +29,12 @@ class ResearchMonitorBridge extends WindowListener {
     debugPrint(
       '[IPC] Configuración de protocolo almacenada.',
     );
+  }
+
+  void setOnSyncWindowRequested(
+    VoidCallback callback,
+  ) {
+    _onSyncWindowRequested = callback;
   }
 
   @override
@@ -54,6 +61,14 @@ class ResearchMonitorBridge extends WindowListener {
           '[IPC] No hay configuración de protocolo disponible.',
         );
       }
+    }
+
+    if (eventName == WindowMessages.syncWindowRequested) {
+      debugPrint(
+        '[SYNC] Solicitud de ventana de sincronización recibida.',
+      );
+
+      _onSyncWindowRequested?.call();
     }
 
     return null;

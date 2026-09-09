@@ -129,6 +129,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   @override
   void initState() {
     super.initState();
+
     _addParticipantField(); // Default - 1 participant
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUnsavedSession();
@@ -679,6 +680,44 @@ class TimerPageState extends State<TimerPage>
     return 'session_$timestamp';
   }
 
+  // Create sync window
+  void _createSyncWindow() {
+    if (!_isRunning || _isPaused) {
+      debugPrint(
+        '[SYNC] Ignorada: la sesión no está activa.',
+      );
+      return;
+    }
+
+    final windowStart = DateTime.now().toUtc();
+    final windowEnd = windowStart.add(
+      const Duration(seconds: 10),
+    );
+
+    final syncWindow = SyncWindow(
+      eventId: 'sync_${_syncWindows.length + 1}',
+      eventType: 'manual_sync',
+      activityIndex: _currentActivity,
+      phase: _currentPhaseName,
+      windowStart: windowStart,
+      windowEnd: windowEnd,
+    );
+
+    setState(() {
+      _syncWindows.add(syncWindow);
+    });
+
+    debugPrint(
+      '[SYNC] Ventana creada: '
+      '${syncWindow.eventId} | '
+      '${syncWindow.phase} | '
+      '${syncWindow.windowStart.toIso8601String()} → '
+      '${syncWindow.windowEnd.toIso8601String()}',
+    );
+
+    _persistSessionLocally();
+  }
+
   // Export sync windows
   String _exportSyncWindowsCsv() {
     final buffer = StringBuffer();
@@ -839,6 +878,10 @@ class TimerPageState extends State<TimerPage>
     _completedActivities = widget.restoredActivities != null
         ? List.from(widget.restoredActivities!)
         : [];
+    
+    ResearchMonitorBridge.instance.setOnSyncWindowRequested(
+    _createSyncWindow,
+  );
 
     _syncWindows.clear();
     if (widget.restoredSyncWindows != null) {
