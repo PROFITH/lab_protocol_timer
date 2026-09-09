@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'window_messages.dart';
 import '../models/protocol_configuration.dart';
-import '../config/default_protocol_configuration.dart';
 
 class ResearchMonitorBridge extends WindowListener {
   ResearchMonitorBridge._();
@@ -10,6 +9,7 @@ class ResearchMonitorBridge extends WindowListener {
   static final ResearchMonitorBridge instance = ResearchMonitorBridge._();
 
   MultiWindowManager? _monitorWindow;
+  ProtocolConfiguration? _protocolConfiguration;
 
   int? get monitorWindowId => _monitorWindow?.id;
 
@@ -18,6 +18,16 @@ class ResearchMonitorBridge extends WindowListener {
 
     _monitorWindow = window;
     debugPrint('[IPC] Research Monitor registrado. ID=${window.id}');
+  }
+
+  void setProtocolConfiguration(
+    ProtocolConfiguration configuration,
+  ) {
+    _protocolConfiguration = configuration;
+
+    debugPrint(
+      '[IPC] Configuración de protocolo almacenada.',
+    );
   }
 
   @override
@@ -35,9 +45,15 @@ class ResearchMonitorBridge extends WindowListener {
         '[IPC] Research Monitor confirma que está listo.',
       );
 
-      sendProtocolConfiguration(
-        defaultProtocolConfiguration,
-      );
+      final configuration = _protocolConfiguration;
+
+      if (configuration != null) {
+        await sendProtocolConfiguration(configuration);
+      } else {
+        debugPrint(
+          '[IPC] No hay configuración de protocolo disponible.',
+        );
+      }
     }
 
     return null;

@@ -523,7 +523,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       );
 
       ResearchMonitorBridge.instance.setMonitorWindow(window);
-
+      ResearchMonitorBridge.instance.setProtocolConfiguration(
+        defaultProtocolConfiguration,
+      );
       ResearchMonitorBridge.instance.sendProtocolConfiguration(
         defaultProtocolConfiguration,
       );
