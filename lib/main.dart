@@ -666,9 +666,6 @@ class TimerPageState extends State<TimerPage>
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
-  
-  late AnimationController _pulseController;
-  late Animation<double> _pulseAnimation;
 
   String _videoProcessingStatus = 'Finalizando grabación...';
 
@@ -850,15 +847,6 @@ class TimerPageState extends State<TimerPage>
     _seconds = _prepSeconds;
     _initTts();
 
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    )..repeat(reverse: true);
-
-    _pulseAnimation = Tween<double>(begin: 0.96, end: 1.04).animate(
-      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
-    );
-
     registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
     
     // _initCamera();
@@ -897,7 +885,6 @@ class TimerPageState extends State<TimerPage>
   void dispose() {
     unregisterWebExitGuard();
     _timer?.cancel();
-    _pulseController.dispose();
     _audioPlayer.dispose();
     _flutterTts.stop();
     super.dispose();
@@ -1576,9 +1563,6 @@ class TimerPageState extends State<TimerPage>
       progress = _postSeconds > 0 ? _seconds / _postSeconds : 0.0;
     }
 
-    bool isActionWindow = (_currentPhase == 0 && _seconds <= 5) ||
-        (_currentPhase == 2 && _seconds >= (_postSeconds - 5));
-
     String mainTitle;
     String actionAdvice;
     Color accentColor;
@@ -1586,49 +1570,40 @@ class TimerPageState extends State<TimerPage>
     Color screenBg;
     IconData actionIcon;
 
-    if (isActionWindow) {
-      mainTitle = '¡ENTRECHOCAR SENSORES!';
-      actionAdvice = 'GOLPEA LOS ACELERÓMETROS AHORA';
-      accentColor = const Color(0xFFFDE047);
-      bannerBg = const Color(0xFF854D0E);
-      screenBg = const Color(0xFF451A03);
-      actionIcon = Icons.sensors;
-    } else {
-      switch (_currentPhase) {
-        case 0:
-          mainTitle = 'TOTALMENTE ESTÁTICO';
-          actionAdvice = 'Quédate completamente inmóvil';
-          accentColor = const Color(0xFFFB923C);
-          bannerBg = const Color(0xFF9A3412);
-          screenBg = const Color(0xFF2C1005);
-          actionIcon = Icons.accessibility_new_rounded;
-          break;
-        case 1:
-          mainTitle = 'ACTIVIDAD EN CURSO';
-          actionAdvice = 'Ejecuta el ejercicio asignado';
-          accentColor = const Color(0xFF34D399);
-          bannerBg = const Color(0xFF065F46);
-          screenBg = const Color(0xFF022C22);
-          actionIcon = Icons.directions_run_rounded;
-          break;
-        case 2:
-          mainTitle = 'FINALIZACIÓN';
-          actionAdvice = 'Detén el movimiento y mantente inmóvil';
-          accentColor = const Color(0xFFF87171);
-          bannerBg = const Color(0xFF991B1B);
-          screenBg = const Color(0xFF450A0A);
-          actionIcon = Icons.accessibility_new_rounded;
-          break;
-        case 3:
-        default:
-          mainTitle = 'EN ESPERA (LAP)';
-          actionAdvice = 'Rotación de actividad - Pulsa "Lap"';
-          accentColor = const Color(0xFF94A3B8);
-          bannerBg = const Color(0xFF334155);
-          screenBg = const Color(0xFF0F172A);
-          actionIcon = Icons.pause_circle_filled_rounded;
-          break;
-      }
+    switch (_currentPhase) {
+      case 0:
+        mainTitle = 'TOTALMENTE ESTÁTICO';
+        actionAdvice = 'Quédate completamente inmóvil';
+        accentColor = const Color(0xFFFB923C);
+        bannerBg = const Color(0xFF9A3412);
+        screenBg = const Color(0xFF2C1005);
+        actionIcon = Icons.accessibility_new_rounded;
+        break;
+      case 1:
+        mainTitle = 'ACTIVIDAD EN CURSO';
+        actionAdvice = 'Ejecuta el ejercicio asignado';
+        accentColor = const Color(0xFF34D399);
+        bannerBg = const Color(0xFF065F46);
+        screenBg = const Color(0xFF022C22);
+        actionIcon = Icons.directions_run_rounded;
+        break;
+      case 2:
+        mainTitle = 'FINALIZACIÓN';
+        actionAdvice = 'Detén el movimiento y mantente inmóvil';
+        accentColor = const Color(0xFFF87171);
+        bannerBg = const Color(0xFF991B1B);
+        screenBg = const Color(0xFF450A0A);
+        actionIcon = Icons.accessibility_new_rounded;
+        break;
+      case 3:
+      default:
+        mainTitle = 'EN ESPERA (LAP)';
+        actionAdvice = 'Rotación de actividad - Pulsa "Lap"';
+        accentColor = const Color(0xFF94A3B8);
+        bannerBg = const Color(0xFF334155);
+        screenBg = const Color(0xFF0F172A);
+        actionIcon = Icons.pause_circle_filled_rounded;
+        break;
     }
 
     final headerText = _participants.length == 1
@@ -1813,13 +1788,13 @@ class TimerPageState extends State<TimerPage>
                         borderRadius: BorderRadius.circular(24),
                         border: Border.all(
                           color: accentColor,
-                          width: isActionWindow ? 3.0 : 1.5,
+                          width: 1.5,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: accentColor.withAlpha(isActionWindow ? 120 : 40),
-                            blurRadius: isActionWindow ? 35 : 15,
-                            spreadRadius: isActionWindow ? 4 : 0,
+                            color: accentColor.withAlpha(40),
+                            blurRadius: 15,
+                            spreadRadius: 0,
                           ),
                         ],
                       ),
@@ -1834,8 +1809,8 @@ class TimerPageState extends State<TimerPage>
                                 child: Text(
                                   mainTitle,
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: isActionWindow ? 24 : 22,
+                                  style: const TextStyle(
+                                    fontSize: 22,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 1.5,
                                     color: Colors.white,
@@ -1878,7 +1853,7 @@ class TimerPageState extends State<TimerPage>
                             color: const Color(0xFF0F172A).withAlpha(180),
                             boxShadow: [
                               BoxShadow(
-                                color: accentColor.withAlpha(isActionWindow ? 90 : 25),
+                                color: accentColor.withAlpha(25),
                                 blurRadius: 30,
                                 spreadRadius: 2,
                               ),
@@ -1928,10 +1903,7 @@ class TimerPageState extends State<TimerPage>
                       ],
                     );
 
-                    return isActionWindow
-                        ? ScaleTransition(
-                            scale: _pulseAnimation, child: timerDisplay)
-                        : timerDisplay;
+                    return timerDisplay;
                   },
                 ),
                 const Spacer(flex: 2),
@@ -2353,23 +2325,23 @@ class TimerPageState extends State<TimerPage>
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(height: 10),
+              const SizedBox(height: 10),
 
-              LinearProgressIndicator(),
+              const LinearProgressIndicator(),
 
-              SizedBox(height: 20),
+              const SizedBox(height: 20),
 
               Text(
                 _videoProcessingStatus,
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.white70,
                 ),
               ),
 
-              SizedBox(height: 10),
+              const SizedBox(height: 10),
 
-              Text(
+              const Text(
                 'Esto puede tardar unos minutos en sesiones largas.\n'
                 'No cierres la aplicación.',
                 textAlign: TextAlign.center,
