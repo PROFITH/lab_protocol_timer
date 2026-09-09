@@ -13,6 +13,7 @@ import 'package:multi_window_manager/multi_window_manager.dart';
 import 'windows/research_monitor_bridge.dart';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
+import 'models/sync_window.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
