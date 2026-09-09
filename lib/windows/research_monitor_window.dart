@@ -39,6 +39,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   String _phaseName = 'idle';
   bool _sessionActive = false;
   bool _cameraReady = false;
+  bool _syncAvailable = false;
   Directory? _sessionExportDirectory;
   late ProtocolConfiguration _protocolConfiguration;
 
@@ -294,6 +295,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             totalActivities: totalActs,
           );
           if (mounted) setState(() {});
+        }
+        break;
+      
+      case WindowMessages.syncAvailability:
+        if (arguments is bool) {
+          setState(() {
+            _syncAvailable = arguments;
+          });
+
+          debugPrint(
+            '[SYNC] Disponibilidad recibida: '
+            '${_syncAvailable ? 'ACTIVA' : 'INACTIVA'}',
+          );
         }
         break;
     }
@@ -746,7 +760,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
   Widget _buildSyncButton() {
     return ElevatedButton.icon(
-      onPressed: _requestSyncWindow,
+      onPressed: _syncAvailable ? _requestSyncWindow : null,
       icon: const Icon(
         Icons.sync_rounded,
         size: 18,
@@ -761,6 +775,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       style: ElevatedButton.styleFrom(
         backgroundColor: const Color(0xFF38BDF8),
         foregroundColor: Colors.black,
+        disabledBackgroundColor: Colors.grey.shade300,
+        disabledForegroundColor: Colors.grey.shade600,
         padding: const EdgeInsets.symmetric(
           horizontal: 14,
           vertical: 10,

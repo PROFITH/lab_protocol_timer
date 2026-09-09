@@ -37,6 +37,18 @@ class ResearchMonitorBridge extends WindowListener {
     _onSyncWindowRequested = callback;
   }
 
+  Future<void> setSyncAvailability(bool available) async {
+    await send(
+      WindowMessages.syncAvailability,
+      available,
+    );
+
+    debugPrint(
+      '[SYNC] Disponibilidad actualizada: '
+      '${available ? 'ACTIVA' : 'INACTIVA'}',
+    );
+  }
+
   @override
   Future<dynamic> onEventFromWindow(
     String eventName,

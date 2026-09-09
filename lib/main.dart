@@ -984,6 +984,29 @@ class TimerPageState extends State<TimerPage>
     }
   }
 
+  bool get _syncAvailable {
+    if (!_isRunning || _isPaused) {
+      return false;
+    }
+
+    switch (_currentPhase) {
+      case 0: // static_prep
+        return _seconds >= 12;
+
+      case 1: // activity_main
+        return false;
+
+      case 2: // static_post
+        return _seconds >= 12;
+
+      case 3: // transition_lap
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
   Future<void> _cancelSession() async {
     final shouldCancel = await showDialog<bool>(
       context: context,
@@ -1531,6 +1554,10 @@ class TimerPageState extends State<TimerPage>
           participantIds: participantSummary,
           activityIndex: _currentActivity,
           phaseName: _currentPhaseName,
+        );
+
+        ResearchMonitorBridge.instance.setSyncAvailability(
+          _syncAvailable,
         );
 
         if (_syncIndicatorEnd != null &&

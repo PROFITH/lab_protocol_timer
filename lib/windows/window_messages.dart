@@ -10,6 +10,7 @@ class WindowMessages {
   static const String researchMonitorReady = 'research_monitor_ready';
 
   static const String syncWindowRequested = 'sync_window_requested';
+  static const String syncAvailability = 'sync_availability';
   
   static const String sensorStatus = 'sensor_status';
 
