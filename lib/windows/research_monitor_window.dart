@@ -892,7 +892,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         children: [
           Expanded(
             child: FilledButton.icon(
-              onPressed: () {},
+              onPressed: () async {
+                await MultiWindowManager.current.invokeMethodToWindow(
+                  0,
+                  WindowMessages.sessionStartRequested,
+                );
+              },
               icon: const Icon(Icons.play_arrow_rounded),
               label: const Text(
                 'INICIAR',
@@ -905,7 +910,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           const SizedBox(width: 10),
           Expanded(
             child: FilledButton.tonalIcon(
-              onPressed: () {},
+              onPressed: () async {
+                await MultiWindowManager.current.invokeMethodToWindow(
+                  0,
+                  WindowMessages.lapRequested,
+                );
+              },
               icon: const Icon(Icons.skip_next_rounded),
               label: const Text(
                 'LAP',
@@ -920,7 +930,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           const SizedBox(width: 10),
           Expanded(
             child: FilledButton.icon(
-              onPressed: () {},
+              onPressed: () async {
+                await MultiWindowManager.current.invokeMethodToWindow(
+                  0,
+                  WindowMessages.sessionFinishRequested,
+                );
+              },
               style: FilledButton.styleFrom(
                 backgroundColor: Colors.redAccent,
                 foregroundColor: Colors.white,
@@ -947,7 +962,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ),
           IconButton(
             tooltip: 'Cancelar prueba',
-            onPressed: () {},
+            onPressed: () async {
+              await MultiWindowManager.current.invokeMethodToWindow(
+                0,
+                WindowMessages.sessionCancelRequested,
+              );
+            },
             icon: const Icon(
               Icons.close_rounded,
               color: Colors.redAccent,

@@ -11,6 +11,12 @@ class WindowMessages {
 
   static const String syncWindowRequested = 'sync_window_requested';
   static const String syncAvailability = 'sync_availability';
+  static const String sessionStartRequested = 'session_start_requested';
+  static const String sessionPauseRequested = 'session_pause_requested';
+  static const String sessionResumeRequested = 'session_resume_requested';
+  static const String lapRequested = 'lap_requested';
+  static const String sessionFinishRequested = 'session_finish_requested';
+  static const String sessionCancelRequested = 'session_cancel_requested';
   
   static const String sensorStatus = 'sensor_status';
 

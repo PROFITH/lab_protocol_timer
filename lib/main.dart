@@ -878,8 +878,40 @@ class TimerPageState extends State<TimerPage>
         : [];
     
     ResearchMonitorBridge.instance.setOnSyncWindowRequested(
-    _createSyncWindow,
-  );
+      _createSyncWindow,
+    );
+
+    ResearchMonitorBridge.instance.setOnSessionStartRequested(
+      _startPauseTimer,
+    );
+
+    ResearchMonitorBridge.instance.setOnSessionPauseRequested(
+      () {
+        if (_isRunning) {
+          _startPauseTimer();
+        }
+      },
+    );
+
+    ResearchMonitorBridge.instance.setOnSessionResumeRequested(
+      () {
+        if (_isPaused) {
+          _startPauseTimer();
+        }
+      },
+    );
+
+    ResearchMonitorBridge.instance.setOnLapRequested(
+      _nextActivity,
+    );
+
+    ResearchMonitorBridge.instance.setOnSessionFinishRequested(
+      _confirmFinishSession,
+    );
+
+    ResearchMonitorBridge.instance.setOnSessionCancelRequested(
+      _cancelSession,
+    );
 
     _syncWindows.clear();
     if (widget.restoredSyncWindows != null) {

@@ -11,6 +11,12 @@ class ResearchMonitorBridge extends WindowListener {
   MultiWindowManager? _monitorWindow;
   ProtocolConfiguration? _protocolConfiguration;
   VoidCallback? _onSyncWindowRequested;
+  VoidCallback? _onSessionStartRequested;
+  VoidCallback? _onSessionPauseRequested;
+  VoidCallback? _onSessionResumeRequested;
+  VoidCallback? _onLapRequested;
+  VoidCallback? _onSessionFinishRequested;
+  VoidCallback? _onSessionCancelRequested;
 
   int? get monitorWindowId => _monitorWindow?.id;
 
@@ -60,10 +66,32 @@ class ResearchMonitorBridge extends WindowListener {
     );
   }
 
-  void setOnSyncWindowRequested(
-    VoidCallback callback,
-  ) {
+  void setOnSyncWindowRequested(VoidCallback callback) {
     _onSyncWindowRequested = callback;
+  }
+
+  void setOnSessionStartRequested(VoidCallback callback) {
+    _onSessionStartRequested = callback;
+  }
+
+  void setOnSessionPauseRequested(VoidCallback callback) {
+    _onSessionPauseRequested = callback;
+  }
+
+  void setOnSessionResumeRequested(VoidCallback callback) {
+    _onSessionResumeRequested = callback;
+  }
+
+  void setOnLapRequested(VoidCallback callback) {
+    _onLapRequested = callback;
+  }
+
+  void setOnSessionFinishRequested(VoidCallback callback) {
+    _onSessionFinishRequested = callback;
+  }
+
+  void setOnSessionCancelRequested(VoidCallback callback) {
+    _onSessionCancelRequested = callback;
   }
 
   Future<void> setSyncAvailability(bool available) async {
@@ -116,11 +144,38 @@ class ResearchMonitorBridge extends WindowListener {
     }
 
     if (eventName == WindowMessages.syncWindowRequested) {
-      debugPrint(
-        '[SYNC] Solicitud de ventana de sincronización recibida.',
-      );
-
+      debugPrint('[SYNC] Solicitud de ventana de sincronización recibida.');
       _onSyncWindowRequested?.call();
+    }
+
+    if (eventName == WindowMessages.sessionStartRequested) {
+      debugPrint('[IPC] Solicitud de INICIAR recibida.');
+      _onSessionStartRequested?.call();
+    }
+
+    if (eventName == WindowMessages.sessionPauseRequested) {
+      debugPrint('[IPC] Solicitud de PAUSAR recibida.');
+      _onSessionPauseRequested?.call();
+    }
+
+    if (eventName == WindowMessages.sessionResumeRequested) {
+      debugPrint('[IPC] Solicitud de REANUDAR recibida.');
+      _onSessionResumeRequested?.call();
+    }
+
+    if (eventName == WindowMessages.lapRequested) {
+      debugPrint('[IPC] Solicitud de LAP recibida.');
+      _onLapRequested?.call();
+    }
+
+    if (eventName == WindowMessages.sessionFinishRequested) {
+      debugPrint('[IPC] Solicitud de FINALIZAR recibida.');
+      _onSessionFinishRequested?.call();
+    }
+
+    if (eventName == WindowMessages.sessionCancelRequested) {
+      debugPrint('[IPC] Solicitud de CANCELAR recibida.');
+      _onSessionCancelRequested?.call();
     }
 
     return null;
