@@ -651,14 +651,11 @@ class TimerPageState extends State<TimerPage>
   int _waitingElapsedSeconds = 0;
 
   List<ActivityLog> _completedActivities = [];
-  /// Unique identifier for the protocol session.
   String? _sessionId;
-  /// UTC timestamp at which the protocol session started.
   DateTime? _sessionStartTime;
-  /// UTC timestamp at which the current main activity started.
   DateTime? _currentActivityStartTime;
-  /// Synchronization windows announced during the protocol.
-  /// These are intentionally 5-second windows rather than exact events.
+  DateTime? _syncIndicatorEnd;
+
   final List<SyncWindow> _syncWindows = [];
 
   Timer? _timer;
@@ -705,6 +702,7 @@ class TimerPageState extends State<TimerPage>
 
     setState(() {
       _syncWindows.add(syncWindow);
+      _syncIndicatorEnd = syncWindow.windowEnd;
     });
 
     debugPrint(
@@ -1535,6 +1533,11 @@ class TimerPageState extends State<TimerPage>
           phaseName: _currentPhaseName,
         );
 
+        if (_syncIndicatorEnd != null &&
+            !DateTime.now().isBefore(_syncIndicatorEnd!)) {
+          _syncIndicatorEnd = null;
+        }
+
         if (_currentPhase == 3) {
           _waitingElapsedSeconds++;
           return;
@@ -1944,9 +1947,47 @@ class TimerPageState extends State<TimerPage>
                             ),
                           ],
                         ),
+
+                        if (_syncIndicatorEnd != null &&
+                          DateTime.now().isBefore(_syncIndicatorEnd!))
+                        Container(
+                          width: dialSize * 0.72,
+                          height: dialSize * 0.72,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFF38BDF8).withAlpha(235),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF38BDF8).withAlpha(100),
+                                blurRadius: 30,
+                                spreadRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.sync_rounded,
+                                size: 64,
+                                color: Colors.black,
+                              ),
+                              SizedBox(height: 8),
+                              Text(
+                                '¡SINCRONIZAR!',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.5,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     );
-
                     return timerDisplay;
                   },
                 ),
