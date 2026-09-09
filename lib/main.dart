@@ -1046,11 +1046,17 @@ class TimerPageState extends State<TimerPage>
     if (shouldCancel == true) {
       _timer?.cancel();
       _flutterTts.stop();
+
+      await ResearchMonitorBridge.instance.closeMonitorWindow();
+
       await _clearLocalBackup();
 
       if (!mounted) return;
+
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => const ParticipantSetupPage()),
+        MaterialPageRoute(
+          builder: (context) => const ParticipantSetupPage()
+        ),
       );
     }
   }
@@ -1466,15 +1472,6 @@ class TimerPageState extends State<TimerPage>
               FilledButton(
                 onPressed: () {
                   Navigator.of(dialogContext).pop();
-
-                  if (success && mounted) {
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            const ParticipantSetupPage(),
-                      ),
-                    );
-                  }
                 },
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF38BDF8),
@@ -1490,6 +1487,18 @@ class TimerPageState extends State<TimerPage>
           );
         },
       );
+
+      if (success) {
+        await ResearchMonitorBridge.instance.closeMonitorWindow();
+
+        if (!mounted) return;
+
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => const ParticipantSetupPage(),
+          ),
+        );
+      }
     }
   }
 

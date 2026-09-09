@@ -21,6 +21,35 @@ class ResearchMonitorBridge extends WindowListener {
     debugPrint('[IPC] Research Monitor registrado. ID=${window.id}');
   }
 
+  Future<void> closeMonitorWindow() async {
+    final window = _monitorWindow;
+
+    if (window == null) {
+      debugPrint('[IPC] No hay Research Monitor que cerrar.');
+      return;
+    }
+
+    debugPrint(
+      '[WINDOW] Cerrando Research Monitor. ID=${window.id}',
+    );
+
+    try {
+      await window.close();
+    } catch (e) {
+      debugPrint(
+        '[WINDOW] Error cerrando Research Monitor: $e',
+      );
+    } finally {
+      MultiWindowManager.current.removeListener(this);
+      _monitorWindow = null;
+      _onSyncWindowRequested = null;
+
+      debugPrint(
+        '[WINDOW] Research Monitor desconectado del bridge.',
+      );
+    }
+  }
+
   void setProtocolConfiguration(
     ProtocolConfiguration configuration,
   ) {
@@ -58,6 +87,17 @@ class ResearchMonitorBridge extends WindowListener {
     debugPrint(
       '[IPC] Evento recibido desde ventana $fromWindowId: $eventName',
     );
+
+    final monitorWindow = _monitorWindow;
+
+    if (monitorWindow == null ||
+        fromWindowId != monitorWindow.id) {
+      debugPrint(
+        '[IPC] Evento ignorado: ventana $fromWindowId '
+        'no es el Research Monitor activo.',
+      );
+      return null;
+    }
 
     if (eventName == WindowMessages.researchMonitorReady) {
       debugPrint(
