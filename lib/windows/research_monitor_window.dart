@@ -193,6 +193,17 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     super.dispose();
   }
 
+  Future<void> _requestSyncWindow() async {
+    await MultiWindowManager.current.invokeMethodToWindow(
+      0,
+      WindowMessages.syncWindowRequested,
+    );
+
+    debugPrint(
+      '[SYNC] Solicitud de ventana de sincronización enviada.',
+    );
+  }
+
   // ===========================================================================
   // EVENTOS RECIBIDOS DE LA VENTANA PRINCIPAL (IPC)
   // ===========================================================================
@@ -726,8 +737,38 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ],
         ),
         const SizedBox(width: 20),
+        _buildSyncButton(),
+        const SizedBox(width: 10),
         _buildStatusIndicator(),
       ],
+    );
+  }
+
+  Widget _buildSyncButton() {
+    return ElevatedButton.icon(
+      onPressed: _requestSyncWindow,
+      icon: const Icon(
+        Icons.sync_rounded,
+        size: 18,
+      ),
+      label: const Text(
+        'SINCRONIZAR',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+        ),
+      ),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: const Color(0xFF38BDF8),
+        foregroundColor: Colors.black,
+        padding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 10,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+      ),
     );
   }
 
