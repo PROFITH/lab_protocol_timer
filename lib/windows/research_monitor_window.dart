@@ -88,6 +88,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     switch (deviceId) {
       case 'polar_h10':
         return _showPolarConnectionDialog;
+      case 'camera':
+      return _showCameraConnectionDialog;
 
       default:
         return null;
@@ -262,11 +264,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
     });
 
-    _initCamera();
     debugPrint('[MONITOR] Research Monitor inicializado con servicios locales.');
   }
 
-  Future<void> _initCamera() async {
+  Future<void> _showCameraConnectionDialog() async {
     try {
       debugPrint('[VIDEO] Buscando cámaras disponibles...');
       final cameras = await availableCameras();
@@ -323,8 +324,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       // Comprobamos si el widget sigue montado tras el diálogo asíncrono
       if (!mounted) return;
 
-      // Si el usuario cierra el diálogo sin elegir, por seguridad cogemos la primera
-      final CameraDescription chosenCamera = selectedCamera ?? cameras.first;
+      // Si el usuario cierra el diálogo sin elegir...
+      if (selectedCamera == null) {
+        debugPrint('[VIDEO] Selección de cámara cancelada.');
+        return;
+      }
+
+      final CameraDescription chosenCamera = selectedCamera;
 
       debugPrint('[VIDEO] Inicializando cámara seleccionada: ${chosenCamera.name}');
 
@@ -909,6 +915,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
             ),
           ),
+          const SizedBox(width: 10),
+          _buildSyncButton(),
           const SizedBox(width: 10),
           Expanded(
             child: FilledButton.icon(
