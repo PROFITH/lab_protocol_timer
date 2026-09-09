@@ -84,6 +84,16 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     return null;
   }
 
+  VoidCallback? _deviceActionForDevice(String deviceId) {
+    switch (deviceId) {
+      case 'polar_h10':
+        return _showPolarConnectionDialog;
+
+      default:
+        return null;
+    }
+  }
+
   void _assignSourceToSlot(
     int slotId,
     String deviceId,
@@ -755,9 +765,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   ? DeviceConnectionStatus.connected
                   : DeviceConnectionStatus.disconnected,
               sensors: [
-                if (device.hasSensor('heart_rate')) ...[
+                if (device.hasSensor('heart_rate'))
                   SensorStatus(
-                    id: 'hr',
+                    id: 'heart_rate',
                     name: 'HR',
                     icon: Icons.favorite_rounded,
                     status: _polarService.isHeartRateStreaming
@@ -766,6 +776,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                             ? SensorAcquisitionStatus.stopped
                             : SensorAcquisitionStatus.unavailable,
                   ),
+
+                if (device.hasSensor('rr'))
                   SensorStatus(
                     id: 'rr',
                     name: 'RR',
@@ -776,7 +788,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                             ? SensorAcquisitionStatus.stopped
                             : SensorAcquisitionStatus.unavailable,
                   ),
-                ],
+
                 if (device.hasSensor('acc'))
                   SensorStatus(
                     id: 'acc',
@@ -1207,6 +1219,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           return _DeviceStatusCard(
             device: _deviceStatuses[index],
             onSensorTap: _handleSensorTap,
+            onDeviceAction: _deviceActionForDevice(
+              _deviceStatuses[index].id,
+            ),
           );
         },
       ),
@@ -1728,10 +1743,12 @@ class _MonitorCard extends StatelessWidget {
 class _DeviceStatusCard extends StatelessWidget {
   final DeviceStatus device;
   final void Function(String deviceId, String sensorId) onSensorTap;
+  final VoidCallback? onDeviceAction;
 
   const _DeviceStatusCard({
     required this.device,
     required this.onSensorTap,
+    this.onDeviceAction,
   });
 
   @override
@@ -1749,11 +1766,17 @@ class _DeviceStatusCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     device.name,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+                if (onDeviceAction != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Configurar dispositivo',
+                    icon: const Icon(Icons.settings_rounded, size: 20),
+                    onPressed: onDeviceAction,
+                  ),
+                ],
                 _StatusDot(
                   color: _deviceConnectionColor(
                     device.connectionStatus,
