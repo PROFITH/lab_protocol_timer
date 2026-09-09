@@ -8,6 +8,8 @@ import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
 import '../models/device_status.dart';
 import '../models/protocol_configuration.dart';
+import '../models/monitor_slot.dart';
+import '../models/monitor_visualization.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
 import 'dart:io';
@@ -28,11 +30,20 @@ class ResearchMonitorWindow extends StatefulWidget {
 
 class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     with WindowListener {
+  
+  // State variables
   final PolarBleService _polarService = PolarBleService();
   final VideoRecordingService _videoService = VideoRecordingService();
   final List<double> _hrHistory = [];
   final List<double> _accHistory = [];
   final List<double> _ecgHistory = [];
+
+  final List<MonitorSlot> _monitorSlots = [
+    const MonitorSlot(slotId: 1),
+    const MonitorSlot(slotId: 2),
+    const MonitorSlot(slotId: 3),
+    const MonitorSlot(slotId: 4),
+  ];
 
   String _participantIds = '--';
   int _activityIndex = 0;
@@ -49,7 +60,138 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   PolarEcgSample? _lastEcg;
 
   // Modo de acelerometría: 'VM' o 'XYZ'
-  String _accMode = 'VM';
+  String _accMode = 'XYZ';
+
+  String _sourceId(
+    String deviceId,
+    String sensorId,
+  ) {
+    return '$deviceId:$sensorId';
+  }
+
+  int? _monitorForSource(
+    String deviceId,
+    String sensorId,
+  ) {
+    final sourceId = _sourceId(deviceId, sensorId);
+
+    for (final slot in _monitorSlots) {
+      if (slot.sourceId == sourceId) {
+        return slot.slotId;
+      }
+    }
+
+    return null;
+  }
+
+  void _assignSourceToSlot(
+    int slotId,
+    String deviceId,
+    String sensorId,
+  ) {
+    final index = _monitorSlots.indexWhere(
+      (slot) => slot.slotId == slotId,
+    );
+
+    if (index == -1) {
+      return;
+    }
+
+    setState(() {
+      _monitorSlots[index] = MonitorSlot(
+        slotId: slotId,
+        deviceId: deviceId,
+        sensorId: sensorId,
+        visualization: _visualizationForSensor(sensorId),
+      );
+    });
+  }
+
+  Future<void> _handleSensorTap(
+    String deviceId,
+    String sensorId,
+  ) async {
+    final currentSlot = _monitorForSource(
+      deviceId,
+      sensorId,
+    );
+
+    final selectedSlot = await showDialog<int>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Mostrar sensor en...'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final slot in _monitorSlots)
+                ListTile(
+                  leading: Icon(
+                    slot.isAssigned
+                        ? Icons.monitor_rounded
+                        : Icons.monitor_outlined,
+                  ),
+                  title: Text(
+                    'Monitor ${slot.slotId}',
+                  ),
+                  subtitle: slot.isAssigned
+                      ? Text(
+                          '${slot.deviceId}:${slot.sensorId}',
+                        )
+                      : const Text(
+                          'Sin sensor asignado',
+                        ),
+                  trailing: currentSlot == slot.slotId
+                      ? const Icon(
+                          Icons.check_circle,
+                        )
+                      : null,
+                  onTap: () {
+                    Navigator.of(context).pop(
+                      slot.slotId,
+                    );
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selectedSlot == null || !mounted) {
+      return;
+    }
+
+    _assignSourceToSlot(
+      selectedSlot,
+      deviceId,
+      sensorId,
+    );
+
+    debugPrint(
+      '[MONITOR] Fuente asignada: '
+      '$deviceId:$sensorId → Monitor $selectedSlot',
+    );
+  }
+
+  MonitorVisualization _visualizationForSensor(String sensorId) {
+    switch (sensorId) {
+      case 'heart_rate':
+        return MonitorVisualization.heartRate;
+
+      case 'acc':
+        return MonitorVisualization.acceleration;
+
+      case 'ecg':
+        return MonitorVisualization.ecg;
+
+      case 'video':
+        return MonitorVisualization.video;
+
+      default:
+        return MonitorVisualization.unknown;
+    }
+  }
 
   // Búferes individuales para los 3 ejes
   final List<double> _accXHistory = [];
@@ -806,18 +948,249 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildVideoAndCharts() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return GridView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: 1.6,
+      ),
+      itemCount: _monitorSlots.length,
+      itemBuilder: (context, index) {
+        return _buildMonitorSlot(_monitorSlots[index]);
+      },
+    );
+  }
+
+  Widget _buildMonitorSlot(MonitorSlot slot) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white12),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: !slot.isAssigned
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.add_chart_rounded,
+                    size: 32,
+                    color: Colors.grey.shade600,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'MONITOR ${slot.slotId}',
+                    style: TextStyle(
+                      color: Colors.grey.shade400,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Sin sensor asignado',
+                    style: TextStyle(
+                      color: Colors.grey.shade600,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          : switch (slot.visualization) {
+              MonitorVisualization.heartRate =>
+                _buildHeartRateMonitor(slot),
+
+              MonitorVisualization.acceleration =>
+                _buildAccelerationMonitor(slot),
+
+              _ => _buildAssignedMonitorPlaceholder(slot),
+            },
+    );
+  }
+
+  Widget _buildHeartRateMonitor(MonitorSlot slot) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          flex: 3,
-          child: _buildVideoPanel(),
+        Row(
+          children: [
+            const Icon(
+              Icons.favorite_rounded,
+              size: 18,
+              color: Colors.redAccent,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'MONITOR ${slot.slotId}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: _buildSensorPanel(),
+        const Spacer(),
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$_heartRate',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 56,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              Text(
+                'bpm',
+                style: TextStyle(
+                  color: Colors.grey.shade400,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
         ),
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _buildAccelerationMonitor(MonitorSlot slot) {
+    final acc = _lastAcc;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.speed_rounded,
+              size: 18,
+              color: Colors.orangeAccent,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'MONITOR ${slot.slotId}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
+        ),
+        const Spacer(),
+        if (acc == null)
+          Center(
+            child: Text(
+              'Esperando aceleración...',
+              style: TextStyle(
+                color: Colors.grey.shade500,
+                fontSize: 14,
+              ),
+            ),
+          )
+        else
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildAccelerationValue('X', acc.xMg),
+              const SizedBox(height: 8),
+              _buildAccelerationValue('Y', acc.yMg),
+              const SizedBox(height: 8),
+              _buildAccelerationValue('Z', acc.zMg),
+            ],
+          ),
+        const Spacer(),
+      ],
+    );
+  }
+
+  Widget _buildAccelerationValue(
+    String axis,
+    double value,
+  ) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 28,
+          child: Text(
+            axis,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        Expanded(
+          child: LinearProgressIndicator(
+            value: ((value.abs() / 2000).clamp(0.0, 1.0)),
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(width: 10),
+        SizedBox(
+          width: 70,
+          child: Text(
+            value.toStringAsFixed(0),
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAssignedMonitorPlaceholder(MonitorSlot slot) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.monitor_heart_rounded,
+              size: 18,
+              color: Colors.lightBlueAccent,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'MONITOR ${slot.slotId}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.0,
+              ),
+            ),
+          ],
+        ),
+        const Spacer(),
+        Center(
+          child: Text(
+            '${slot.deviceId}:${slot.sensorId}',
+            style: TextStyle(
+              color: Colors.grey.shade400,
+              fontSize: 13,
+            ),
+          ),
+        ),
+        const Spacer(),
       ],
     );
   }
@@ -833,6 +1206,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         itemBuilder: (context, index) {
           return _DeviceStatusCard(
             device: _deviceStatuses[index],
+            onSensorTap: _handleSensorTap,
           );
         },
       ),
@@ -994,6 +1368,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 enabled: false,
                 child: _DeviceStatusCard(
                   device: device,
+                  onSensorTap: _handleSensorTap,
                 ),
               );
             }).toList();
@@ -1352,9 +1727,11 @@ class _MonitorCard extends StatelessWidget {
 
 class _DeviceStatusCard extends StatelessWidget {
   final DeviceStatus device;
+  final void Function(String deviceId, String sensorId) onSensorTap;
 
   const _DeviceStatusCard({
     required this.device,
+    required this.onSensorTap,
   });
 
   @override
@@ -1388,31 +1765,46 @@ class _DeviceStatusCard extends StatelessWidget {
             ...device.sensors.map(
               (sensor) => Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      sensor.icon,
-                      size: 18,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () {
+                    onSensorTap(
+                      device.id,
+                      sensor.id,
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 6,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(sensor.name),
-                    ),
-                    if (sensor.detail != null) ...[
-                      Text(
-                        sensor.detail!,
-                        style: const TextStyle(
-                          fontSize: 12,
+                    child: Row(
+                      children: [
+                        Icon(
+                          sensor.icon,
+                          size: 18,
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    _StatusDot(
-                      color: _sensorStatusColor(
-                        sensor.status,
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(sensor.name),
+                        ),
+                        if (sensor.detail != null) ...[
+                          Text(
+                            sensor.detail!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        _StatusDot(
+                          color: _sensorStatusColor(
+                            sensor.status,
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
