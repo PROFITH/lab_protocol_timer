@@ -647,7 +647,6 @@ class TimerPageState extends State<TimerPage>
   int _seconds = 30;
   int _currentPhase = 0;
   int _waitingElapsedSeconds = 0;
-  bool _hasSpokenActionWindow = false;
 
   List<ActivityLog> _completedActivities = [];
   /// Unique identifier for the protocol session.
@@ -1116,7 +1115,6 @@ class TimerPageState extends State<TimerPage>
     setState(() {
       _isRunning = true;
       _isPaused = false;
-      _hasSpokenActionWindow = false;
       _sessionStartTime ??= sessionStartTime;
     });
 
@@ -1154,7 +1152,6 @@ class TimerPageState extends State<TimerPage>
       _waitingElapsedSeconds = 0;
       _isRunning = true;
       _isPaused = false;
-      _hasSpokenActionWindow = false;
     });
     _persistSessionLocally();
     _speak("Actividad $_currentActivity. Fase estática inicial.");
@@ -1512,87 +1509,9 @@ class TimerPageState extends State<TimerPage>
           return;
         }
 
-        // ========================================================================
-        // ACCELEROMETER SYNCHRONIZATION WINDOW
-        // ========================================================================
-        //
-        // A synchronization window is recorded before and after every activity.
-        // Post-syncing will later identify the actual physical accelerometer hit within
-        // each window and use the resulting anchors to estimate sensor <-> video
-        // alignment and detect possible non-linear drift.
-        //
-        // The first preparation window is the session-level sync_start.
-        // Subsequent preparation windows are sync_before_activity_N.
-        // Every post-activity window is sync_after_activity_N.
-        //
-        // We intentionally store the whole 5-second window rather than an exact
-        // event timestamp. The exact hit will be detected later by SAVES.
-        // ========================================================================
-
-        final isSyncWindow =
-            (_currentPhase == 0 &&
-                    _seconds <= 5 &&
-                    _seconds > 0) ||
-                (_currentPhase == 2 &&
-                    _seconds >= (_postSeconds - 5) &&
-                    _seconds > (_postSeconds - 6));
-
-        if (isSyncWindow && !_hasSpokenActionWindow) {
-          _hasSpokenActionWindow = true;
-
-          final now = DateTime.now().toUtc();
-
-          final String eventId;
-
-          if (_currentPhase == 0) {
-            // First preparation window = session start anchor.
-            // Later preparation windows = pre-activity anchors.
-            eventId = _syncWindows.isEmpty
-                ? 'sync_start'
-                : 'sync_before_activity_$_currentActivity';
-          } else {
-            // Post-activity synchronization anchor.
-            eventId = 'sync_after_activity_$_currentActivity';
-          }
-
-          final alreadyRegistered = _syncWindows.any(
-            (window) => window.eventId == eventId,
-          );
-
-          if (!alreadyRegistered) {
-            _syncWindows.add(
-              SyncWindow(
-                eventId: eventId,
-                eventType: 'accelerometer_clap',
-                activityIndex: _currentActivity,
-                phase: _currentPhaseName,
-                windowStartTime: now,
-                windowEndTime: now.add(
-                  const Duration(seconds: 5),
-                ),
-              ),
-            );
-
-            _persistSessionLocally();
-
-            debugPrint(
-              '[SYNC] Registered synchronization window: '
-              '$eventId '
-              'activity=$_currentActivity '
-              'phase=$_currentPhaseName '
-              'start=${now.toIso8601String()}',
-            );
-          }
-
-          _speak(
-            "¡Entrechocar acelerómetros ahora!",
-          );
-        }
-
         if (_seconds > 0) {
           _seconds--;
         } else {
-          _hasSpokenActionWindow = false;
 
           if (_currentPhase == 0) {
             _currentPhase = 1;
