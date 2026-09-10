@@ -11,7 +11,6 @@ import 'services/lab_redcap_service.dart';
 import 'windows/research_monitor_window.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'windows/research_monitor_bridge.dart';
-import 'windows/window_messages.dart';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'models/sync_window.dart';
@@ -1844,81 +1843,6 @@ class TimerPageState extends State<TimerPage>
               children: [
                 Padding(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.white12,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '$headerText | Actividad $_currentActivity',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white70,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF38BDF8).withAlpha(30),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_completedActivities.length} guardadas',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF38BDF8),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          IconButton(
-                            tooltip: 'Voz',
-                            onPressed: () async {
-                              await MultiWindowManager.current.invokeMethodToWindow(
-                                0,
-                                WindowMessages.voiceToggleRequested,
-                              );
-                            },
-                            icon: const Icon(Icons.volume_up_rounded),
-                          ),
-                          IconButton(
-                            tooltip: 'Ajustes',
-                            onPressed: () async {
-                              await MultiWindowManager.current.invokeMethodToWindow(
-                                0,
-                                WindowMessages.settingsRequested,
-                              );
-                            },
-                            icon: const Icon(Icons.settings_rounded),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
-                            onPressed: _cancelSession,
-                            tooltip: 'Cancelar Prueba',
-                          ),
-                        ],
-                      )
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 350),
@@ -2096,82 +2020,6 @@ class TimerPageState extends State<TimerPage>
                   },
                 ),
                 const Spacer(flex: 2),
-                Container(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B).withAlpha(220),
-                    borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: Colors.white12),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: _confirmFinishSession,
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.redAccent.withAlpha(40),
-                          foregroundColor: Colors.redAccent,
-                          padding: const EdgeInsets.all(16),
-                        ),
-                        icon: _isSyncingRedCap
-                            ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.redAccent),
-                              )
-                            : const Icon(Icons.stop_rounded),
-                        tooltip: 'Finalizar Protocolo y Sincronizar',
-                      ),
-                      FilledButton.icon(
-                        onPressed: _startPauseTimer,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: accentColor,
-                          foregroundColor: Colors.black,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 32, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                        icon: Icon(
-                          _isRunning && !_isPaused
-                              ? Icons.pause_rounded
-                              : Icons.play_arrow_rounded,
-                          size: 28,
-                        ),
-                        label: Text(
-                          _isRunning && !_isPaused ? 'Pausar' : 'Iniciar',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w900, fontSize: 16),
-                        ),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: _nextActivity,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: Colors.white.withAlpha(20),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.skip_next_rounded),
-                            SizedBox(width: 4),
-                            Text('Lap',
-                                style: TextStyle(fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
