@@ -49,6 +49,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   int _activityIndex = 0;
   String _phaseName = 'idle';
   bool _sessionActive = false;
+  bool _sessionPaused = false;
   bool _cameraReady = false;
   bool _syncAvailable = false;
   Directory? _sessionExportDirectory;
@@ -381,11 +382,17 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         break;
 
       case WindowMessages.sessionPaused:
-        setState(() => _sessionActive = false);
+        setState(() {
+          _sessionActive = false;
+          _sessionPaused = true;
+        });
         break;
 
       case WindowMessages.sessionResumed:
-        setState(() => _sessionActive = true);
+        setState(() {
+          _sessionActive = true;
+          _sessionPaused = false;
+        });
         break;
 
       case WindowMessages.protocolContext:
@@ -476,6 +483,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     setState(() {
       _sessionActive = true;
+      _sessionPaused = false;
       _participantIds = args['participantIds']?.toString() ?? '--';
       _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
       _phaseName = args['phaseName']?.toString() ?? 'idle';
@@ -890,21 +898,33 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       icon: Icons.tune_rounded,
       child: Row(
         children: [
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: () async {
-                await MultiWindowManager.current.invokeMethodToWindow(
-                  0,
-                  WindowMessages.sessionStartRequested,
-                );
-              },
-              icon: const Icon(Icons.play_arrow_rounded),
-              label: const Text(
-                'INICIAR',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
+          FilledButton.icon(
+            onPressed: () async {
+              final message = !_sessionActive && !_sessionPaused
+                  ? WindowMessages.sessionStartRequested
+                  : _sessionPaused
+                      ? WindowMessages.sessionResumeRequested
+                      : WindowMessages.sessionPauseRequested;
+
+              await MultiWindowManager.current.invokeMethodToWindow(
+                0,
+                message,
+              );
+            },
+            icon: Icon(
+              _sessionPaused
+                  ? Icons.play_arrow_rounded
+                  : _sessionActive
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+            ),
+            label: Text(
+              _sessionPaused
+                  ? 'REANUDAR'
+                  : _sessionActive
+                      ? 'PAUSAR'
+                      : 'INICIAR',
+              style: const TextStyle(fontWeight: FontWeight.w900),
             ),
           ),
           const SizedBox(width: 10),
