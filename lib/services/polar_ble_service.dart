@@ -343,8 +343,20 @@ class PolarBleService {
       isConnected,
       error,
     ) {
+      debugPrint(
+        '[BLE CONNECTION] '
+        'device=$deviceId '
+        'isConnected=$isConnected '
+        'error=$error '
+        'currentDevice=${_connectedDevice?.deviceId}',
+      );
+
       if (!isConnected &&
           deviceId == _connectedDevice?.deviceId) {
+        debugPrint(
+          '[BLE CONNECTION] → Ejecutando _handleUnexpectedDisconnect()',
+        );
+
         _handleUnexpectedDisconnect();
       }
     };

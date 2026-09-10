@@ -856,6 +856,77 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   // ===========================================================================
 
   void _showPolarConnectionDialog() {
+
+    debugPrint(
+      '[POLAR UI] isConnected = ${_polarService.isConnected}',
+    );
+    
+    if (_polarService.isConnected) {
+      showDialog(
+        context: context,
+        builder: (dialogCtx) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(24),
+            ),
+            title: const Row(
+              children: [
+                Icon(
+                  Icons.bluetooth_connected_rounded,
+                  color: Color(0xFF38BDF8),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Polar H10',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ],
+            ),
+            content: const Text(
+              'El Polar H10 está actualmente vinculado.',
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogCtx).pop();
+                },
+                child: const Text('Cancelar'),
+              ),
+              FilledButton.icon(
+                onPressed: () async {
+                  await _polarService.disconnect();
+
+                  if (!dialogCtx.mounted) return;
+
+                  Navigator.of(dialogCtx).pop();
+
+                  if (!mounted) return;
+
+                  setState(() {});
+
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Polar H10 desvinculado'),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.bluetooth_disabled_rounded),
+                label: const Text('Desvincular'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+      return;
+    }
+
     _polarService.startScan();
 
     showDialog(
@@ -1197,14 +1268,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ),
           const SizedBox(width: 10),
           IconButton(
-            tooltip: 'Voz',
+            tooltip: _enableTts ? 'Desactivar voz' : 'Activar voz',
             onPressed: () async {
               await MultiWindowManager.current.invokeMethodToWindow(
                 0,
                 WindowMessages.voiceToggleRequested,
               );
             },
-            icon: const Icon(Icons.volume_up_rounded),
+            icon: Icon(
+              _enableTts
+                  ? Icons.volume_up_rounded
+                  : Icons.volume_off_rounded,
+            ),
           ),
           IconButton(
             tooltip: 'Ajustes',
