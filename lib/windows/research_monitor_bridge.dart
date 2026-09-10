@@ -17,6 +17,8 @@ class ResearchMonitorBridge extends WindowListener {
   VoidCallback? _onLapRequested;
   VoidCallback? _onSessionFinishRequested;
   VoidCallback? _onSessionCancelRequested;
+  VoidCallback? _onVoiceToggleRequested;
+  VoidCallback? _onSettingsRequested;
 
   int? get monitorWindowId => _monitorWindow?.id;
 
@@ -92,6 +94,14 @@ class ResearchMonitorBridge extends WindowListener {
 
   void setOnSessionCancelRequested(VoidCallback callback) {
     _onSessionCancelRequested = callback;
+  }
+
+  void setOnVoiceToggleRequested(VoidCallback callback) {
+    _onVoiceToggleRequested = callback;
+  }
+
+  void setOnSettingsRequested(VoidCallback callback) {
+    _onSettingsRequested = callback;
   }
 
   Future<void> setSyncAvailability(bool available) async {
@@ -176,6 +186,16 @@ class ResearchMonitorBridge extends WindowListener {
     if (eventName == WindowMessages.sessionCancelRequested) {
       debugPrint('[IPC] Solicitud de CANCELAR recibida.');
       _onSessionCancelRequested?.call();
+    }
+
+    if (eventName == WindowMessages.voiceToggleRequested) {
+      debugPrint('[IPC] Solicitud de cambio de voz recibida.');
+      _onVoiceToggleRequested?.call();
+    }
+
+    if (eventName == WindowMessages.settingsRequested) {
+      debugPrint('[IPC] Solicitud de ajustes recibida.');
+      _onSettingsRequested?.call();
     }
 
     return null;

@@ -17,9 +17,13 @@ class WindowMessages {
   static const String lapRequested = 'lap_requested';
   static const String sessionFinishRequested = 'session_finish_requested';
   static const String sessionCancelRequested = 'session_cancel_requested';
+  static const String voiceToggleRequested = 'voice_toggle_requested';
+  static const String settingsRequested = 'settings_requested';
   
   static const String sensorStatus = 'sensor_status';
 
   static const String videoStarted = 'video_started';
   static const String videoStopped = 'video_stopped';
+
+
 }

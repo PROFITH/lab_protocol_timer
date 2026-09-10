@@ -11,6 +11,7 @@ import 'services/lab_redcap_service.dart';
 import 'windows/research_monitor_window.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'windows/research_monitor_bridge.dart';
+import 'windows/window_messages.dart';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'models/sync_window.dart';
@@ -911,6 +912,24 @@ class TimerPageState extends State<TimerPage>
 
     ResearchMonitorBridge.instance.setOnSessionCancelRequested(
       _cancelSession,
+    );
+
+    ResearchMonitorBridge.instance.setOnVoiceToggleRequested(
+      () {
+        if (mounted) {
+          setState(() {
+            _enableTts = !_enableTts;
+          });
+        }
+      },
+    );
+
+    ResearchMonitorBridge.instance.setOnSettingsRequested(
+      () {
+        if (mounted) {
+          _showSettingsDialog(context);
+        }
+      },
     );
 
     _syncWindows.clear();
@@ -1859,17 +1878,24 @@ class TimerPageState extends State<TimerPage>
                       Row(
                         children: [
                           IconButton(
-                            icon: Icon(
-                              _enableTts ? Icons.volume_up_rounded : Icons.volume_off_rounded,
-                              color: _enableTts ? accentColor : Colors.white24,
-                            ),
-                            onPressed: () => setState(() => _enableTts = !_enableTts),
                             tooltip: 'Voz',
+                            onPressed: () async {
+                              await MultiWindowManager.current.invokeMethodToWindow(
+                                0,
+                                WindowMessages.voiceToggleRequested,
+                              );
+                            },
+                            icon: const Icon(Icons.volume_up_rounded),
                           ),
                           IconButton(
-                            icon: const Icon(Icons.settings_rounded, color: Colors.white54),
-                            onPressed: () => _showSettingsDialog(context),
                             tooltip: 'Ajustes',
+                            onPressed: () async {
+                              await MultiWindowManager.current.invokeMethodToWindow(
+                                0,
+                                WindowMessages.settingsRequested,
+                              );
+                            },
+                            icon: const Icon(Icons.settings_rounded),
                           ),
                           IconButton(
                             icon: const Icon(Icons.close_rounded, color: Colors.redAccent),
