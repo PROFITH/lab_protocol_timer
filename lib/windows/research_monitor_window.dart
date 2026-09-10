@@ -1280,155 +1280,188 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           : switch (slot.visualization) {
               MonitorVisualization.heartRate =>
                 _buildHeartRateMonitor(slot),
-
               MonitorVisualization.acceleration =>
                 _buildAccelerationMonitor(slot),
-
-              _ => _buildAssignedMonitorPlaceholder(slot),
+              MonitorVisualization.ecg =>
+                _buildEcgMonitor(slot),
+              MonitorVisualization.video =>
+                _buildVideoMonitor(slot),
+              MonitorVisualization.unknown =>
+                _buildAssignedMonitorPlaceholder(slot),
             },
     );
   }
 
   Widget _buildHeartRateMonitor(MonitorSlot slot) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.favorite_rounded,
-              size: 18,
-              color: Colors.redAccent,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'MONITOR ${slot.slotId}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.0,
-              ),
-            ),
-          ],
+    return SensorChartCard(
+      title: 'MONITOR ${slot.slotId}',
+      subtitle: 'HR · ${slot.sensorId}',
+      icon: Icons.favorite_rounded,
+      currentValue: _heartRate > 0 ? '$_heartRate' : '--',
+      unit: 'bpm',
+      seriesList: [
+        ChartSeries(
+          points: _hrHistory,
+          color: Colors.redAccent,
+          label: 'HR',
         ),
-        const Spacer(),
-        Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                '$_heartRate',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 56,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              Text(
-                'bpm',
-                style: TextStyle(
-                  color: Colors.grey.shade400,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const Spacer(),
       ],
     );
   }
 
   Widget _buildAccelerationMonitor(MonitorSlot slot) {
-    final acc = _lastAcc;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.speed_rounded,
-              size: 18,
-              color: Colors.orangeAccent,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'MONITOR ${slot.slotId}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.0,
+    return SensorChartCard(
+      title: 'MONITOR ${slot.slotId}',
+      subtitle: 'ACC · ${slot.sensorId}',
+      icon: Icons.sensors_rounded,
+      currentValue: _accMode == 'VM'
+          ? (_accHistory.isNotEmpty
+              ? _accHistory.last.toStringAsFixed(1)
+              : '--')
+          : (_lastAcc != null
+              ? _lastAcc!.zMg.toStringAsFixed(1)
+              : '--'),
+      unit: 'mg',
+      seriesList: _accMode == 'VM'
+          ? [
+              ChartSeries(
+                points: _accHistory,
+                color: const Color(0xFF38BDF8),
+                label: 'VM',
               ),
-            ),
-          ],
-        ),
-        const Spacer(),
-        if (acc == null)
-          Center(
-            child: Text(
-              'Esperando aceleración...',
-              style: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: 14,
+            ]
+          : [
+              ChartSeries(
+                points: _accXHistory,
+                color: Colors.redAccent,
+                label: 'X',
               ),
-            ),
-          )
-        else
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildAccelerationValue('X', acc.xMg),
-              const SizedBox(height: 8),
-              _buildAccelerationValue('Y', acc.yMg),
-              const SizedBox(height: 8),
-              _buildAccelerationValue('Z', acc.zMg),
+              ChartSeries(
+                points: _accYHistory,
+                color: Colors.greenAccent,
+                label: 'Y',
+              ),
+              ChartSeries(
+                points: _accZHistory,
+                color: const Color(0xFF38BDF8),
+                label: 'Z',
+              ),
             ],
+      trailingAction: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildAccelerationModeToggle(
+            'VM',
+            _accMode == 'VM',
+            const Color(0xFF38BDF8),
           ),
-        const Spacer(),
+          _buildAccelerationModeToggle(
+            'XYZ',
+            _accMode == 'XYZ',
+            null,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEcgMonitor(MonitorSlot slot) {
+    return SensorChartCard(
+      title: 'MONITOR ${slot.slotId}',
+      subtitle: 'ECG · ${slot.sensorId}',
+      icon: Icons.show_chart_rounded,
+      currentValue: _lastEcg != null
+          ? _lastEcg!.microVolts.toStringAsFixed(1)
+          : '--',
+      unit: 'µV',
+      seriesList: [
+        ChartSeries(
+          points: _ecgHistory,
+          color: const Color(0xFFF43F5E),
+          label: 'ECG',
+        ),
       ],
     );
   }
 
-  Widget _buildAccelerationValue(
-    String axis,
-    double value,
-  ) {
-    return Row(
-      children: [
-        SizedBox(
-          width: 28,
-          child: Text(
-            axis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w900,
+  Widget _buildVideoMonitor(MonitorSlot slot) {
+    final controller = _videoService.controller;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: (_cameraReady &&
+              controller != null &&
+              controller.value.isInitialized)
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: controller.value.aspectRatio,
+                    child: CameraPreview(controller),
+                  ),
+                ),
+                if (_videoService.isRecording)
+                  Positioned(
+                    top: 10,
+                    right: 10,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.redAccent,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.fiber_manual_record,
+                            color: Colors.white,
+                            size: 12,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'REC',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            )
+          : const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.videocam_off_rounded,
+                    color: Colors.white38,
+                    size: 40,
+                  ),
+                  SizedBox(height: 10),
+                  Text(
+                    'Cámara no disponible o inicializando...',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-        Expanded(
-          child: LinearProgressIndicator(
-            value: ((value.abs() / 2000).clamp(0.0, 1.0)),
-            minHeight: 8,
-            borderRadius: BorderRadius.circular(4),
-          ),
-        ),
-        const SizedBox(width: 10),
-        SizedBox(
-          width: 70,
-          child: Text(
-            value.toStringAsFixed(0),
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -1813,169 +1846,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildVideoPanel() {
-    final controller = _videoService.controller;
-    
-    return _MonitorCard(
-      title: 'VÍDEO EN DIRECTO',
-      icon: Icons.videocam_rounded,
-      child: Container(
-        color: Colors.black,
-        child: (_cameraReady && controller != null && controller.value.isInitialized)
-            ? Stack(
-                fit: StackFit.expand,
-                children: [
-                  Center(
-                    child: AspectRatio(
-                      aspectRatio: controller.value.aspectRatio,
-                      child: CameraPreview(controller),
-                    ),
-                  ),
-
-                  if (_videoService.isRecording)
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.redAccent,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.fiber_manual_record, color: Colors.white, size: 12),
-                            SizedBox(width: 6),
-                            Text(
-                              'REC',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                ],
-              )
-            : const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.videocam_off_rounded, color: Colors.white38, size: 50),
-                    SizedBox(height: 10),
-                    Text(
-                      'Cámara no disponible o inicializando...',
-                      style: TextStyle(color: Colors.white54, fontSize: 13),
-                    ),
-                  ],
-                ),
-              ),
-      ),
-      
-    );
-  }
-
-  Widget _buildSensorPanel() {
-    return Column(
-      children: [
-        // 1. Tarjeta de Frecuencia Cardíaca (HR)
-        Expanded(
-          child: SensorChartCard(
-            title: 'HR',
-            subtitle: 'Pulso',
-            icon: Icons.favorite_rounded,
-            currentValue: _heartRate > 0 ? '$_heartRate' : '--',
-            unit: 'bpm',
-            seriesList: [
-              ChartSeries(
-                points: _hrHistory,
-                color: Colors.redAccent,
-                label: 'HR',
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 10),
-        // 2. Tarjeta de Acelerometría (ACC) con Toggle VM / XYZ
-        Expanded(
-          flex: 2,
-          child: SensorChartCard(
-            title: 'ACC',
-            subtitle: 'Acelerometría (200 Hz)',
-            icon: Icons.sensors_rounded,
-            currentValue: _lastAcc != null ? '${_lastAcc!.zMg}' : '--',
-            unit: 'mg',
-            seriesList: _accMode == 'VM'
-                ? [
-                    ChartSeries(
-                      points: _accHistory,
-                      color: const Color(0xFF38BDF8),
-                      label: 'VM',
-                    ),
-                  ]
-                : [
-                    ChartSeries(
-                      points: _accXHistory,
-                      color: Colors.redAccent,
-                      label: 'X',
-                    ),
-                    ChartSeries(
-                      points: _accYHistory,
-                      color: Colors.greenAccent,
-                      label: 'Y',
-                    ),
-                    ChartSeries(
-                      points: _accZHistory,
-                      color: const Color(0xFF38BDF8),
-                      label: 'Z',
-                    ),
-                  ],
-            trailingAction: Container(
-              height: 26,
-              padding: const EdgeInsets.all(2),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildToggleBtn('VM', _accMode == 'VM', const Color(0xFF38BDF8)),
-                  _buildToggleBtn('XYZ', _accMode == 'XYZ', null),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        // 3. Tarjeta de Electrocardiograma (ECG)
-        Expanded(
-          child: SensorChartCard(
-            title: 'ECG',
-            subtitle: 'Electrocardiograma (130 Hz)',
-            icon: Icons.show_chart_rounded,
-            currentValue: _lastEcg != null ? '${_lastEcg!.microVolts}' : '--',
-            unit: 'µV',
-            seriesList: [
-              ChartSeries(
-                points: _ecgHistory,
-                color: const Color(0xFFF43F5E),
-                label: 'ECG',
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   // Widget auxiliar para el selector VM / XYZ del acelerómetro
-  Widget _buildToggleBtn(String label, bool isSelected, Color? singleColor) {
+  Widget _buildAccelerationModeToggle(String label, bool isSelected, Color? singleColor) {
     return GestureDetector(
       onTap: () => setState(() => _accMode = label),
       child: Container(
