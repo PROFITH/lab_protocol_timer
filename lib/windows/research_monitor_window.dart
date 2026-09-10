@@ -919,15 +919,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                                       _protocolConfiguration.deviceById('polar_h10');
 
                                   if (polarConfiguration != null) {
-                                    debugPrint('[MONITOR] >>> ANTES startHeartRate');
                                     await _polarService.startHeartRate();
-                                    debugPrint('[MONITOR] <<< DESPUÉS startHeartRate');
-
-                                    debugPrint('[MONITOR] >>> ANTES startAcceleration');
                                     await _polarService.startAcceleration();
-                                    debugPrint('[MONITOR] <<< DESPUÉS startAcceleration');
-
-                                    debugPrint('[MONITOR] >>> ANTES startEcg');
                                     await _polarService.startEcg();
                                   }
                                 } catch (e) {
