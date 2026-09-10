@@ -58,6 +58,8 @@ class ResearchMonitorBridge extends WindowListener {
     }
   }
 
+  void Function(Map<String, dynamic>)? _onProtocolSettingsUpdated;
+
   void setProtocolConfiguration(
     ProtocolConfiguration configuration,
   ) {
@@ -102,6 +104,12 @@ class ResearchMonitorBridge extends WindowListener {
 
   void setOnSettingsRequested(VoidCallback callback) {
     _onSettingsRequested = callback;
+  }
+
+  void setOnProtocolSettingsUpdated(
+    void Function(Map<String, dynamic>) callback,
+  ) {
+    _onProtocolSettingsUpdated = callback;
   }
 
   Future<void> setSyncAvailability(bool available) async {
@@ -198,6 +206,16 @@ class ResearchMonitorBridge extends WindowListener {
       _onSettingsRequested?.call();
     }
 
+    if (eventName == WindowMessages.protocolSettingsUpdated) {
+      debugPrint('[IPC] Nueva configuración de protocolo recibida.');
+
+      if (arguments is Map) {
+        _onProtocolSettingsUpdated?.call(
+          Map<String, dynamic>.from(arguments),
+        );
+      }
+    }
+
     return null;
   }
 
@@ -260,6 +278,25 @@ class ResearchMonitorBridge extends WindowListener {
     return send(
       WindowMessages.protocolConfiguration,
       configuration.toJson(),
+    );
+  }
+
+  Future<void> sendProtocolSettings({
+    required int prepSeconds,
+    required int activitySeconds,
+    required int postSeconds,
+    required bool useLapMode,
+    required bool enableTts,
+  }) {
+    return send(
+      WindowMessages.protocolSettings,
+      {
+        'prepSeconds': prepSeconds,
+        'activitySeconds': activitySeconds,
+        'postSeconds': postSeconds,
+        'useLapMode': useLapMode,
+        'enableTts': enableTts,
+      },
     );
   }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:camera/camera.dart';
@@ -54,6 +55,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   bool _syncAvailable = false;
   Directory? _sessionExportDirectory;
   late ProtocolConfiguration _protocolConfiguration;
+  int _prepSeconds = 10;
+  int _activitySeconds = 60;
+  int _postSeconds = 10;
+  bool _useLapMode = false;
+  bool _enableTts = true;
 
   // Valores de visualización en tiempo real
   int _heartRate = 0;
@@ -417,6 +423,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         }
         break;
       
+      case WindowMessages.protocolSettings:
+        if (arguments is Map) {
+          final settings = Map<String, dynamic>.from(arguments);
+
+          setState(() {
+            _prepSeconds = settings['prepSeconds'] as int;
+            _activitySeconds = settings['activitySeconds'] as int;
+            _postSeconds = settings['postSeconds'] as int;
+            _useLapMode = settings['useLapMode'] as bool;
+            _enableTts = settings['enableTts'] as bool;
+          });
+
+          debugPrint(
+            '[MONITOR] Ajustes del protocolo recibidos: $settings',
+          );
+        }
+        break;
+      
       case WindowMessages.sessionFinished:
         return await _handleSessionFinished();
 
@@ -623,6 +647,192 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
 
     return generatedFiles;
+  }
+
+  // ===========================================================================
+  // DIÁLOGO DE AJUSTES DE PROTOCOLO
+  // ===========================================================================
+  
+  void _showSettingsDialog() {
+    final prepMinutesController = TextEditingController(
+      text: (_prepSeconds ~/ 60).toString().padLeft(2, '0'),
+    );
+    final prepSecondsController = TextEditingController(
+      text: (_prepSeconds % 60).toString().padLeft(2, '0'),
+    );
+
+    final activityMinutesController = TextEditingController(
+      text: (_activitySeconds ~/ 60).toString().padLeft(2, '0'),
+    );
+    final activitySecondsController = TextEditingController(
+      text: (_activitySeconds % 60).toString().padLeft(2, '0'),
+    );
+
+    final postMinutesController = TextEditingController(
+      text: (_postSeconds ~/ 60).toString().padLeft(2, '0'),
+    );
+    final postSecondsController = TextEditingController(
+      text: (_postSeconds % 60).toString().padLeft(2, '0'),
+    );
+
+    bool tempLapMode = _useLapMode;
+    bool tempTtsMode = _enableTts;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: const RoundedRectangleBorder(
+                borderRadius: BorderRadius.all(Radius.circular(24)),
+              ),
+              title: const Row(
+                children: [
+                  Icon(
+                    Icons.tune_rounded,
+                    color: Color(0xFF38BDF8),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Ajustes del Protocolo',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _buildDurationInput(
+                      label: 'Preparación estática inicial',
+                      minutesController: prepMinutesController,
+                      secondsController: prepSecondsController,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildDurationInput(
+                      label: 'Actividad principal',
+                      minutesController: activityMinutesController,
+                      secondsController: activitySecondsController,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildDurationInput(
+                      label: 'Post-actividad estática final',
+                      minutesController: postMinutesController,
+                      secondsController: postSecondsController,
+                    ),
+                    const SizedBox(height: 16),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Indicaciones por voz',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Dicta las instrucciones y cambios de fase',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
+                      ),
+                      value: tempTtsMode,
+                      activeTrackColor: const Color(0xFF38BDF8),
+                      onChanged: (val) =>
+                          setStateDialog(() => tempTtsMode = val),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Modo Lap (Espera manual)',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.white,
+                        ),
+                      ),
+                      subtitle: const Text(
+                        'Pausa al finalizar para rotación de actividad',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.white54,
+                        ),
+                      ),
+                      value: tempLapMode,
+                      activeTrackColor: const Color(0xFF38BDF8),
+                      onChanged: (val) =>
+                          setStateDialog(() => tempLapMode = val),
+                    ),
+                  ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text(
+                    'Cancelar',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final newPrep = _durationFromControllers(
+                      minutesController: prepMinutesController,
+                      secondsController: prepSecondsController,
+                      minimumSeconds: 5,
+                      fallbackSeconds: _prepSeconds,
+                    );
+
+                    final newActivity = _durationFromControllers(
+                      minutesController: activityMinutesController,
+                      secondsController: activitySecondsController,
+                      minimumSeconds: 1,
+                      fallbackSeconds: _activitySeconds,
+                    );
+
+                    final newPost = _durationFromControllers(
+                      minutesController: postMinutesController,
+                      secondsController: postSecondsController,
+                      minimumSeconds: 5,
+                      fallbackSeconds: _postSeconds,
+                    );
+
+                    MultiWindowManager.current.invokeMethodToWindow(
+                      0,
+                      WindowMessages.protocolSettingsUpdated,
+                      {
+                        'prepSeconds': newPrep,
+                        'activitySeconds': newActivity,
+                        'postSeconds': newPost,
+                        'useLapMode': tempLapMode,
+                        'enableTts': tempTtsMode,
+                      },
+                    );
+
+                    setState(() {
+                      _prepSeconds = newPrep;
+                      _activitySeconds = newActivity;
+                      _postSeconds = newPost;
+                      _useLapMode = tempLapMode;
+                      _enableTts = tempTtsMode;
+                    });
+
+                    Navigator.of(context).pop();
+                  },
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF38BDF8),
+                    foregroundColor: Colors.black,
+                  ),
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   // ===========================================================================
@@ -982,12 +1192,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ),
           IconButton(
             tooltip: 'Ajustes',
-            onPressed: () async {
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                WindowMessages.settingsRequested,
-              );
-            },
+            onPressed: _showSettingsDialog,
             icon: const Icon(Icons.settings_rounded),
           ),
           IconButton(
@@ -1394,6 +1599,97 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  Widget _buildTimePartField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+  }) {
+    return TextField(
+      controller: controller,
+      keyboardType: TextInputType.number,
+      inputFormatters: [
+        FilteringTextInputFormatter.digitsOnly,
+        LengthLimitingTextInputFormatter(2),
+      ],
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: Colors.white,
+        fontWeight: FontWeight.w800,
+        fontFeatures: [
+          FontFeature.tabularFigures(),
+        ],
+      ),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        labelStyle: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+        ),
+        hintStyle: const TextStyle(
+          color: Colors.white24,
+          fontSize: 11,
+        ),
+        filled: true,
+        fillColor: const Color(0xFF0F172A),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDurationInput({
+    required String label,
+    required TextEditingController minutesController,
+    required TextEditingController secondsController,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Colors.white70,
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _buildTimePartField(
+                controller: minutesController,
+                label: 'MM',
+                hint: 'min',
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                ':',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            Expanded(
+              child: _buildTimePartField(
+                controller: secondsController,
+                label: 'SS',
+                hint: 'seg',
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildStatusIndicator() {
     return Row(
       children: [
@@ -1719,6 +2015,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
       ),
     );
+  }
+
+  int _durationFromControllers({
+    required TextEditingController minutesController,
+    required TextEditingController secondsController,
+    required int minimumSeconds,
+    required int fallbackSeconds,
+  }) {
+    final minutes =
+        int.tryParse(minutesController.text) ?? (fallbackSeconds ~/ 60);
+
+    final seconds =
+        int.tryParse(secondsController.text) ?? (fallbackSeconds % 60);
+
+    final totalSeconds =
+        (minutes.clamp(0, 99) * 60) + seconds.clamp(0, 59);
+
+    return totalSeconds < minimumSeconds
+        ? minimumSeconds
+        : totalSeconds;
   }
 
   Future<String> _createTemporaryCsvFile(

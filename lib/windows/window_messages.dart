@@ -19,6 +19,8 @@ class WindowMessages {
   static const String sessionCancelRequested = 'session_cancel_requested';
   static const String voiceToggleRequested = 'voice_toggle_requested';
   static const String settingsRequested = 'settings_requested';
+  static const String protocolSettingsUpdated = 'protocol_settings_updated';
+  static const String protocolSettings = 'protocol_settings';
   
   static const String sensorStatus = 'sensor_status';
 
