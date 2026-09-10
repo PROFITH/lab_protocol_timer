@@ -972,12 +972,22 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           const SizedBox(width: 10),
           IconButton(
             tooltip: 'Voz',
-            onPressed: () {},
+            onPressed: () async {
+              await MultiWindowManager.current.invokeMethodToWindow(
+                0,
+                WindowMessages.voiceToggleRequested,
+              );
+            },
             icon: const Icon(Icons.volume_up_rounded),
           ),
           IconButton(
             tooltip: 'Ajustes',
-            onPressed: () {},
+            onPressed: () async {
+              await MultiWindowManager.current.invokeMethodToWindow(
+                0,
+                WindowMessages.settingsRequested,
+              );
+            },
             icon: const Icon(Icons.settings_rounded),
           ),
           IconButton(
