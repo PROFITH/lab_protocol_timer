@@ -17,15 +17,6 @@ class PolarBleService {
   // console output and can itself affect the timing of the application.
   static const bool debugPmdFrames = false;
 
-  int _pmdPacketsReceived = 0;
-  int _globalValueChangesReceived = 0;
-  int _accFramesReceived = 0;
-  int _ecgFramesReceived = 0;
-  int _accSamplesDecoded = 0;
-  int _ecgSamplesDecoded = 0;
-
-  Timer? _pmdStatsTimer;
-
   // ===========================================================================
   // STANDARD HEART RATE SERVICE
   // ===========================================================================
@@ -339,8 +330,6 @@ class PolarBleService {
       value,
       timestamp,
     ) {
-      _globalValueChangesReceived++;
-
       debugPrint(
         '[BLE GLOBAL] device=$deviceId '
         'characteristic=$characteristicId '
@@ -348,27 +337,6 @@ class PolarBleService {
         'timestamp=$timestamp',
       );
     };
-
-    _pmdStatsTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) {
-        debugPrint(
-          '[PMD STATS] '
-          'global=$_globalValueChangesReceived '
-          'packets=$_pmdPacketsReceived '
-          'ACC_frames=$_accFramesReceived '
-          'ACC_samples=$_accSamplesDecoded '
-          'ECG_frames=$_ecgFramesReceived '
-          'ECG_samples=$_ecgSamplesDecoded',
-        );
-
-        _pmdPacketsReceived = 0;
-        _accFramesReceived = 0;
-        _ecgFramesReceived = 0;
-        _accSamplesDecoded = 0;
-        _ecgSamplesDecoded = 0;
-      },
-    );
 
     UniversalBle.onConnectionChange = (
       deviceId,
@@ -521,8 +489,6 @@ class PolarBleService {
           '${_psftp53!.properties.map((p) => p.toString()).join(", ")}',
         );
       }
-
-      // await _setupPsftpNotifications();
 
       final state =
           await device.connectionState;
@@ -695,114 +661,6 @@ class PolarBleService {
     debugPrint(
       '[POLAR DEBUG] PMD Control indications SUSCRITAS',
     );
-  }
-
-  // ===========================================================================
-  // SET UP PSFTP NOTIFICATIONS
-  // ===========================================================================
-
-  Future<void> _setupPsftpNotifications() async {
-    // -------------------------------------------------------------------------
-    // PSFTP 51
-    // -------------------------------------------------------------------------
-
-    if (_psftp51 != null) {
-      try {
-        await _psftp51Subscription?.cancel();
-
-        _psftp51Subscription =
-            _psftp51!.onValueReceived.listen(
-          (value) {
-            debugPrint(
-              '[PSFTP RX 51] ${_hex(value)}',
-            );
-          },
-        );
-
-        if (_psftp51!
-            .notifications.isSupported) {
-          await _psftp51!
-              .notifications
-              .subscribe();
-
-          debugPrint(
-            '[PSFTP] FB005C51 SUSCRITA',
-          );
-        }
-      } catch (e) {
-        debugPrint(
-          '[PSFTP] Error configurando 51: $e',
-        );
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // PSFTP 52
-    // -------------------------------------------------------------------------
-
-    if (_psftp52 != null) {
-      try {
-        await _psftp52Subscription?.cancel();
-
-        _psftp52Subscription =
-            _psftp52!.onValueReceived.listen(
-          (value) {
-            debugPrint(
-              '[PSFTP RX 52] ${_hex(value)}',
-            );
-          },
-        );
-
-        if (_psftp52!
-            .notifications.isSupported) {
-          await _psftp52!
-              .notifications
-              .subscribe();
-
-          debugPrint(
-            '[PSFTP] FB005C52 SUSCRITA',
-          );
-        }
-      } catch (e) {
-        debugPrint(
-          '[PSFTP] Error configurando 52: $e',
-        );
-      }
-    }
-
-    // -------------------------------------------------------------------------
-    // PSFTP 53
-    // -------------------------------------------------------------------------
-
-    if (_psftp53 != null) {
-      try {
-        await _psftp53Subscription?.cancel();
-
-        _psftp53Subscription =
-            _psftp53!.onValueReceived.listen(
-          (value) {
-            debugPrint(
-              '[PSFTP RX 53] ${_hex(value)}',
-            );
-          },
-        );
-
-        if (_psftp53!
-            .notifications.isSupported) {
-          await _psftp53!
-              .notifications
-              .subscribe();
-
-          debugPrint(
-            '[PSFTP] FB005C53 SUSCRITA',
-          );
-        }
-      } catch (e) {
-        debugPrint(
-          '[PSFTP] Error configurando 53: $e',
-        );
-      }
-    }
   }
 
   // ===========================================================================
@@ -1391,8 +1249,6 @@ class PolarBleService {
       return;
     }
 
-    _pmdPacketsReceived++;
-
     if (debugPmdFrames) {
       debugPrint(
         '[POLAR DEBUG] PMD DATA RX: '
@@ -1406,12 +1262,10 @@ class PolarBleService {
 
     switch (measurementType) {
       case pmdTypeEcg:
-        _ecgFramesReceived++;
         _parseEcgFrame(data);
         break;
 
       case pmdTypeAcc:
-        _accFramesReceived++;
         _parseAccelerationFrame(data);
         break;
 
@@ -1490,8 +1344,6 @@ class PolarBleService {
     final sampleCount =
         payloadLength ~/ bytesPerSample;
     
-    _ecgSamplesDecoded += sampleCount;
-
     if (sampleCount <= 0) {
       return;
     }
@@ -1686,8 +1538,6 @@ class PolarBleService {
     final sampleCount =
         payloadLength ~/ bytesPerSample;
     
-    _accSamplesDecoded += sampleCount;
-
     if (sampleCount <= 0) {
       return;
     }

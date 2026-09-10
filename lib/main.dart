@@ -661,7 +661,6 @@ class TimerPageState extends State<TimerPage>
   Timer? _timer;
   bool _isRunning = false;
   bool _isPaused = false;
-  bool _isSyncingRedCap = false;
 
   final AudioPlayer _audioPlayer = AudioPlayer();
   final FlutterTts _flutterTts = FlutterTts();
@@ -1434,8 +1433,11 @@ class TimerPageState extends State<TimerPage>
 
     final int totalStations =
         _completedActivities.length;
+    
 
-    // ========================================================================
+    // TEMPORARILY DISABLE REDCAP SYNC UNTIL WE PLAN WHAT WE WANT TO GET IN REDCAP
+
+    /* // ========================================================================
     // 7. REDCAP SYNC
     // ========================================================================
 
@@ -1444,7 +1446,6 @@ class TimerPageState extends State<TimerPage>
     setState(() {
       _isRunning = false;
       _isPaused = false;
-      _isSyncingRedCap = true;
     });
 
     final success =
@@ -1458,26 +1459,37 @@ class TimerPageState extends State<TimerPage>
       totalTransitionSeconds: totalTransitionSeconds,
       totalStations: totalStations,
     );
+ */
+
+    // ========================================================================
+    // 7. FINISH SESSION
+    // ========================================================================
+
+    if (!mounted) return;
+
+    setState(() {
+      _isRunning = false;
+      _isPaused = false;
+    });
+
+    // ========================================================================
+    // 8. RESULT DIALOG
+    // ========================================================================
 
     // ========================================================================
     // 8. RESULT DIALOG
     // ========================================================================
 
     if (mounted) {
-      setState(() => _isSyncingRedCap = false);
-
-      if (success) {
-        await _clearLocalBackup();
-      }
-
-      if (!mounted) return;
-
       final totalMins =
           (totalProtocolSeconds / 60).toStringAsFixed(1);
+
       final actMins =
           (totalActivitySeconds / 60).toStringAsFixed(1);
+
       final transMins =
           (totalTransitionSeconds / 60).toStringAsFixed(1);
+
       final summaryNames =
           _participants.map((p) => p.participantId).join(', ');
 
@@ -1492,38 +1504,29 @@ class TimerPageState extends State<TimerPage>
                 Radius.circular(24),
               ),
             ),
-            title: Row(
+            title: const Row(
               children: [
                 Icon(
-                  success
-                      ? Icons.check_circle_rounded
-                      : Icons.error_rounded,
-                  color: success
-                      ? const Color(0xFF34D399)
-                      : Colors.redAccent,
+                  Icons.check_circle_rounded,
+                  color: Color(0xFF34D399),
                 ),
-                const SizedBox(width: 10),
+                SizedBox(width: 10),
                 Text(
-                  success
-                      ? 'Sincronización Batch Exitosa'
-                      : 'Aviso de Conexión',
-                  style: const TextStyle(
+                  'Evaluación completada',
+                  style: TextStyle(
                     color: Colors.white,
                   ),
                 ),
               ],
             ),
             content: Text(
-              success
-                  ? 'Sesión registrada para '
-                      '${_participants.length} sujeto(s):\n'
-                      '[$summaryNames]\n\n'
-                      '⏱ Total: $totalMins min\n'
-                      '🏃 En Actividad: $actMins min\n'
-                      '⏳ En Transiciones: $transMins min\n'
-                      '📊 Total Actividades: $totalStations'
-                  : 'No se pudo conectar con REDCap. '
-                      'La sesión permanece guardada localmente.',
+              'Sesión guardada correctamente para '
+              '${_participants.length} sujeto(s):\n'
+              '[$summaryNames]\n\n'
+              '⏱ Total: $totalMins min\n'
+              '🏃 En Actividad: $actMins min\n'
+              '⏳ En Transiciones: $transMins min\n'
+              '📊 Total Actividades: $totalStations',
               style: const TextStyle(
                 color: Colors.white70,
               ),
@@ -1537,10 +1540,8 @@ class TimerPageState extends State<TimerPage>
                   backgroundColor: const Color(0xFF38BDF8),
                   foregroundColor: Colors.black,
                 ),
-                child: Text(
-                  success
-                      ? 'Nueva Evaluación'
-                      : 'Reintentar luego',
+                child: const Text(
+                  'Nueva Evaluación',
                 ),
               ),
             ],
@@ -1548,17 +1549,15 @@ class TimerPageState extends State<TimerPage>
         },
       );
 
-      if (success) {
-        await ResearchMonitorBridge.instance.closeMonitorWindow();
+      await ResearchMonitorBridge.instance.closeMonitorWindow();
 
-        if (!mounted) return;
+      if (!mounted) return;
 
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => const ParticipantSetupPage(),
-          ),
-        );
-      }
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => const ParticipantSetupPage(),
+        ),
+      );
     }
   }
 
@@ -1748,10 +1747,6 @@ class TimerPageState extends State<TimerPage>
         actionIcon = Icons.pause_circle_filled_rounded;
         break;
     }
-
-    final headerText = _participants.length == 1
-        ? '${_participants.first.participantId} (${_participants.first.redcapEventName.contains("da_0") ? "Día 0" : "Día 8"})'
-        : '${_participants.length} Sujetos (${_participants.map((p) => p.participantId).join(", ")})';
 
     return PopScope(
       canPop: false,
