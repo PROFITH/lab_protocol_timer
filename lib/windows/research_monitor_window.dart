@@ -36,6 +36,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   final PolarBleService _polarService = PolarBleService();
   final VideoRecordingService _videoService = VideoRecordingService();
   final List<double> _hrHistory = [];
+  final List<double> _rrHistory = [];
   final List<double> _accHistory = [];
   final List<double> _ecgHistory = [];
 
@@ -198,6 +199,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       case 'heart_rate':
         return MonitorVisualization.heartRate;
 
+      case 'rr':
+        return MonitorVisualization.rr;
+
       case 'acc':
         return MonitorVisualization.acceleration;
 
@@ -237,6 +241,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           _heartRate = bpm;
           _hrHistory.add(bpm.toDouble());
           if (_hrHistory.length > 100) _hrHistory.removeAt(0);
+        });
+      }
+    });
+
+    _polarService.rrStream.listen((rrMs) {
+      if (mounted) {
+        setState(() {
+          _rrHistory.add(rrMs.toDouble());
+
+          if (_rrHistory.length > 100) {
+            _rrHistory.removeAt(0);
+          }
         });
       }
     });
@@ -903,9 +919,16 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                                       _protocolConfiguration.deviceById('polar_h10');
 
                                   if (polarConfiguration != null) {
-                                    await _polarService.startConfiguredSensors(
-                                      polarConfiguration,
-                                    );
+                                    debugPrint('[MONITOR] >>> ANTES startHeartRate');
+                                    await _polarService.startHeartRate();
+                                    debugPrint('[MONITOR] <<< DESPUÉS startHeartRate');
+
+                                    debugPrint('[MONITOR] >>> ANTES startAcceleration');
+                                    await _polarService.startAcceleration();
+                                    debugPrint('[MONITOR] <<< DESPUÉS startAcceleration');
+
+                                    debugPrint('[MONITOR] >>> ANTES startEcg');
+                                    await _polarService.startEcg();
                                   }
                                 } catch (e) {
                                   debugPrint(
@@ -1280,6 +1303,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           : switch (slot.visualization) {
               MonitorVisualization.heartRate =>
                 _buildHeartRateMonitor(slot),
+              MonitorVisualization.rr =>
+                _buildRrMonitor(slot),
               MonitorVisualization.acceleration =>
                 _buildAccelerationMonitor(slot),
               MonitorVisualization.ecg =>
@@ -1304,6 +1329,25 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           points: _hrHistory,
           color: Colors.redAccent,
           label: 'HR',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRrMonitor(MonitorSlot slot) {
+    return SensorChartCard(
+      title: 'MONITOR ${slot.slotId}',
+      subtitle: 'RR · ${slot.sensorId}',
+      icon: Icons.timeline_rounded,
+      currentValue: _rrHistory.isNotEmpty
+          ? _rrHistory.last.toStringAsFixed(0)
+          : '--',
+      unit: 'ms',
+      seriesList: [
+        ChartSeries(
+          points: _rrHistory,
+          color: Colors.orangeAccent,
+          label: 'RR',
         ),
       ],
     );

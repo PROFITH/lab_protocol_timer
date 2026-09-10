@@ -15,7 +15,7 @@ class PolarBleService {
   //
   // At 200 Hz, printing every PMD frame can generate a very large amount of
   // console output and can itself affect the timing of the application.
-  static const bool debugPmdFrames = false;
+  static const bool debugPmdFrames = true;
 
   // ===========================================================================
   // STANDARD HEART RATE SERVICE
@@ -181,6 +181,12 @@ class PolarBleService {
   Stream<int> get hrStream =>
       _hrStreamController.stream;
 
+  final _rrStreamController =
+    StreamController<int>.broadcast();
+
+  Stream<int> get rrStream =>
+      _rrStreamController.stream;
+
   // ===========================================================================
   // ECG
   // ===========================================================================
@@ -258,6 +264,8 @@ class PolarBleService {
   bool _rrStreaming = false;
   bool _ecgStreaming = false;
   bool _accStreaming = false;
+  Completer<void>? _firstHrNotificationCompleter;
+
 
   bool get isHeartRateStreaming => _hrStreaming;
   bool get isRrStreaming => _rrStreaming;
@@ -467,7 +475,7 @@ class PolarBleService {
         );
       }
 
-      await _setupPsftpNotifications();
+      // await _setupPsftpNotifications();
 
       final state =
           await device.connectionState;
@@ -530,9 +538,6 @@ class PolarBleService {
         'HR does not support notifications',
       );
     }
-
-    _hrStreaming = true;
-    _rrStreaming = true;
   }
 
   // ===========================================================================
@@ -576,6 +581,10 @@ class PolarBleService {
     _pmdDataSubscription =
         _pmdData!.onValueReceived.listen(
       (value) {
+        debugPrint(
+          '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
+        );
+
         _handlePmdData(value);
       },
       onError: (error, stack) {
@@ -2525,24 +2534,32 @@ class PolarBleService {
 
     await _hrValueSubscription?.cancel();
 
-    _hrValueSubscription =
-        characteristic.onValueReceived.listen(
+    // Creamos el completer ANTES de suscribirnos para no perder
+    // una posible primera notificación rápida.
+    _firstHrNotificationCompleter = Completer<void>();
+
+    _hrValueSubscription = characteristic.onValueReceived.listen(
       (value) {
+        debugPrint(
+          '[POLAR DEBUG] HR CALLBACK RECIBIDO: ${value.length} bytes',
+        );
+
         _parseHeartRateData(value);
+
+        // Confirmamos que HR ya está recibiendo datos reales.
+        if (!(_firstHrNotificationCompleter?.isCompleted ?? true)) {
+          _firstHrNotificationCompleter!.complete();
+        }
       },
     );
 
-    if (!characteristic
-        .notifications
-        .isSupported) {
+    if (!characteristic.notifications.isSupported) {
       throw Exception(
         'HR does not support notifications',
       );
     }
 
-    await characteristic
-        .notifications
-        .subscribe();
+    await characteristic.notifications.subscribe();
 
     _hrStreaming = true;
     _rrStreaming = true;
@@ -2550,6 +2567,24 @@ class PolarBleService {
     debugPrint(
       '[POLAR DEBUG] HR notifications SUSCRITAS',
     );
+
+    // No devolvemos el control todavía.
+    // Esperamos a recibir el primer paquete HR real.
+    try {
+      await _firstHrNotificationCompleter!.future.timeout(
+        const Duration(seconds: 2),
+      );
+
+      debugPrint(
+        '[POLAR DEBUG] PRIMERA NOTIFICACIÓN HR RECIBIDA',
+      );
+    } on TimeoutException {
+      debugPrint(
+        '[POLAR DEBUG] TIMEOUT esperando primera notificación HR',
+      );
+    } finally {
+      _firstHrNotificationCompleter = null;
+    }
   }
 
   // ===========================================================================
@@ -2644,6 +2679,14 @@ class PolarBleService {
         _hrStreamController.add(
           bpm,
         );
+      }
+
+      for (final rrMs in rrList) {
+        if (!_rrStreamController.isClosed) {
+          _rrStreamController.add(
+            rrMs,
+          );
+        }
       }
     } catch (e, stack) {
       debugPrint(
