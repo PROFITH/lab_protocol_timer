@@ -913,12 +913,20 @@ class TimerPageState extends State<TimerPage>
     );
 
     ResearchMonitorBridge.instance.setOnVoiceToggleRequested(
-      () {
-        if (mounted) {
-          setState(() {
-            _enableTts = !_enableTts;
-          });
-        }
+      () async {
+        if (!mounted) return;
+
+        setState(() {
+          _enableTts = !_enableTts;
+        });
+
+        await ResearchMonitorBridge.instance.sendProtocolSettings(
+          prepSeconds: _prepSeconds,
+          activitySeconds: _activitySeconds,
+          postSeconds: _postSeconds,
+          useLapMode: _useLapMode,
+          enableTts: _enableTts,
+        );
       },
     );
 
