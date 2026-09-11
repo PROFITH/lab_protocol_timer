@@ -1269,6 +1269,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           const SizedBox(width: 10),
           IconButton(
             tooltip: _enableTts ? 'Desactivar voz' : 'Activar voz',
+            style: IconButton.styleFrom(
+              foregroundColor: const Color(0xFF38BDF8),
+              backgroundColor: const Color(0xFF1E293B),
+            ),
             onPressed: () async {
               await MultiWindowManager.current.invokeMethodToWindow(
                 0,
@@ -1283,11 +1287,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ),
           IconButton(
             tooltip: 'Ajustes',
+            style: IconButton.styleFrom(
+              foregroundColor: const Color(0xFF38BDF8),
+              backgroundColor: const Color(0xFF1E293B),
+            ),
             onPressed: _showSettingsDialog,
             icon: const Icon(Icons.settings_rounded),
           ),
           IconButton(
             tooltip: 'Cancelar prueba',
+            style: IconButton.styleFrom(
+              foregroundColor: const Color.fromARGB(255, 243, 52, 52),
+              backgroundColor: const Color(0xFF1E293B),
+            ),
             onPressed: () async {
               await MultiWindowManager.current.invokeMethodToWindow(
                 0,
@@ -1642,52 +1654,113 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       icon: Icons.assignment_rounded,
       child: Row(
         children: [
-          // Identificación de la sesión
+          // ---------------------------------------------------------------
+          // PARTICIPANTE
+          // ---------------------------------------------------------------
           Expanded(
+            flex: 2,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '$_participantIds · Día 0',
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
+                const Text(
+                  'PARTICIPANTE',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white38,
+                    letterSpacing: 1.1,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Actividad ${_activityIndex + 1} · $_phaseName',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey.shade400,
-                    fontWeight: FontWeight.w600,
+                  '$_participantIds · Día 0',
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
                   ),
                 ),
               ],
             ),
           ),
 
-          // Número de actividades guardadas
+          // Separador
           Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: 14,
-              vertical: 8,
-            ),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              color: Colors.white.withValues(alpha: 0.06),
-            ),
-            child: Text(
-              '${_hrHistory.length} guardadas',
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-              ),
+            width: 1,
+            height: 38,
+            color: Colors.white12,
+          ),
+
+          const SizedBox(width: 20),
+
+          // ---------------------------------------------------------------
+          // ACTIVIDAD
+          // ---------------------------------------------------------------
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'ACTIVIDAD ACTUAL',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white38,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text(
+                      _sessionActive || _sessionPaused
+                          ? 'Actividad $_activityIndex'
+                          : 'No iniciado',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF38BDF8).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        _phaseName.toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF38BDF8),
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
 
-          const SizedBox(width: 16),
+          // Separador
+          Container(
+            width: 1,
+            height: 38,
+            color: Colors.white12,
+          ),
 
-          // Estado de la sesión
+          const SizedBox(width: 20),
+
+          // ---------------------------------------------------------------
+          // ESTADO
+          // ---------------------------------------------------------------
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -1700,11 +1773,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               Text(
                 _sessionActive ? 'SESIÓN ACTIVA' : 'EN ESPERA',
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w900,
                   color: _sessionActive
                       ? Colors.greenAccent
                       : Colors.grey.shade400,
+                  letterSpacing: 0.5,
                 ),
               ),
             ],
