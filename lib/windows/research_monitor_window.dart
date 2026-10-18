@@ -461,6 +461,16 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       case WindowMessages.sessionFinished:
         return await _handleSessionFinished();
 
+      case WindowMessages.releaseResources:
+        try {
+          await _videoService.dispose();
+          await _polarService.disconnect();
+        } catch (e) {
+          debugPrint('[MONITOR] Error liberando cámara/Bluetooth: $e');
+        }
+        if (mounted) setState(() => _cameraReady = false);
+        return true;
+
       case 'START_VIDEO_RECORDING':
         if (!_cameraReady) {
           debugPrint(

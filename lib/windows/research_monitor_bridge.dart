@@ -23,6 +23,9 @@ class ResearchMonitorBridge extends WindowListener {
   int? get monitorWindowId => _monitorWindow?.id;
 
   void setMonitorWindow(MultiWindowManager window) {
+    // A new evaluation opens a new monitor; register the listener only once
+    // or every message is handled twice.
+    MultiWindowManager.current.removeListener(this);
     MultiWindowManager.current.addListener(this);
 
     _monitorWindow = window;
@@ -42,6 +45,9 @@ class ResearchMonitorBridge extends WindowListener {
     );
 
     try {
+      // Stop camera and Bluetooth in the monitor before destroying its window.
+      await send(WindowMessages.releaseResources)
+          .timeout(const Duration(seconds: 5), onTimeout: () => null);
       await window.close();
     } catch (e) {
       debugPrint(

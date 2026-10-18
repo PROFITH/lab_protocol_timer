@@ -4,6 +4,10 @@ class WindowMessages {
   static const String sessionResumed = 'session_resumed';
   static const String sessionFinished = 'session_finished';
 
+  /// Asks the monitor to stop the camera and Bluetooth before its window is
+  /// closed, so no native callback reaches a destroyed window.
+  static const String releaseResources = 'release_resources';
+
   static const String protocolContext = 'protocol_context';
   static const String protocolConfiguration = 'protocol_configuration';
 

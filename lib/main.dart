@@ -726,6 +726,7 @@ class TimerPageState extends State<TimerPage>
   final FlutterTts _flutterTts = FlutterTts();
 
   String _videoProcessingStatus = 'Finalizando grabación...';
+  bool _processingDialogOpen = false;
 
   BatteryActivity? get _batteryActivity =>
       widget.battery?.activityAt(_currentActivity);
@@ -1428,8 +1429,10 @@ class TimerPageState extends State<TimerPage>
         : <String>[];
 
     // ========================================================================
-    // 4. EXPORT FILES
+    // 4. EXPORT FILES AND SAVES METADATA
     // ========================================================================
+    // The manifest and CSVs are always written, even without video or sensor
+    // files, because SAVES needs them to synchronize the offline sensors.
 
     if (mounted) {
       setState(() {
@@ -1437,76 +1440,50 @@ class TimerPageState extends State<TimerPage>
       });
     }
 
-    String? exportDirectory;
+    final exportDirectory = await _exportSessionFiles(files);
 
-    if (files.isNotEmpty) {
-      exportDirectory = await _exportSessionFiles(files);
-
-      if (exportDirectory == null) {
-        // El usuario canceló el selector de carpeta.
-        _closeVideoProcessingDialog();
-        return;
-      }
-
-      // ======================================================================
-      // 5. EXPORT SAVES METADATA
-      // ======================================================================
-
-      await _writeSessionMetadata(
-        directory: exportDirectory,
-        sessionStartTime: sessionStartTime,
-        sessionEndTime: sessionEndTime,
-        generatedFiles: files,
-      );
-
+    if (exportDirectory == null) {
+      // The operator cancelled the folder picker: keep the session so it can
+      // be finished again.
       _closeVideoProcessingDialog();
+      return;
     }
 
-    // ========================================================================
-    // 6. TEMPORARY SESSION DATA
-    // ========================================================================
+    await _writeSessionMetadata(
+      directory: exportDirectory,
+      sessionStartTime: sessionStartTime,
+      sessionEndTime: sessionEndTime,
+      generatedFiles: files,
+    );
 
-    if (mounted) {
-      setState(() {
-        _videoProcessingStatus = 'Guardando metadatos...';
-      });
-    }
+    // ========================================================================
+    // 5. SESSION TOTALS
+    // ========================================================================
 
     final double totalProtocolSeconds =
-        sessionEndTime
-            .difference(sessionStartTime)
-            .inMilliseconds /
-            1000.0;
+        sessionEndTime.difference(sessionStartTime).inMilliseconds / 1000.0;
 
-    final double totalActivitySeconds =
-        _completedActivities.fold<double>(
+    final double totalActivitySeconds = _completedActivities.fold<double>(
       0.0,
       (sum, item) => sum + item.durationSeconds,
     );
 
     final double totalTransitionSeconds =
-        (totalProtocolSeconds - totalActivitySeconds)
-            .clamp(0.0, double.infinity);
+        (totalProtocolSeconds - totalActivitySeconds).clamp(0.0, double.infinity);
 
-    final int totalStations =
-        _completedActivities.length;
-    
+    final int totalStations = _completedActivities.length;
 
-    // TEMPORARILY DISABLE REDCAP SYNC UNTIL WE PLAN WHAT WE WANT TO GET IN REDCAP
-
-    /* // ========================================================================
-    // 7. REDCAP SYNC
+    // ========================================================================
+    // 6. REDCAP SYNC
     // ========================================================================
 
-    if (!mounted) return;
+    if (mounted) {
+      setState(() {
+        _videoProcessingStatus = 'Enviando a REDCap...';
+      });
+    }
 
-    setState(() {
-      _isRunning = false;
-      _isPaused = false;
-    });
-
-    final success =
-        await LabRedCapService.sendFlatProtocolSession(
+    final records = LabRedCapService.buildFlatProtocolRecords(
       participants: _participants,
       sessionStartTime: sessionStartTime,
       sessionEndTime: sessionEndTime,
@@ -1516,11 +1493,29 @@ class TimerPageState extends State<TimerPage>
       totalTransitionSeconds: totalTransitionSeconds,
       totalStations: totalStations,
     );
- */
+
+    final redcapError = await LabRedCapService.importRecords(records);
+
+    if (redcapError != null) {
+      // Keep what would have been sent, to import it by hand later.
+      try {
+        await File(
+          '$exportDirectory${Platform.pathSeparator}redcap_records.json',
+        ).writeAsString(const JsonEncoder.withIndent('  ').convert(records));
+      } catch (e) {
+        debugPrint('[REDCAP] No se pudo guardar redcap_records.json: $e');
+      }
+    }
 
     // ========================================================================
     // 7. FINISH SESSION
     // ========================================================================
+
+    // The session files are on disk, so the local backup is no longer needed;
+    // otherwise the next evaluation would offer to resume this one.
+    await _clearLocalBackup();
+
+    _closeVideoProcessingDialog();
 
     if (!mounted) return;
 
@@ -1533,98 +1528,96 @@ class TimerPageState extends State<TimerPage>
     // 8. RESULT DIALOG
     // ========================================================================
 
-    // ========================================================================
-    // 8. RESULT DIALOG
-    // ========================================================================
+    final totalMins = (totalProtocolSeconds / 60).toStringAsFixed(1);
+    final actMins = (totalActivitySeconds / 60).toStringAsFixed(1);
+    final transMins = (totalTransitionSeconds / 60).toStringAsFixed(1);
+    final summaryNames = _participants.map((p) => p.participantId).join(', ');
+    final skippedActivities = _completedActivities
+        .where((a) => a.activityIndex > LabRedCapService.maxRedcapActivities)
+        .length;
 
-    if (mounted) {
-      final totalMins =
-          (totalProtocolSeconds / 60).toStringAsFixed(1);
+    final redcapLine = redcapError == null
+        ? '☁ REDCap: enviado'
+        : '⚠ REDCap: no enviado. $redcapError\n'
+            'Los datos están en redcap_records.json, en la carpeta de la sesión.';
+    final skippedLine = skippedActivities > 0
+        ? '\n⚠ $skippedActivities actividad(es) más allá de la '
+            '${LabRedCapService.maxRedcapActivities} no tienen campo en REDCap '
+            '(sí están en el manifiesto).'
+        : '';
 
-      final actMins =
-          (totalActivitySeconds / 60).toStringAsFixed(1);
-
-      final transMins =
-          (totalTransitionSeconds / 60).toStringAsFixed(1);
-
-      final summaryNames =
-          _participants.map((p) => p.participantId).join(', ');
-
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.all(
-                Radius.circular(24),
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF1E293B),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(
+              Radius.circular(24),
+            ),
+          ),
+          title: const Row(
+            children: [
+              Icon(
+                Icons.check_circle_rounded,
+                color: Color(0xFF34D399),
               ),
-            ),
-            title: const Row(
-              children: [
-                Icon(
-                  Icons.check_circle_rounded,
-                  color: Color(0xFF34D399),
-                ),
-                SizedBox(width: 10),
-                Text(
-                  'Evaluación completada',
-                  style: TextStyle(
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-            content: Text(
-              'Sesión guardada correctamente para '
-              '${_participants.length} sujeto(s):\n'
-              '[$summaryNames]\n\n'
-              '⏱ Total: $totalMins min\n'
-              '🏃 En Actividad: $actMins min\n'
-              '⏳ En Transiciones: $transMins min\n'
-              '📊 Total Actividades: $totalStations',
-              style: const TextStyle(
-                color: Colors.white70,
-              ),
-            ),
-            actions: [
-              FilledButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                },
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF38BDF8),
-                  foregroundColor: Colors.black,
-                ),
-                child: const Text(
-                  'Nueva Evaluación',
+              SizedBox(width: 10),
+              Text(
+                'Evaluación completada',
+                style: TextStyle(
+                  color: Colors.white,
                 ),
               ),
             ],
-          );
-        },
-      );
+          ),
+          content: Text(
+            'Sesión guardada en:\n$exportDirectory\n\n'
+            '${_participants.length} sujeto(s): [$summaryNames]\n\n'
+            '⏱ Total: $totalMins min\n'
+            '🏃 En Actividad: $actMins min\n'
+            '⏳ En Transiciones: $transMins min\n'
+            '📊 Total Actividades: $totalStations\n\n'
+            '$redcapLine$skippedLine',
+            style: const TextStyle(
+              color: Colors.white70,
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF38BDF8),
+                foregroundColor: Colors.black,
+              ),
+              child: const Text(
+                'Nueva Evaluación',
+              ),
+            ),
+          ],
+        );
+      },
+    );
 
-      await ResearchMonitorBridge.instance.closeMonitorWindow();
+    await ResearchMonitorBridge.instance.closeMonitorWindow();
 
-      if (!mounted) return;
+    if (!mounted) return;
 
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (context) => const ParticipantSetupPage(),
-        ),
-      );
-    }
+    // Remove every route (timer page and any leftover dialog).
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (context) => const ParticipantSetupPage(),
+      ),
+      (route) => false,
+    );
   }
 
   Future<String?> _exportSessionFiles(
     List<String> generatedFiles,
   ) async {
-    if (generatedFiles.isEmpty) {
-      return null;
-    }
-
     final selectedDirectory = await getDirectoryPath(
       confirmButtonText: 'Guardar aquí',
     );
@@ -2088,7 +2081,8 @@ class TimerPageState extends State<TimerPage>
   }
 
   void _showVideoProcessingDialog() {
-    if (!mounted) return;
+    if (!mounted || _processingDialogOpen) return;
+    _processingDialogOpen = true;
 
     showDialog(
       context: context,
@@ -2152,7 +2146,9 @@ class TimerPageState extends State<TimerPage>
   }
 
   void _closeVideoProcessingDialog() {
-    if (!mounted) return;
+    // Pop only our own dialog: popping blindly could remove another route.
+    if (!mounted || !_processingDialogOpen) return;
+    _processingDialogOpen = false;
 
     Navigator.of(context, rootNavigator: true).pop();
   }

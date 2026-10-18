@@ -83,7 +83,7 @@ class ActivityLog {
 class LabRedCapService {
   static const String _redcapUrl = String.fromEnvironment(
     'REDCAP_URL',
-    defaultValue: 'https://tu-instancia-redcap.org/api/',
+    defaultValue: 'https://redcap.ugr.es/api/',
   );
 
   static const String _apiToken = String.fromEnvironment(
@@ -91,7 +91,22 @@ class LabRedCapService {
     defaultValue: '',
   );
 
-  static Future<bool> sendFlatProtocolSession({
+  /// Activities with start/end fields in the REDCap instrument
+  /// (`act_1_start_time` ... `act_10_end_time`).
+  static const int maxRedcapActivities = 10;
+
+  static bool get isConfigured => _apiToken.isNotEmpty;
+
+  /// REDCap `datetime_seconds_ymd` value in the computer's local time.
+  static String formatRedcapDateTime(DateTime time) {
+    final t = time.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)} '
+        '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+  }
+
+  /// One flat record per participant for the `protocol_feasibility` form.
+  static List<Map<String, dynamic>> buildFlatProtocolRecords({
     required List<ParticipantEntry> participants,
     required DateTime sessionStartTime,
     required DateTime sessionEndTime,
@@ -100,17 +115,16 @@ class LabRedCapService {
     required double totalActivitySeconds,
     required double totalTransitionSeconds,
     required int totalStations,
-  }) async {
-    // 1. Create a registry per participant (shared timings - parallel assessment)
-    final List<Map<String, dynamic>> records = [];
+  }) {
+    final records = <Map<String, dynamic>>[];
 
     for (final participant in participants) {
       final Map<String, dynamic> recordData = {
         'record_id': participant.participantId,
         'redcap_event_name': participant.redcapEventName,
-        'session_start_time': sessionStartTime.toUtc().toIso8601String(),
-        'session_end_time': sessionEndTime.toUtc().toIso8601String(),
-        'lab_total_stations': totalStations,
+        'session_start_time': formatRedcapDateTime(sessionStartTime),
+        'session_end_time': formatRedcapDateTime(sessionEndTime),
+        'lab_total_stations': totalStations.toString(),
         'total_protocol_seconds': totalProtocolSeconds.toStringAsFixed(2),
         'total_activity_seconds': totalActivitySeconds.toStringAsFixed(2),
         'total_transition_seconds': totalTransitionSeconds.toStringAsFixed(2),
@@ -119,16 +133,23 @@ class LabRedCapService {
 
       for (final act in activities) {
         final idx = act.activityIndex;
-        recordData['act_${idx}_start_time'] =
-            act.activityStartTime.toUtc().toIso8601String();
-        recordData['act_${idx}_end_time'] =
-            act.activityEndTime.toUtc().toIso8601String();
+        // REDCap rejects the whole import if a field does not exist.
+        if (idx < 1 || idx > maxRedcapActivities) continue;
+        recordData['act_${idx}_start_time'] = formatRedcapDateTime(act.activityStartTime);
+        recordData['act_${idx}_end_time'] = formatRedcapDateTime(act.activityEndTime);
       }
 
       records.add(recordData);
     }
+    return records;
+  }
 
-    // 2. Batch call parameters
+  /// Sends [records] to REDCap. Returns null on success or the error message.
+  static Future<String?> importRecords(List<Map<String, dynamic>> records) async {
+    if (!isConfigured) {
+      return 'Falta el token de REDCap (compila con --dart-define=REDCAP_TOKEN=...)';
+    }
+
     final Map<String, String> body = {
       'token': _apiToken,
       'content': 'record',
@@ -141,29 +162,20 @@ class LabRedCapService {
     };
 
     try {
-      final response = await http.post(
-        Uri.parse(_redcapUrl),
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: body,
-      );
+      final response = await http
+          .post(
+            Uri.parse(_redcapUrl),
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: body,
+          )
+          .timeout(const Duration(seconds: 30));
 
-      if (response.statusCode == 200) {
-        if (kDebugMode) {
-          debugPrint('Sincronización Batch exitosa: ${response.body}');
-        }
-        return true;
-      } else {
-        if (kDebugMode) {
-          debugPrint(
-              'Error en REDCap HTTP ${response.statusCode}: ${response.body}');
-        }
-        return false;
-      }
+      debugPrint('[REDCAP] HTTP ${response.statusCode}: ${response.body}');
+      if (response.statusCode == 200) return null;
+      return 'REDCap respondió ${response.statusCode}: ${response.body}';
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('Excepción al conectar con REDCap: $e');
-      }
-      return false;
+      debugPrint('[REDCAP] Excepción: $e');
+      return 'No se pudo conectar con REDCap: $e';
     }
   }
 }
