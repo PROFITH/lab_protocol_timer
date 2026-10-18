@@ -246,11 +246,13 @@ class ResearchMonitorBridge extends WindowListener {
   Future<void> sessionStarted({
     required String participantIds,
     required int activityIndex,
+    String? activityName,
     required String phaseName,
   }) {
     return send(WindowMessages.sessionStarted, {
       'participantIds': participantIds,
       'activityIndex': activityIndex,
+      if (activityName != null) 'activityName': activityName,
       'phaseName': phaseName,
     });
   }
@@ -263,11 +265,13 @@ class ResearchMonitorBridge extends WindowListener {
   Future<void> updateProtocolContext({
     required String participantIds,
     required int activityIndex,
+    String? activityName,
     required String phaseName,
   }) {
     return send(WindowMessages.protocolContext, {
       'participantIds': participantIds,
       'activityIndex': activityIndex,
+      if (activityName != null) 'activityName': activityName,
       'phaseName': phaseName,
     });
   }

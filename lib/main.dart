@@ -13,6 +13,8 @@ import 'package:multi_window_manager/multi_window_manager.dart';
 import 'windows/research_monitor_bridge.dart';
 import 'dart:io';
 import 'package:file_selector/file_selector.dart';
+import 'models/activity_battery.dart';
+import 'models/session_manifest.dart';
 import 'models/sync_window.dart';
 
 Future<void> main(List<String> args) async {
@@ -120,6 +122,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   final _formKey = GlobalKey<FormState>();
   final List<ParticipantFieldGroup> _participants = [];
   final _activityController = TextEditingController(text: '1');
+  ActivityBattery? _battery;
 
   static const Map<String, String> _eventOptions = {
     'da_0__visita_inici_arm_1': 'Visita Inicial (Día 0)',
@@ -175,6 +178,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final savedSessionId = prefs.getString('saved_session_id');
     final savedSyncWindowsRaw = prefs.getString('saved_sync_windows');
     final savedCurrentActivity = prefs.getInt('saved_current_activity') ?? 1;
+    final savedBatteryRaw = prefs.getString('saved_battery');
 
     if (savedParticipantsRaw != null &&
         savedActivitiesRaw != null &&
@@ -256,6 +260,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               restoredSessionStartTime: restoredGlobalStart,
               restoredSessionId: savedSessionId,
               restoredSyncWindows: restoredSyncWindows,
+              battery: savedBatteryRaw == null
+                  ? null
+                  : ActivityBattery.parse(savedBatteryRaw),
             ),
           ),
         );
@@ -273,6 +280,28 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     await prefs.remove('saved_current_activity');
     await prefs.remove('saved_session_id');
     await prefs.remove('saved_sync_windows');
+    await prefs.remove('saved_battery');
+  }
+
+  Future<void> _loadBattery() async {
+    const typeGroup = XTypeGroup(
+      label: 'Protocolo JSON',
+      extensions: ['json'],
+    );
+
+    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+    if (file == null) return;
+
+    try {
+      final battery = ActivityBattery.parse(await file.readAsString());
+      if (!mounted) return;
+      setState(() => _battery = battery);
+    } on FormatException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Protocolo no válido: ${e.message}')),
+      );
+    }
   }
 
   Future<void> _submitAndStart() async {
@@ -299,6 +328,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         builder: (context) => TimerPage(
           initialParticipants: entries,
           initialActivity: activity,
+          battery: _battery,
         ),
       ),
     );
@@ -476,6 +506,32 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                         },
                       ),
 
+                      const SizedBox(height: 20),
+                      OutlinedButton.icon(
+                        onPressed: _loadBattery,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF38BDF8),
+                          side: const BorderSide(color: Color(0xFF38BDF8)),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        ),
+                        icon: const Icon(Icons.playlist_add_check_rounded),
+                        label: Text(
+                          _battery == null
+                              ? 'Cargar protocolo de actividades (JSON)'
+                              : '${_battery!.protocolId}: '
+                                  '${_battery!.activities.length} actividades',
+                        ),
+                      ),
+                      if (_battery != null)
+                        TextButton(
+                          onPressed: () => setState(() => _battery = null),
+                          child: const Text(
+                            'Quitar protocolo (duración fija para todas)',
+                            style: TextStyle(color: Colors.white54),
+                          ),
+                        ),
+
                       const SizedBox(height: 28),
                       SizedBox(
                         width: double.infinity,
@@ -555,6 +611,9 @@ class TimerPage extends StatefulWidget {
   final String? restoredSessionId;
   final List<SyncWindow>? restoredSyncWindows;
 
+  /// Activity battery loaded from a protocol JSON file (optional).
+  final ActivityBattery? battery;
+
   const TimerPage({
     super.key,
     required this.initialParticipants,
@@ -563,6 +622,7 @@ class TimerPage extends StatefulWidget {
     this.restoredSessionStartTime,
     this.restoredSessionId,
     this.restoredSyncWindows,
+    this.battery,
   });
 
   @override
@@ -667,6 +727,21 @@ class TimerPageState extends State<TimerPage>
 
   String _videoProcessingStatus = 'Finalizando grabación...';
 
+  BatteryActivity? get _batteryActivity =>
+      widget.battery?.activityAt(_currentActivity);
+
+  /// Main-phase duration of the current activity: the battery value when a
+  /// protocol was loaded, otherwise the duration set in the Research Monitor.
+  int get _plannedActivitySeconds =>
+      _batteryActivity?.durationSeconds ?? _activitySeconds;
+
+  String get _activityAnnouncement {
+    final name = _batteryActivity?.name;
+    return name == null
+        ? 'Actividad $_currentActivity'
+        : 'Actividad $_currentActivity, $name';
+  }
+
   // Generate session ID
   String _generateSessionId() {
     final timestamp = DateTime.now()
@@ -736,7 +811,10 @@ class TimerPageState extends State<TimerPage>
       'activity_index,'
       'activity_start_time_utc,'
       'activity_end_time_utc,'
-      'duration_seconds',
+      'duration_seconds,'
+      'activity_name,'
+      'compendium_code,'
+      'planned_duration_seconds',
     );
 
     for (final activity in _completedActivities) {
@@ -746,6 +824,9 @@ class TimerPageState extends State<TimerPage>
           activity.activityStartTime.toUtc().toIso8601String(),
           activity.activityEndTime.toUtc().toIso8601String(),
           activity.durationSeconds.toStringAsFixed(6),
+          _csvField(activity.activityName),
+          activity.compendiumCode ?? '',
+          activity.plannedDurationSeconds ?? '',
         ].join(','),
       );
     }
@@ -753,69 +834,28 @@ class TimerPageState extends State<TimerPage>
     return buffer.toString();
   }
 
+  static String _csvField(String? value) {
+    if (value == null) return '';
+    if (!value.contains(RegExp(r'[",\n]'))) return value;
+    return '"${value.replaceAll('"', '""')}"';
+  }
+
   Map<String, dynamic> _buildSessionManifest({
     required DateTime sessionStartTime,
     required DateTime sessionEndTime,
     required List<String> generatedFiles,
   }) {
-    return {
-      'schema_version': '1.0',
-
-      'session_id': _sessionId,
-
-      'created_by': 'lab_protocol_timer',
-
-      'session_start_time_utc':
-          sessionStartTime.toUtc().toIso8601String(),
-
-      'session_end_time_utc':
-          sessionEndTime.toUtc().toIso8601String(),
-
-      'participants': _participants
-          .map(
-            (participant) => {
-              'participant_id':
-                  participant.participantId,
-              'redcap_event_name':
-                  participant.redcapEventName,
-            },
-          )
-          .toList(),
-
-      'activities': _completedActivities
-          .map((activity) => activity.toJson())
-          .toList(),
-
-      'sync_windows':
-          _syncWindows.map((window) => window.toJson()).toList(),
-
-      'video': {
-        'files': generatedFiles
-            .where(
-              (path) =>
-                  path.toLowerCase().endsWith('.mp4') ||
-                  path.toLowerCase().endsWith('.mov') ||
-                  path.toLowerCase().endsWith('.avi'),
-            )
-            .map((path) => path.split(Platform.pathSeparator).last)
-            .toList(),
-      },
-
-      'sensors': {
-        'polar_h10': {
-          'present': true,
-          'timestamp_domain': 'native_plus_host_utc',
-        },
-        'offline_sensor_a': {
-          'present': false,
-          'timestamp_domain': 'unknown',
-        },
-        'offline_sensor_b': {
-          'present': false,
-          'timestamp_domain': 'unknown',
-        },
-      },
-    };
+    return buildSessionManifest(
+      sessionId: _sessionId!,
+      sessionStartTime: sessionStartTime,
+      sessionEndTime: sessionEndTime,
+      participants: _participants,
+      activities: _completedActivities,
+      syncWindows: _syncWindows,
+      generatedFiles: generatedFiles,
+      protocolConfiguration: defaultProtocolConfiguration,
+      battery: widget.battery,
+    );
   }
 
   Future<List<String>> _writeSessionMetadata({
@@ -1025,6 +1065,13 @@ class TimerPageState extends State<TimerPage>
     final rawSyncWindows =
         jsonEncode(_syncWindows.map((e) => e.toJson()).toList());
     await prefs.setString('saved_sync_windows', rawSyncWindows);
+
+    if (widget.battery != null) {
+      await prefs.setString(
+        'saved_battery',
+        jsonEncode(widget.battery!.toJson()),
+      );
+    }
   }
 
   Future<void> _clearLocalBackup() async {
@@ -1035,6 +1082,7 @@ class TimerPageState extends State<TimerPage>
     await prefs.remove('saved_current_activity');
     await prefs.remove('saved_session_id');
     await prefs.remove('saved_sync_windows');
+    await prefs.remove('saved_battery');
   }
 
   String get _currentPhaseName {
@@ -1246,13 +1294,14 @@ class TimerPageState extends State<TimerPage>
     await ResearchMonitorBridge.instance.sessionStarted(
       participantIds: participantSummary,
       activityIndex: _currentActivity,
+      activityName: _batteryActivity?.name,
       phaseName: _currentPhaseName,
     );
 
     await _persistSessionLocally();
 
     await _speak(
-      "Preparación estática. Permanezcan inmóviles.",
+      "$_activityAnnouncement. Preparación estática. Permanezcan inmóviles.",
     );
 
     _startProtocolTimer();
@@ -1279,7 +1328,7 @@ class TimerPageState extends State<TimerPage>
       _isPaused = false;
     });
     _persistSessionLocally();
-    _speak("Actividad $_currentActivity. Fase estática inicial.");
+    _speak("$_activityAnnouncement. Fase estática inicial.");
     _startProtocolTimer();
   }
 
@@ -1629,6 +1678,7 @@ class TimerPageState extends State<TimerPage>
         ResearchMonitorBridge.instance.updateProtocolContext(
           participantIds: participantSummary,
           activityIndex: _currentActivity,
+          activityName: _batteryActivity?.name,
           phaseName: _currentPhaseName,
         );
 
@@ -1652,7 +1702,7 @@ class TimerPageState extends State<TimerPage>
 
           if (_currentPhase == 0) {
             _currentPhase = 1;
-            _seconds = _activitySeconds;
+            _seconds = _plannedActivitySeconds;
             _currentActivityStartTime = DateTime.now().toUtc();
 
             _speakThenPlaySound(
@@ -1671,6 +1721,9 @@ class TimerPageState extends State<TimerPage>
                   activityStartTime: _currentActivityStartTime!,
                   activityEndTime: now,
                   durationSeconds: duration,
+                  activityName: _batteryActivity?.name,
+                  compendiumCode: _batteryActivity?.compendiumCode,
+                  plannedDurationSeconds: _plannedActivitySeconds,
                 ),
               );
               _currentActivityStartTime = null;
@@ -1690,7 +1743,9 @@ class TimerPageState extends State<TimerPage>
               _seconds = _prepSeconds;
               _currentActivity++;
               _persistSessionLocally();
-              _speakThenPlaySound("Permanezca inmóvil.");
+              _speakThenPlaySound(
+                "$_activityAnnouncement. Permanezca inmóvil.",
+              );
             }
           }
         }
@@ -1707,8 +1762,9 @@ class TimerPageState extends State<TimerPage>
     if (_currentPhase == 0) {
       progress = _prepSeconds > 0 ? _seconds / _prepSeconds : 0.0;
     } else if (_currentPhase == 1) {
-      progress =
-          _activitySeconds > 0 ? _seconds / _activitySeconds : 0.0;
+      progress = _plannedActivitySeconds > 0
+          ? _seconds / _plannedActivitySeconds
+          : 0.0;
     } else if (_currentPhase == 2) {
       progress = _postSeconds > 0 ? _seconds / _postSeconds : 0.0;
     }

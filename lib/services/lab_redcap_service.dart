@@ -34,11 +34,19 @@ class ActivityLog {
   /// Duration of the main activity in seconds.
   final double durationSeconds;
 
+  /// Activity metadata from the protocol battery, when one was loaded.
+  final String? activityName;
+  final String? compendiumCode;
+  final int? plannedDurationSeconds;
+
   ActivityLog({
     required this.activityIndex,
     required this.activityStartTime,
     required this.activityEndTime,
     required this.durationSeconds,
+    this.activityName,
+    this.compendiumCode,
+    this.plannedDurationSeconds,
   });
 
   Map<String, dynamic> toJson() => {
@@ -46,6 +54,10 @@ class ActivityLog {
         'activity_start_time_utc': activityStartTime.toUtc().toIso8601String(),
         'activity_end_time_utc': activityEndTime.toUtc().toIso8601String(),
         'duration_seconds': durationSeconds,
+        if (activityName != null) 'activity_name': activityName,
+        if (compendiumCode != null) 'compendium_code': compendiumCode,
+        if (plannedDurationSeconds != null)
+          'planned_duration_seconds': plannedDurationSeconds,
       };
 
   factory ActivityLog.fromJson(Map<String, dynamic> json) => ActivityLog(
@@ -61,6 +73,10 @@ class ActivityLog {
                   json['activity_end_time'],
             ).toUtc(),
         durationSeconds: (json['duration_seconds'] as num).toDouble(),
+        activityName: json['activity_name'] as String?,
+        compendiumCode: json['compendium_code']?.toString(),
+        plannedDurationSeconds:
+            (json['planned_duration_seconds'] as num?)?.round(),
       );
 }
 

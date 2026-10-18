@@ -6,6 +6,7 @@ const defaultProtocolConfiguration = ProtocolConfiguration(
     DeviceConfiguration(
       deviceId: 'polar_h10',
       deviceName: 'Polar H10',
+      placement: 'chest',
       sensors: {
         'heart_rate',
         'rr',

@@ -23,8 +23,8 @@ class SyncWindow {
       'event_type': eventType,
       'activity_index': activityIndex,
       'phase': phase,
-      'window_start': windowStart.toUtc().toIso8601String(),
-      'window_end': windowEnd.toUtc().toIso8601String(),
+      'window_start_time_utc': windowStart.toUtc().toIso8601String(),
+      'window_end_time_utc': windowEnd.toUtc().toIso8601String(),
     };
   }
 
@@ -34,18 +34,19 @@ class SyncWindow {
       eventType: json['event_type'] as String,
       activityIndex: json['activity_index'] as int,
       phase: json['phase'] as String,
+      // Sessions saved before manifest 1.1 use window_start / window_end.
       windowStart: DateTime.parse(
-        json['window_start'] as String,
+        (json['window_start_time_utc'] ?? json['window_start']) as String,
       ).toUtc(),
       windowEnd: DateTime.parse(
-        json['window_end'] as String,
+        (json['window_end_time_utc'] ?? json['window_end']) as String,
       ).toUtc(),
     );
   }
 
   static const String csvHeader =
       'event_id,event_type,activity_index,phase,'
-      'window_start,window_end';
+      'window_start_time_utc,window_end_time_utc';
 
   String toCsvRow() {
     return [

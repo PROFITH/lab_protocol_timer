@@ -5,10 +5,14 @@ class DeviceConfiguration {
   /// Sensors/capabilities that should be acquired from this device.
   final Set<String> sensors;
 
+  /// Body placement written to the session manifest (e.g. `chest`).
+  final String? placement;
+
   const DeviceConfiguration({
     required this.deviceId,
     required this.deviceName,
     this.sensors = const {},
+    this.placement,
   });
 
   bool hasSensor(String sensorId) {
@@ -20,6 +24,7 @@ class DeviceConfiguration {
       'deviceId': deviceId,
       'deviceName': deviceName,
       'sensors': sensors.toList(),
+      if (placement != null) 'placement': placement,
     };
   }
 
@@ -32,6 +37,7 @@ class DeviceConfiguration {
       sensors: Set<String>.from(
         json['sensors'] as List<dynamic>? ?? const [],
       ),
+      placement: json['placement'] as String?,
     );
   }
 }

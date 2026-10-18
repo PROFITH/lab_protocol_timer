@@ -16,6 +16,8 @@ The app captures high-precision timestamps to isolate active exercise windows fr
 - **Aggregated REDCap Batch Export:** Automated flat-record data transfer delivering key aggregated metrics: total protocol duration, total activity duration, total transition time, and total completed stations.
 - **Local State Persistence & Recovery:** Automatic local storage (`SharedPreferences`) on every lap/activity to restore interrupted sessions following accidental tab closures or browser reloads.
 - **Audio & TTS Voice Prompts:** Integrated audio alerts and Text-to-Speech narration for phase transitions and sensor synchronization commands.
+- **Protocol Files (optional):** Load a JSON battery with the name, Compendium code and duration of each activity and the offline sensors worn; see [docs/protocol_format.md](docs/protocol_format.md).
+- **SAVES Session Output:** Each session folder holds `session_manifest.json` (format 1.1), `sync_windows.csv` and `activity_markers.csv`, read by [SAVES](https://github.com/PROFITH/saves_app) to synchronize offline sensors and video.
 
 ---
 

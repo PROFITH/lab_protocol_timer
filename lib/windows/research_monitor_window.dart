@@ -49,6 +49,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
   String _participantIds = '--';
   int _activityIndex = 0;
+  String? _activityName;
   String _phaseName = 'idle';
   bool _sessionActive = false;
   bool _sessionPaused = false;
@@ -526,6 +527,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       _sessionPaused = false;
       _participantIds = args['participantIds']?.toString() ?? '--';
       _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
+      _activityName = args['activityName']?.toString();
       _phaseName = args['phaseName']?.toString() ?? 'idle';
     });
 
@@ -542,6 +544,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     setState(() {
       _participantIds = args['participantIds']?.toString() ?? '--';
       _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
+      _activityName = args['activityName']?.toString();
       _phaseName = args['phaseName']?.toString() ?? 'idle';
     });
 
@@ -1713,14 +1716,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Text(
-                      _sessionActive || _sessionPaused
-                          ? 'Actividad $_activityIndex'
-                          : 'No iniciado',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
+                    Flexible(
+                      child: Text(
+                        _sessionActive || _sessionPaused
+                            ? _activityName == null
+                                ? 'Actividad $_activityIndex'
+                                : 'Actividad $_activityIndex · $_activityName'
+                            : 'No iniciado',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),
