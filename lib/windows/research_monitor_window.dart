@@ -16,6 +16,58 @@ import 'sensor_chart_card.dart';
 import 'dart:io';
 
 
+/// Keeps one monitor window for the whole run of the app.
+///
+/// The window is hidden, not destroyed, between evaluations; on
+/// [WindowMessages.resetMonitor] the monitor is rebuilt with a fresh state.
+class ResearchMonitorHost extends StatefulWidget {
+  final ProtocolConfiguration protocolConfiguration;
+
+  const ResearchMonitorHost({
+    super.key,
+    required this.protocolConfiguration,
+  });
+
+  @override
+  State<ResearchMonitorHost> createState() => _ResearchMonitorHostState();
+}
+
+class _ResearchMonitorHostState extends State<ResearchMonitorHost>
+    with WindowListener {
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    MultiWindowManager.current.addListener(this);
+  }
+
+  @override
+  void dispose() {
+    MultiWindowManager.current.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  Future<dynamic> onEventFromWindow(
+    String eventName,
+    int fromWindowId,
+    dynamic arguments,
+  ) async {
+    if (eventName != WindowMessages.resetMonitor) return null;
+    if (mounted) setState(() => _generation++);
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResearchMonitorWindow(
+      key: ValueKey(_generation),
+      protocolConfiguration: widget.protocolConfiguration,
+    );
+  }
+}
+
 class ResearchMonitorWindow extends StatefulWidget {
   final ProtocolConfiguration protocolConfiguration;
 

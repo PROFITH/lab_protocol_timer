@@ -5,8 +5,11 @@ class WindowMessages {
   static const String sessionFinished = 'session_finished';
 
   /// Asks the monitor to stop the camera and Bluetooth before its window is
-  /// closed, so no native callback reaches a destroyed window.
+  /// hidden at the end of an evaluation.
   static const String releaseResources = 'release_resources';
+
+  /// Rebuilds the hidden monitor from scratch for a new evaluation.
+  static const String resetMonitor = 'reset_monitor';
 
   static const String protocolContext = 'protocol_context';
   static const String protocolConfiguration = 'protocol_configuration';

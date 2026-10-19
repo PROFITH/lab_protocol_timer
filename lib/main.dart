@@ -64,7 +64,7 @@ Future<void> main(List<String> args) async {
       const MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Research Monitor',
-        home: ResearchMonitorWindow(
+        home: ResearchMonitorHost(
           protocolConfiguration: defaultProtocolConfiguration,
         ),
       ),
@@ -563,6 +563,14 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   Future<void> _openResearchMonitorWindow() async {
     try {
+      if (await ResearchMonitorBridge.instance.hasLiveMonitorWindow()) {
+        ResearchMonitorBridge.instance.setProtocolConfiguration(
+          defaultProtocolConfiguration,
+        );
+        await ResearchMonitorBridge.instance.reuseMonitorWindow();
+        return;
+      }
+
       debugPrint('[WINDOW] Creando Research Monitor...');
 
       final window = await MultiWindowManager.createWindow([
@@ -1870,6 +1878,7 @@ class TimerPageState extends State<TimerPage>
           await _clearLocalBackup();
           _timer?.cancel();
           _flutterTts.stop();
+          await ResearchMonitorBridge.instance.closeMonitorWindow();
           if (context.mounted) {
             Navigator.of(context).pushReplacement(
               MaterialPageRoute(

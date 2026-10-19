@@ -32,6 +32,41 @@ class ResearchMonitorBridge extends WindowListener {
     debugPrint('[IPC] Research Monitor registrado. ID=${window.id}');
   }
 
+  /// Whether a monitor window from an earlier evaluation is still alive and
+  /// can be reused instead of creating a new one.
+  Future<bool> hasLiveMonitorWindow() async {
+    final window = _monitorWindow;
+    if (window == null) return false;
+
+    try {
+      final aliveIds = await MultiWindowManager.getAllAliveEngineIds();
+      if (aliveIds.contains(window.id)) return true;
+    } catch (e) {
+      debugPrint('[IPC] No se pudo consultar las ventanas vivas: $e');
+    }
+
+    // The operator closed the monitor by hand.
+    _monitorWindow = null;
+    return false;
+  }
+
+  /// Rebuilds the hidden monitor for a new evaluation and shows it again.
+  Future<void> reuseMonitorWindow() async {
+    final window = _monitorWindow;
+    if (window == null) return;
+
+    debugPrint('[WINDOW] Reutilizando Research Monitor. ID=${window.id}');
+
+    await send(WindowMessages.resetMonitor);
+    await window.show();
+    await window.focus();
+  }
+
+  /// Ends the monitor's part in the current evaluation.
+  ///
+  /// Destroying a secondary Flutter engine on Windows takes the whole process
+  /// down ("Lost connection to device"), so the monitor releases the camera
+  /// and Bluetooth and is hidden. The next evaluation reuses it.
   Future<void> closeMonitorWindow() async {
     final window = _monitorWindow;
 
@@ -41,26 +76,19 @@ class ResearchMonitorBridge extends WindowListener {
     }
 
     debugPrint(
-      '[WINDOW] Cerrando Research Monitor. ID=${window.id}',
+      '[WINDOW] Ocultando Research Monitor. ID=${window.id}',
     );
 
     try {
-      // Stop camera and Bluetooth in the monitor before destroying its window.
       await send(WindowMessages.releaseResources)
           .timeout(const Duration(seconds: 5), onTimeout: () => null);
-      await window.close();
+      await window.hide();
     } catch (e) {
       debugPrint(
-        '[WINDOW] Error cerrando Research Monitor: $e',
+        '[WINDOW] Error ocultando Research Monitor: $e',
       );
     } finally {
-      MultiWindowManager.current.removeListener(this);
-      _monitorWindow = null;
       _onSyncWindowRequested = null;
-
-      debugPrint(
-        '[WINDOW] Research Monitor desconectado del bridge.',
-      );
     }
   }
 
