@@ -1502,14 +1502,30 @@ class TimerPageState extends State<TimerPage>
       totalStations: totalStations,
     );
 
-    final redcapError = await LabRedCapService.importRecords(records);
+    final activityRecords = LabRedCapService.buildLabActivityRecords(
+      participants: _participants,
+      sessionId: _sessionId!,
+      protocolId: widget.battery?.protocolId,
+      activities: List.from(_completedActivities),
+    );
+
+    // Two imports: the summary goes through even if the repeating
+    // lab_activity instrument is not set up in REDCap yet.
+    String? redcapError = await LabRedCapService.importRecords(records);
+    final detailError = await LabRedCapService.importRecords(activityRecords);
+    if (detailError != null) {
+      redcapError = redcapError == null
+          ? 'Resumen enviado, pero no el detalle por actividad: $detailError'
+          : '$redcapError\nDetalle por actividad: $detailError';
+    }
 
     if (redcapError != null) {
       // Keep what would have been sent, to import it by hand later.
       try {
         await File(
           '$exportDirectory${Platform.pathSeparator}redcap_records.json',
-        ).writeAsString(const JsonEncoder.withIndent('  ').convert(records));
+        ).writeAsString(const JsonEncoder.withIndent('  ')
+            .convert([...records, ...activityRecords]));
       } catch (e) {
         debugPrint('[REDCAP] No se pudo guardar redcap_records.json: $e');
       }
@@ -1540,19 +1556,11 @@ class TimerPageState extends State<TimerPage>
     final actMins = (totalActivitySeconds / 60).toStringAsFixed(1);
     final transMins = (totalTransitionSeconds / 60).toStringAsFixed(1);
     final summaryNames = _participants.map((p) => p.participantId).join(', ');
-    final skippedActivities = _completedActivities
-        .where((a) => a.activityIndex > LabRedCapService.maxRedcapActivities)
-        .length;
 
     final redcapLine = redcapError == null
         ? '☁ REDCap: enviado'
-        : '⚠ REDCap: no enviado. $redcapError\n'
+        : '⚠ REDCap: $redcapError\n'
             'Los datos están en redcap_records.json, en la carpeta de la sesión.';
-    final skippedLine = skippedActivities > 0
-        ? '\n⚠ $skippedActivities actividad(es) más allá de la '
-            '${LabRedCapService.maxRedcapActivities} no tienen campo en REDCap '
-            '(sí están en el manifiesto).'
-        : '';
 
     await showDialog(
       context: context,
@@ -1587,7 +1595,7 @@ class TimerPageState extends State<TimerPage>
             '🏃 En Actividad: $actMins min\n'
             '⏳ En Transiciones: $transMins min\n'
             '📊 Total Actividades: $totalStations\n\n'
-            '$redcapLine$skippedLine',
+            '$redcapLine',
             style: const TextStyle(
               color: Colors.white70,
             ),

@@ -54,4 +54,38 @@ void main() {
     final local = DateTime(2026, 10, 27, 9, 5, 7, 999);
     expect(LabRedCapService.formatRedcapDateTime(local), '2026-10-27 09:05:07');
   });
+
+  test('lab_activity has one repeating instance per activity, past the 10th', () {
+    final activities = [
+      for (var i = 1; i <= 12; i++)
+        ActivityLog(
+          activityIndex: i,
+          activityStartTime: start.add(Duration(minutes: 5 * i)),
+          activityEndTime: start.add(Duration(minutes: 5 * i + 3)),
+          durationSeconds: 180,
+          activityName: i == 1 ? 'Caminar' : null,
+          compendiumCode: i == 1 ? '17190' : null,
+          plannedDurationSeconds: 180,
+        ),
+    ];
+    final records = LabRedCapService.buildLabActivityRecords(
+      participants: [
+        ParticipantEntry(participantId: '1', redcapEventName: 'da_0__visita_inici_arm_1'),
+      ],
+      sessionId: 'S1',
+      protocolId: 'run4health_v1',
+      activities: activities,
+    );
+
+    expect(records.length, 13);
+    expect(records.first['ws_session_id'], 'S1');
+    expect(records.first['ws_protocol_id'], 'run4health_v1');
+    expect(records.first.containsKey('redcap_repeat_instrument'), isFalse);
+    expect(records[1]['redcap_repeat_instrument'], 'lab_activity');
+    expect(records[1]['la_code'], '17190');
+    expect(records[1]['la_name'], 'Caminar');
+    expect(records[1]['la_start'], matches(redcapDateTime));
+    expect(records[2].containsKey('la_code'), isFalse);
+    expect(records.last['redcap_repeat_instance'], '12');
+  });
 }

@@ -144,6 +144,48 @@ class LabRedCapService {
     return records;
   }
 
+  /// Per-activity detail for the repeating `lab_activity` instrument (one
+  /// instance per activity, so the 10-activity limit does not apply) plus the
+  /// session link in `wearable_session`.
+  static List<Map<String, dynamic>> buildLabActivityRecords({
+    required List<ParticipantEntry> participants,
+    required String sessionId,
+    String? protocolId,
+    required List<ActivityLog> activities,
+  }) {
+    final records = <Map<String, dynamic>>[];
+
+    for (final participant in participants) {
+      records.add({
+        'record_id': participant.participantId,
+        'redcap_event_name': participant.redcapEventName,
+        'ws_session_id': sessionId,
+        if (protocolId != null) 'ws_protocol_id': protocolId,
+      });
+
+      for (var i = 0; i < activities.length; i++) {
+        final act = activities[i];
+        records.add({
+          'record_id': participant.participantId,
+          'redcap_event_name': participant.redcapEventName,
+          'redcap_repeat_instrument': 'lab_activity',
+          'redcap_repeat_instance': (i + 1).toString(),
+          'la_order': (i + 1).toString(),
+          'la_session_id': sessionId,
+          if (act.compendiumCode != null) 'la_code': act.compendiumCode,
+          'la_name': act.activityName ?? 'Actividad ${act.activityIndex}',
+          'la_start': formatRedcapDateTime(act.activityStartTime),
+          'la_end': formatRedcapDateTime(act.activityEndTime),
+          if (act.plannedDurationSeconds != null)
+            'la_planned_s': act.plannedDurationSeconds.toString(),
+          'la_completed': '1',
+          'lab_activity_complete': '2',
+        });
+      }
+    }
+    return records;
+  }
+
   /// Sends [records] to REDCap. Returns null on success or the error message.
   static Future<String?> importRecords(List<Map<String, dynamic>> records) async {
     if (!isConfigured) {
