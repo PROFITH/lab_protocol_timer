@@ -376,12 +376,6 @@ class PolarBleService {
     return name != null && name.isNotEmpty ? name : device.deviceId;
   }
 
-  /// Verity Sense se anuncia como "Polar Sense XXXXXXXX".
-  static bool _isVeritySense(BleDevice device) {
-    final name = (device.name ?? '').toLowerCase();
-    return name.contains('sense') || name.contains('verity');
-  }
-
   static bool get _isWindows =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
@@ -842,9 +836,8 @@ class PolarBleService {
   }) async {
     final generation = _connectGeneration;
     final name = _displayName(device);
-    var triedPairing = false;
     var linkWasUp = false;
-    var pairedOk = false;
+    var clearedBond = false;
 
     _establishing = true;
 
@@ -869,15 +862,10 @@ class PolarBleService {
 
           linkWasUp = true;
 
-          // Verity Sense pide emparejamiento en Windows. Si se deja que
-          // Windows lo dispare al acceder a una característica protegida,
-          // la conexión GATT se corta tras pulsar "Permitir" y la app se
-          // queda esperando. Lo hacemos explícito antes de configurar.
-          if (_isWindows && (_isVeritySense(device) || pass > 0)) {
-            triedPairing = true;
-            pairedOk = await _ensurePaired(device, name, generation);
-          }
-
+          // Windows sigue descubriendo servicios justo después de conectar.
+          // No se empareja: la Verity Sense funciona sin emparejar, y el
+          // diálogo de emparejamiento de Windows 11 se queda bloqueado.
+          await Future.delayed(const Duration(milliseconds: 600));
           _checkNotCancelled(generation);
 
           _setStatus(
@@ -906,24 +894,24 @@ class PolarBleService {
           // Segunda pasada solo en Windows, si llegó a conectar (el fallo fue
           // al configurar, típico de falta de emparejamiento) y si aún no
           // se ha intentado emparejar.
-          // Segunda pasada también si el sensor pidió autenticación: el
-          // emparejamiento puede haber terminado mientras configurábamos.
+          // "Requiere autenticación" en Windows suele venir de un
+          // emparejamiento a medias que quedó guardado. Se borra y se
+          // vuelve a intentar sin emparejar.
           final authError = _isAuthenticationError(e);
-          if (pass == 0 &&
-              _isWindows &&
-              linkWasUp &&
-              (!triedPairing || authError)) {
-            _logEvent('connect_retry_with_pairing', '$e');
+          if (pass == 0 && _isWindows && linkWasUp && authError) {
+            clearedBond = await _clearStaleBond(device, name);
             continue;
           }
 
           _logEvent('connect_failed', '$e');
           _setStatus(
             PolarLinkState.error,
-            authError && !pairedOk
-                ? 'Windows no completó el emparejamiento con $name. '
-                    'Emparéjalo en Configuración > Bluetooth y dispositivos > '
-                    'Agregar dispositivo y vuelve a pulsar Conectar.'
+            authError
+                ? 'Windows pide autenticación a $name'
+                    '${clearedBond ? ' tras borrar el emparejamiento' : ''}. '
+                    'Quítalo en Configuración > Bluetooth y dispositivos '
+                    '(Quitar dispositivo), cierra otras apps que lo usen y '
+                    'vuelve a pulsar Conectar.'
                 : 'No se pudo conectar con $name: ${_shortError(e)}',
             attempt: attempt,
           );
@@ -957,77 +945,52 @@ class PolarBleService {
     return text.length > 160 ? '${text.substring(0, 160)}...' : text;
   }
 
-  Future<bool?> _isPairedSafe(BleDevice device) async {
+  /// Borra un emparejamiento guardado en Windows. Devuelve true si había
+  /// uno y se quitó.
+  Future<bool> _clearStaleBond(BleDevice device, String name) async {
+    _setStatus(
+      PolarLinkState.connecting,
+      'Borrando un emparejamiento antiguo de $name y reintentando...',
+    );
     try {
-      return await device.isPaired(
+      final paired = await device.isPaired(
         timeout: const Duration(seconds: 5),
       );
+      if (paired != true) {
+        _logEvent('stale_bond_none', name);
+        return false;
+      }
+      await device.unpair(timeout: const Duration(seconds: 10));
+      _logEvent('stale_bond_removed', name);
+      await Future.delayed(const Duration(seconds: 1));
+      return true;
     } catch (e) {
-      debugPrint('[POLAR DEBUG] isPaired falló: $e');
-      return null;
+      debugPrint('[POLAR DEBUG] No se pudo borrar el emparejamiento: $e');
+      _logEvent('stale_bond_failed', '$e');
+      return false;
     }
   }
 
-  /// Empareja el sensor si hace falta. Devuelve true si Windows lo da por
-  /// emparejado. Si el emparejamiento no confirma enseguida, espera a que el
-  /// usuario lo acepte (o lo empareje desde Configuración) antes de seguir,
-  /// porque sin él las suscripciones fallan por falta de autenticación.
-  Future<bool> _ensurePaired(
-    BleDevice device,
-    String name,
-    int generation,
-  ) async {
-    if (await _isPairedSafe(device) == true) {
-      return true;
-    }
-
-    _setStatus(
-      PolarLinkState.pairing,
-      'Emparejando $name. Si Windows muestra un aviso, acéptalo...',
-    );
-    _logEvent('pairing_started', name);
-
-    var paired = false;
-    try {
-      await device.pair(
-        timeout: const Duration(seconds: 30),
-      );
-      paired = true;
-    } catch (e) {
-      debugPrint('[POLAR DEBUG] Emparejamiento falló: $e');
-      _logEvent('pairing_failed', '$e');
-    }
-
-    if (!paired) {
-      _setStatus(
-        PolarLinkState.pairing,
-        'Esperando el emparejamiento de $name. Si no termina, emparéjalo en '
-        'Configuración > Bluetooth y dispositivos > Agregar dispositivo.',
-      );
-      final deadline = DateTime.now().add(const Duration(seconds: 45));
-      while (DateTime.now().isBefore(deadline)) {
-        _checkNotCancelled(generation);
-        if (await _isPairedSafe(device) == true) {
-          paired = true;
-          break;
-        }
-        await Future.delayed(const Duration(seconds: 1));
+  /// Repite una operación GATT que en Windows falla a menudo de forma
+  /// pasajera ("Connection already in progress"). Los errores de
+  /// autenticación no se repiten.
+  Future<T> _gattRetry<T>(
+    String label,
+    Future<T> Function() action, {
+    int tries = 4,
+  }) async {
+    Object? last;
+    for (var i = 1; i <= tries; i++) {
+      try {
+        return await action();
+      } catch (e) {
+        last = e;
+        if (_isAuthenticationError(e) || i == tries) rethrow;
+        debugPrint('[POLAR DEBUG] $label: intento $i/$tries fallido ($e)');
+        await Future.delayed(Duration(milliseconds: 500 * i));
       }
     }
-
-    _logEvent(paired ? 'pairing_done' : 'pairing_not_confirmed', name);
-
-    // Windows suele cerrar la conexión GATT al terminar el emparejamiento.
-    await Future.delayed(const Duration(milliseconds: 500));
-    _checkNotCancelled(generation);
-
-    if (!await device.isConnected) {
-      await device.connect(
-        timeout: const Duration(seconds: 20),
-      );
-    }
-
-    return paired;
+    throw last!;
   }
 
   Future<void> _configureConnectedDevice(BleDevice device) async {
@@ -1173,49 +1136,6 @@ class PolarBleService {
     );
 
     // -------------------------------------------------------------------------
-    // PMD DATA NOTIFICATIONS
-    // -------------------------------------------------------------------------
-
-    if (!_pmdData!
-        .notifications.isSupported) {
-      throw Exception(
-        'PMD Data no soporta notifications',
-      );
-    }
-
-    await _pmdDataSubscription?.cancel();
-
-    _pmdDataSubscription =
-        _pmdData!.onValueReceived.listen(
-      (value) {
-        if (debugPmdFrames) {
-          debugPrint(
-            '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
-          );
-        }
-
-        _handlePmdData(value);
-      },
-      onError: (error, stack) {
-        debugPrint(
-          '[POLAR DEBUG] ERROR PMD DATA: $error',
-        );
-      },
-    );
-
-    debugPrint(
-      '[POLAR DEBUG] Suscribiendo PMD Data...',
-    );
-
-    await _pmdData!
-        .notifications
-        .subscribe(timeout: const Duration(seconds: 15));
-
-    debugPrint(
-      '[POLAR DEBUG] PMD Data SUSCRITO',
-    );
-
-    // -------------------------------------------------------------------------
     // PMD CONTROL POINT INDICATIONS
     // -------------------------------------------------------------------------
 
@@ -1250,12 +1170,61 @@ class PolarBleService {
       '[POLAR DEBUG] Suscribiendo PMD Control indications...',
     );
 
-    await _pmdControlPoint!
-        .indications
-        .subscribe(timeout: const Duration(seconds: 15));
+    await _gattRetry(
+      'PMD Control',
+      () => _pmdControlPoint!
+          .indications
+          .subscribe(timeout: const Duration(seconds: 15)),
+    );
 
     debugPrint(
       '[POLAR DEBUG] PMD Control indications SUSCRITAS',
+    );
+
+    // -------------------------------------------------------------------------
+    // PMD DATA NOTIFICATIONS
+    // -------------------------------------------------------------------------
+
+    if (!_pmdData!
+        .notifications.isSupported) {
+      throw Exception(
+        'PMD Data no soporta notifications',
+      );
+    }
+
+    await _pmdDataSubscription?.cancel();
+
+    _pmdDataSubscription =
+        _pmdData!.onValueReceived.listen(
+      (value) {
+        if (debugPmdFrames) {
+          debugPrint(
+            '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
+          );
+        }
+
+        _handlePmdData(value);
+      },
+      onError: (error, stack) {
+        debugPrint(
+          '[POLAR DEBUG] ERROR PMD DATA: $error',
+        );
+      },
+    );
+
+    debugPrint(
+      '[POLAR DEBUG] Suscribiendo PMD Data...',
+    );
+
+    await _gattRetry(
+      'PMD Data',
+      () => _pmdData!
+          .notifications
+          .subscribe(timeout: const Duration(seconds: 15)),
+    );
+
+    debugPrint(
+      '[POLAR DEBUG] PMD Data SUSCRITO',
     );
   }
 
@@ -3103,8 +3072,11 @@ class PolarBleService {
       );
     }
 
-    await characteristic.notifications.subscribe(
-      timeout: const Duration(seconds: 15),
+    await _gattRetry(
+      'HR',
+      () => characteristic.notifications.subscribe(
+        timeout: const Duration(seconds: 15),
+      ),
     );
 
     _lastHrDataAt = DateTime.now();
