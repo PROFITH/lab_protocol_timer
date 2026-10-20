@@ -1,0 +1,184 @@
+{
+  "protocol_id": "weargap_day0_base",
+  "protocol_version": "1",
+  "title": "WEARGAP día 0 (base)",
+  "study": "WEARGAP",
+  "moments": [
+    "da_0__visita_inici_arm_1"
+  ],
+  "activities": [
+    {
+      "name": "Caja de calibración inicial",
+      "kind": "calibration",
+      "duration_seconds": 360,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 6,
+      "notes": "Antes de colocar los sensores. Caja quieta 2 min (fase estática inicial), tres golpes secos con SINCRONIZAR, seis caras de 60 s y tres golpes al final."
+    },
+    {
+      "name": "Reposo tumbado en la cámara de calorimetría",
+      "compendium_code": "07011",
+      "met": 1.0,
+      "duration_seconds": 1800,
+      "notes": "En ayunas, 30 min boca arriba, con el calorímetro portátil puesto a la vez."
+    },
+    {
+      "name": "Escribir en el ordenador",
+      "compendium_code": "09040",
+      "met": 1.3,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "De pie quieto",
+      "compendium_code": "07040",
+      "met": 1.3,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "Caminar despacio con bolsas de la compra",
+      "compendium_code": "05054",
+      "met": 3.5,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "Caminar cuesta arriba",
+      "compendium_code": "17035",
+      "met": 7.0,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil). Pendiente 6-10 %."
+    },
+    {
+      "name": "Subir escaleras",
+      "compendium_code": "17131",
+      "met": 6.8,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "Barrer",
+      "compendium_code": "05010",
+      "met": 3.3,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "Fregar los platos",
+      "compendium_code": "05041",
+      "met": 2.0,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil)."
+    },
+    {
+      "name": "Bicicleta estática, carga baja",
+      "compendium_code": "01214",
+      "met": 4.0,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil). 50 W."
+    },
+    {
+      "name": "Bicicleta estática, carga alta",
+      "compendium_code": "01220",
+      "met": 6.0,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil). 90-100 W."
+    },
+    {
+      "name": "Trotar (si puede)",
+      "compendium_code": "12020",
+      "met": 7.5,
+      "duration_seconds": 600,
+      "notes": "En la cámara de calorimetría (plan B: calorímetro portátil). Ritmo propio; se salta si no puede."
+    },
+    {
+      "name": "Marcha de 6 minutos",
+      "compendium_code": "17200",
+      "met": 4.8,
+      "duration_seconds": 360,
+      "notes": "Circuito de 30 m, supervisada (ATS 2002)."
+    },
+    {
+      "name": "Prueba de esfuerzo en cinta con gases",
+      "duration_seconds": 720,
+      "notes": "Rampa hasta el agotamiento con el calorímetro portátil (o Ekblom-Bak en cicloergómetro si no está indicada)."
+    },
+    {
+      "name": "Caja de calibración final",
+      "kind": "calibration",
+      "duration_seconds": 360,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 6,
+      "notes": "Justo al quitar los sensores, sin conectar ningún Axivity al USB. Misma secuencia que la caja inicial."
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "ax3_wd",
+      "type": "ax3",
+      "placement": "wrist_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_wnd",
+      "type": "ax3",
+      "placement": "wrist_non_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "senswear_wnd",
+      "type": "senswear",
+      "placement": "wrist_non_dominant",
+      "free_living": true
+    },
+    {
+      "sensor_id": "ax3_thigh",
+      "type": "ax3",
+      "placement": "thigh",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax6_shoe_l",
+      "type": "ax6",
+      "placement": "shoe_left",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "ax6_shoe_r",
+      "type": "ax6",
+      "placement": "shoe_right",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "polar_h10",
+      "type": "polar_h10",
+      "placement": "chest"
+    },
+    {
+      "sensor_id": "cam_room",
+      "type": "camera",
+      "placement": "room"
+    },
+    {
+      "sensor_id": "cam_room_2",
+      "type": "camera",
+      "placement": "room"
+    },
+    {
+      "sensor_id": "cam_room_3",
+      "type": "camera",
+      "placement": "room"
+    }
+  ]
+}

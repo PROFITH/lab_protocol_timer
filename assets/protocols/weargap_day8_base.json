@@ -1,0 +1,54 @@
+{
+  "protocol_id": "weargap_day8_base",
+  "protocol_version": "1",
+  "title": "WEARGAP día 8 (base)",
+  "study": "WEARGAP",
+  "moments": [
+    "da_8__visita_final_arm_1"
+  ],
+  "activities": [
+    {
+      "name": "Caja de calibración",
+      "kind": "calibration",
+      "duration_seconds": 360,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 6,
+      "notes": "Antes de colocar los sensores. Caja quieta 2 min (fase estática inicial), tres golpes secos con SINCRONIZAR, seis caras de 60 s y tres golpes al final."
+    },
+    {
+      "name": "Marcha de 6 minutos",
+      "compendium_code": "17200",
+      "met": 4.8,
+      "duration_seconds": 360,
+      "notes": "Circuito de 30 m, supervisada; repite la del día 0 (test-retest)."
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "senswear_wnd",
+      "type": "senswear",
+      "placement": "wrist_non_dominant",
+      "free_living": true
+    },
+    {
+      "sensor_id": "ax3_wd",
+      "type": "ax3",
+      "placement": "wrist_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_wnd",
+      "type": "ax3",
+      "placement": "wrist_non_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "cam_room",
+      "type": "camera",
+      "placement": "room"
+    }
+  ]
+}

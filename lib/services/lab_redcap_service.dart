@@ -38,6 +38,17 @@ class ActivityLog {
   final String? activityName;
   final String? compendiumCode;
   final int? plannedDurationSeconds;
+  final double? met;
+
+  /// Position of the activity in the battery not counting calibration box
+  /// segments (`act_<n>_start_time` in REDCap). Null without a battery, when
+  /// it equals [activityIndex].
+  final int? labIndex;
+
+  /// `activity` or `calibration` (see [ActivityKind]).
+  final String activityKind;
+
+  bool get isCalibration => activityKind == 'calibration';
 
   ActivityLog({
     required this.activityIndex,
@@ -47,6 +58,9 @@ class ActivityLog {
     this.activityName,
     this.compendiumCode,
     this.plannedDurationSeconds,
+    this.met,
+    this.labIndex,
+    this.activityKind = 'activity',
   });
 
   Map<String, dynamic> toJson() => {
@@ -58,6 +72,9 @@ class ActivityLog {
         if (compendiumCode != null) 'compendium_code': compendiumCode,
         if (plannedDurationSeconds != null)
           'planned_duration_seconds': plannedDurationSeconds,
+        if (met != null) 'met': met,
+        if (labIndex != null && labIndex != activityIndex) 'lab_index': labIndex,
+        if (activityKind != 'activity') 'activity_kind': activityKind,
       };
 
   factory ActivityLog.fromJson(Map<String, dynamic> json) => ActivityLog(
@@ -77,6 +94,9 @@ class ActivityLog {
         compendiumCode: json['compendium_code']?.toString(),
         plannedDurationSeconds:
             (json['planned_duration_seconds'] as num?)?.round(),
+        met: (json['met'] as num?)?.toDouble(),
+        labIndex: json['lab_index'] as int? ?? json['activity_index'] as int,
+        activityKind: json['activity_kind'] as String? ?? 'activity',
       );
 }
 
@@ -106,6 +126,8 @@ class LabRedCapService {
   }
 
   /// One flat record per participant for the `protocol_feasibility` form.
+  /// [totalStations] and the totals are expected without calibration box
+  /// segments.
   static List<Map<String, dynamic>> buildFlatProtocolRecords({
     required List<ParticipantEntry> participants,
     required DateTime sessionStartTime,
@@ -132,7 +154,9 @@ class LabRedCapService {
       };
 
       for (final act in activities) {
-        final idx = act.activityIndex;
+        // Calibration box segments are not activities.
+        if (act.isCalibration) continue;
+        final idx = act.labIndex ?? act.activityIndex;
         // REDCap rejects the whole import if a field does not exist.
         if (idx < 1 || idx > maxRedcapActivities) continue;
         recordData['act_${idx}_start_time'] = formatRedcapDateTime(act.activityStartTime);
@@ -147,6 +171,10 @@ class LabRedCapService {
   /// Per-activity detail for the repeating `lab_activity` instrument (one
   /// instance per activity, so the 10-activity limit does not apply) plus the
   /// session link in `wearable_session`.
+  ///
+  /// Calibration box segments are not activities: the first one fills
+  /// `ws_calibration`, `ws_calib_start` and `ws_calib_end`, and the rest stay
+  /// in the session manifest.
   static List<Map<String, dynamic>> buildLabActivityRecords({
     required List<ParticipantEntry> participants,
     required String sessionId,
@@ -154,6 +182,9 @@ class LabRedCapService {
     required List<ActivityLog> activities,
   }) {
     final records = <Map<String, dynamic>>[];
+    final calibration =
+        activities.where((a) => a.isCalibration).firstOrNull;
+    final labActivities = activities.where((a) => !a.isCalibration).toList();
 
     for (final participant in participants) {
       records.add({
@@ -161,10 +192,16 @@ class LabRedCapService {
         'redcap_event_name': participant.redcapEventName,
         'ws_session_id': sessionId,
         if (protocolId != null) 'ws_protocol_id': protocolId,
+        if (calibration != null) ...{
+          'ws_calibration': '1',
+          'ws_calib_start':
+              formatRedcapDateTime(calibration.activityStartTime),
+          'ws_calib_end': formatRedcapDateTime(calibration.activityEndTime),
+        },
       });
 
-      for (var i = 0; i < activities.length; i++) {
-        final act = activities[i];
+      for (var i = 0; i < labActivities.length; i++) {
+        final act = labActivities[i];
         records.add({
           'record_id': participant.participantId,
           'redcap_event_name': participant.redcapEventName,
@@ -174,6 +211,7 @@ class LabRedCapService {
           'la_session_id': sessionId,
           if (act.compendiumCode != null) 'la_code': act.compendiumCode,
           'la_name': act.activityName ?? 'Actividad ${act.activityIndex}',
+          if (act.met != null) 'la_mets': _formatMet(act.met!),
           'la_start': formatRedcapDateTime(act.activityStartTime),
           'la_end': formatRedcapDateTime(act.activityEndTime),
           if (act.plannedDurationSeconds != null)
@@ -185,6 +223,9 @@ class LabRedCapService {
     }
     return records;
   }
+
+  static String _formatMet(double met) =>
+      met == met.roundToDouble() ? met.toStringAsFixed(1) : met.toString();
 
   /// Sends [records] to REDCap. Returns null on success or the error message.
   static Future<String?> importRecords(List<Map<String, dynamic>> records) async {

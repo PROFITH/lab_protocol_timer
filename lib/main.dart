@@ -16,6 +16,9 @@ import 'package:file_selector/file_selector.dart';
 import 'models/activity_battery.dart';
 import 'models/session_manifest.dart';
 import 'models/sync_window.dart';
+import 'services/protocol_library.dart';
+import 'setup/protocol_editor_page.dart';
+import 'setup/session_setup_card.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -122,7 +125,17 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   final _formKey = GlobalKey<FormState>();
   final List<ParticipantFieldGroup> _participants = [];
   final _activityController = TextEditingController(text: '1');
+
+  /// Protocol and sensors of the session (null: numbered activities).
   ActivityBattery? _battery;
+  List<ActivityBattery> _builtInProtocols = [];
+  List<ActivityBattery> _customProtocols = [];
+  Map<String, RememberedSetup> _rememberedSetups = {};
+  bool _loadingProtocols = true;
+
+  /// Participant whose remembered setup is loaded, and what was loaded.
+  String? _rememberedFor;
+  String? _setupNote;
 
   static const Map<String, String> _eventOptions = {
     'da_0__visita_inici_arm_1': 'Visita Inicial (Día 0)',
@@ -134,8 +147,173 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     super.initState();
 
     _addParticipantField(); // Default - 1 participant
+    _loadProtocols();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUnsavedSession();
+    });
+  }
+
+  List<ActivityBattery> get _allProtocols =>
+      [..._builtInProtocols, ..._customProtocols];
+
+  ActivityBattery? _protocolById(String? id) {
+    for (final p in _allProtocols) {
+      if (p.protocolId == id) return p;
+    }
+    return null;
+  }
+
+  bool get _batteryModified {
+    final saved = _protocolById(_battery?.protocolId);
+    return saved != null &&
+        jsonEncode(saved.toJson()) != jsonEncode(_battery!.toJson());
+  }
+
+  Future<void> _loadProtocols() async {
+    try {
+      final builtIns = await ProtocolLibrary.loadBuiltIns();
+      final custom = await ProtocolLibrary.loadCustom();
+      final remembered = await ProtocolLibrary.loadRemembered();
+      final lastId = await ProtocolLibrary.lastProtocolId();
+      if (!mounted) return;
+      setState(() {
+        _builtInProtocols = builtIns;
+        _customProtocols = custom;
+        _rememberedSetups = remembered;
+        _loadingProtocols = false;
+        final initial = _protocolById(lastId) ?? builtIns.first;
+        _battery = ProtocolLibrary.forMoment(
+              initial,
+              _participants.first.eventName,
+              _allProtocols,
+            ) ??
+            initial;
+      });
+      _applyRememberedSetup();
+    } catch (e) {
+      debugPrint('[SETUP] No se pudieron cargar los protocolos: $e');
+      if (mounted) setState(() => _loadingProtocols = false);
+    }
+  }
+
+  /// When the first participant already had a session on this computer, load
+  /// its sensors (and serials) into the protocol of this visit.
+  void _applyRememberedSetup() {
+    if (_loadingProtocols || _participants.isEmpty) return;
+    final first = _participants.first;
+    final id = first.controller.text.trim();
+    if (id == _rememberedFor) return;
+
+    final remembered = _rememberedSetups[id];
+    if (remembered == null) {
+      if (_rememberedFor != null) {
+        // Another participant: back to the plain protocol of this visit.
+        setState(() {
+          _rememberedFor = null;
+          _setupNote = null;
+          final plain = _protocolById(_battery?.protocolId);
+          if (plain != null) _battery = plain;
+        });
+      }
+      return;
+    }
+
+    final saved = _protocolById(remembered.battery.protocolId) ??
+        remembered.battery;
+    final protocol =
+        ProtocolLibrary.forMoment(saved, first.eventName, _allProtocols) ??
+            saved;
+    final visit = _eventOptions[remembered.eventName] ?? remembered.eventName;
+    final when = remembered.savedAt.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+
+    setState(() {
+      _battery = ProtocolLibrary.applyRemembered(protocol, remembered);
+      _rememberedFor = id;
+      _setupNote = 'Sensores y números de serie de la sesión anterior de $id '
+          '($visit, ${two(when.day)}/${two(when.month)} ${two(when.hour)}:${two(when.minute)}).';
+    });
+  }
+
+  void _onMomentChanged(ParticipantFieldGroup item, String moment) {
+    setState(() => item.eventName = moment);
+    if (item != _participants.first || _battery == null) return;
+
+    final next = ProtocolLibrary.forMoment(_battery!, moment, _allProtocols);
+    if (next == null || next.protocolId == _battery!.protocolId) return;
+    final remembered = _rememberedSetups[_rememberedFor];
+    setState(() {
+      _battery = remembered != null
+          ? ProtocolLibrary.applyRemembered(next, remembered)
+          : ProtocolLibrary.carrySensorDetails(next, _battery!.sensors);
+    });
+  }
+
+  void _selectProtocol(String? id) {
+    if (id == _battery?.protocolId && !_batteryModified) return;
+    final selected = _protocolById(id);
+    setState(() {
+      _setupNote = null;
+      _rememberedFor = null;
+      _battery = selected == null
+          ? (id == null ? null : _battery)
+          : ProtocolLibrary.carrySensorDetails(
+              selected,
+              _battery?.sensors ?? const [],
+            );
+    });
+  }
+
+  Future<void> _editProtocol() async {
+    final battery = _battery;
+    if (battery == null) return;
+    final edited = await Navigator.of(context).push<ActivityBattery>(
+      MaterialPageRoute(
+        builder: (_) => ProtocolEditorPage(
+          initial: battery,
+          onSaved: (saved) async {
+            final custom = await ProtocolLibrary.loadCustom();
+            if (mounted) setState(() => _customProtocols = custom);
+          },
+        ),
+      ),
+    );
+    if (edited == null || !mounted) return;
+    setState(() => _battery = edited);
+  }
+
+  Future<void> _deleteCustomProtocol() async {
+    final battery = _battery;
+    if (battery == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Text('Borrar protocolo guardado'),
+        content: Text(
+          '¿Borrar «${battery.displayName}» de este ordenador? '
+          'Las sesiones ya hechas no cambian.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ProtocolLibrary.deleteCustom(battery.protocolId);
+    final custom = await ProtocolLibrary.loadCustom();
+    if (!mounted) return;
+    setState(() {
+      _customProtocols = custom;
+      _battery = _builtInProtocols.isEmpty ? null : _builtInProtocols.first;
     });
   }
 
@@ -143,7 +321,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     setState(() {
       _participants.add(
         ParticipantFieldGroup(
-          controller: TextEditingController(text: initialId),
+          controller: TextEditingController(text: initialId)
+            ..addListener(_applyRememberedSetup),
           eventName: initialEvent,
         ),
       );
@@ -295,7 +474,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     try {
       final battery = ActivityBattery.parse(await file.readAsString());
       if (!mounted) return;
-      setState(() => _battery = battery);
+      setState(() {
+        _battery = battery;
+        _setupNote = 'Importado de ${file.name}. Para tenerlo en la lista, '
+            'ábrelo en «Editar» y guárdalo como protocolo.';
+        _rememberedFor = null;
+      });
     } on FormatException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -319,6 +503,49 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final activity =
         int.tryParse(_activityController.text.trim()) ?? 1;
 
+    final battery = _battery;
+    if (battery != null) {
+      final missing = battery.sensors
+          .where((s) => s.connection != 'video' && !s.hasSerial)
+          .map((s) => s.sensorId)
+          .toList();
+      if (missing.isNotEmpty) {
+        final proceed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            title: const Text('Faltan números de serie'),
+            content: Text(
+              'Sin número de serie: ${missing.join(', ')}.\n\n'
+              'Se pueden añadir en «Editar actividades y sensores». '
+              '¿Empezar igualmente?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Volver'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Empezar'),
+              ),
+            ],
+          ),
+        );
+        if (proceed != true) return;
+      }
+
+      // The closing visit of these participants starts from this setup.
+      await ProtocolLibrary.remember(
+        entries.map(
+          (e) => (participantId: e.participantId, eventName: e.redcapEventName),
+        ),
+        battery,
+      );
+    }
+
+    if (!mounted) return;
+
     await _openResearchMonitorWindow();
 
     if (!mounted) return;
@@ -328,7 +555,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         builder: (context) => TimerPage(
           initialParticipants: entries,
           initialActivity: activity,
-          battery: _battery,
+          battery: battery,
         ),
       ),
     );
@@ -350,7 +577,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
             child: SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 24.0),
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 580),
+                constraints: const BoxConstraints(maxWidth: 640),
                 child: Form(
                   key: _formKey,
                   child: Column(
@@ -462,7 +689,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                                   ),
                                   items: _eventOptions.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
                                   onChanged: (val) {
-                                    if (val != null) setState(() => item.eventName = val);
+                                    if (val != null) _onMomentChanged(item, val);
                                   },
                                 ),
                               ],
@@ -507,30 +734,23 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                       ),
 
                       const SizedBox(height: 20),
-                      OutlinedButton.icon(
-                        onPressed: _loadBattery,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF38BDF8),
-                          side: const BorderSide(color: Color(0xFF38BDF8)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
-                        icon: const Icon(Icons.playlist_add_check_rounded),
-                        label: Text(
-                          _battery == null
-                              ? 'Cargar protocolo de actividades (JSON)'
-                              : '${_battery!.protocolId}: '
-                                  '${_battery!.activities.length} actividades',
-                        ),
+                      SessionSetupCard(
+                        protocols: _allProtocols,
+                        battery: _battery,
+                        modified: _batteryModified,
+                        note: _setupNote,
+                        loading: _loadingProtocols,
+                        onSelect: _selectProtocol,
+                        onEdit: _editProtocol,
+                        onImport: _loadBattery,
+                        onReset: _batteryModified
+                            ? () => _selectProtocol(_battery?.protocolId)
+                            : null,
+                        onDeleteCustom: _customProtocols.any(
+                                (p) => p.protocolId == _battery?.protocolId)
+                            ? _deleteCustomProtocol
+                            : null,
                       ),
-                      if (_battery != null)
-                        TextButton(
-                          onPressed: () => setState(() => _battery = null),
-                          child: const Text(
-                            'Quitar protocolo (duración fija para todas)',
-                            style: TextStyle(color: Colors.white54),
-                          ),
-                        ),
 
                       const SizedBox(height: 28),
                       SizedBox(
@@ -744,6 +964,34 @@ class TimerPageState extends State<TimerPage>
   int get _plannedActivitySeconds =>
       _batteryActivity?.durationSeconds ?? _activitySeconds;
 
+  /// Static phases of the current activity: the battery value when it sets
+  /// one (e.g. 2 min of stillness before a calibration box), otherwise the
+  /// Research Monitor values.
+  int get _plannedPrepSeconds => _batteryActivity?.prepSeconds ?? _prepSeconds;
+  int get _plannedPostSeconds => _batteryActivity?.postSeconds ?? _postSeconds;
+
+  /// Position of [activityIndex] in the battery without calibration box
+  /// segments, as numbered in REDCap.
+  int? _labIndexOf(int activityIndex) {
+    final battery = widget.battery;
+    if (battery == null) return null;
+    var calibrations = 0;
+    for (var i = 1; i < activityIndex && i <= battery.activities.length; i++) {
+      if (battery.activityAt(i)!.isCalibration) calibrations++;
+    }
+    return activityIndex - calibrations;
+  }
+
+  /// Seconds each box face lasts in the current calibration segment, or
+  /// null when the current activity is not a calibration.
+  int? get _calibrationFaceSeconds {
+    final activity = _batteryActivity;
+    if (activity == null || !activity.isCalibration) return null;
+    final faces = activity.faces ?? 6;
+    if (faces < 2) return null;
+    return _plannedActivitySeconds ~/ faces;
+  }
+
   String get _activityAnnouncement {
     final name = _batteryActivity?.name;
     return name == null
@@ -823,7 +1071,9 @@ class TimerPageState extends State<TimerPage>
       'duration_seconds,'
       'activity_name,'
       'compendium_code,'
-      'planned_duration_seconds',
+      'planned_duration_seconds,'
+      'met,'
+      'activity_kind',
     );
 
     for (final activity in _completedActivities) {
@@ -836,6 +1086,8 @@ class TimerPageState extends State<TimerPage>
           _csvField(activity.activityName),
           activity.compendiumCode ?? '',
           activity.plannedDurationSeconds ?? '',
+          activity.met ?? '',
+          activity.activityKind,
         ].join(','),
       );
     }
@@ -991,7 +1243,7 @@ class TimerPageState extends State<TimerPage>
           _enableTts = settings['enableTts'] as bool;
 
           if (!_isRunning) {
-            _seconds = _prepSeconds;
+            _seconds = _plannedPrepSeconds;
           }
         });
       },
@@ -1002,7 +1254,7 @@ class TimerPageState extends State<TimerPage>
       _syncWindows.addAll(widget.restoredSyncWindows!);
     }
 
-    _seconds = _prepSeconds;
+    _seconds = _plannedPrepSeconds;
     _initTts();
 
     registerWebExitGuard(() => _isRunning || _completedActivities.isNotEmpty);
@@ -1331,7 +1583,7 @@ class TimerPageState extends State<TimerPage>
     setState(() {
       _currentActivity++;
       _currentPhase = 0;
-      _seconds = _prepSeconds;
+      _seconds = _plannedPrepSeconds;
       _waitingElapsedSeconds = 0;
       _isRunning = true;
       _isPaused = false;
@@ -1471,7 +1723,11 @@ class TimerPageState extends State<TimerPage>
     final double totalProtocolSeconds =
         sessionEndTime.difference(sessionStartTime).inMilliseconds / 1000.0;
 
-    final double totalActivitySeconds = _completedActivities.fold<double>(
+    // Calibration box segments count as time between activities.
+    final labActivities =
+        _completedActivities.where((a) => !a.isCalibration).toList();
+
+    final double totalActivitySeconds = labActivities.fold<double>(
       0.0,
       (sum, item) => sum + item.durationSeconds,
     );
@@ -1479,7 +1735,7 @@ class TimerPageState extends State<TimerPage>
     final double totalTransitionSeconds =
         (totalProtocolSeconds - totalActivitySeconds).clamp(0.0, double.infinity);
 
-    final int totalStations = _completedActivities.length;
+    final int totalStations = labActivities.length;
 
     // ========================================================================
     // 6. REDCAP SYNC
@@ -1707,6 +1963,18 @@ class TimerPageState extends State<TimerPage>
 
         if (_seconds > 0) {
           _seconds--;
+
+          // Calibration box: announce each new face.
+          final faceSeconds = _calibrationFaceSeconds;
+          if (_currentPhase == 1 && faceSeconds != null && faceSeconds > 0) {
+            final elapsed = _plannedActivitySeconds - _seconds;
+            final face = elapsed ~/ faceSeconds + 1;
+            if (elapsed % faceSeconds == 0 &&
+                face <= (_batteryActivity!.faces ?? 6) &&
+                _seconds > 0) {
+              _speakThenPlaySound("Gire la caja. Cara $face.");
+            }
+          }
         } else {
 
           if (_currentPhase == 0) {
@@ -1715,7 +1983,10 @@ class TimerPageState extends State<TimerPage>
             _currentActivityStartTime = DateTime.now().toUtc();
 
             _speakThenPlaySound(
-                "Realice la actividad a ritmo constante.", 'gong.ogg');
+                _batteryActivity?.isCalibration == true
+                    ? "Caja de calibración. Cara 1."
+                    : "Realice la actividad a ritmo constante.",
+                'gong.ogg');
           } else if (_currentPhase == 1) {
             final now = DateTime.now().toUtc();
             if (_currentActivityStartTime != null) {
@@ -1733,6 +2004,10 @@ class TimerPageState extends State<TimerPage>
                   activityName: _batteryActivity?.name,
                   compendiumCode: _batteryActivity?.compendiumCode,
                   plannedDurationSeconds: _plannedActivitySeconds,
+                  met: _batteryActivity?.met,
+                  labIndex: _labIndexOf(_currentActivity),
+                  activityKind:
+                      _batteryActivity?.kind.name ?? ActivityKind.activity.name,
                 ),
               );
               _currentActivityStartTime = null;
@@ -1740,7 +2015,7 @@ class TimerPageState extends State<TimerPage>
             }
 
             _currentPhase = 2;
-            _seconds = _postSeconds;
+            _seconds = _plannedPostSeconds;
             _speakThenPlaySound("Fin de actividad. Quédese quieto.");
           } else if (_currentPhase == 2) {
             if (_useLapMode) {
@@ -1749,7 +2024,7 @@ class TimerPageState extends State<TimerPage>
               _speakThenPlaySound("Actividad completada.");
             } else {
               _currentPhase = 0;
-              _seconds = _prepSeconds;
+              _seconds = _plannedPrepSeconds;
               _currentActivity++;
               _persistSessionLocally();
               _speakThenPlaySound(
@@ -1769,13 +2044,13 @@ class TimerPageState extends State<TimerPage>
 
     double progress = 1.0;
     if (_currentPhase == 0) {
-      progress = _prepSeconds > 0 ? _seconds / _prepSeconds : 0.0;
+      progress = _plannedPrepSeconds > 0 ? _seconds / _plannedPrepSeconds : 0.0;
     } else if (_currentPhase == 1) {
       progress = _plannedActivitySeconds > 0
           ? _seconds / _plannedActivitySeconds
           : 0.0;
     } else if (_currentPhase == 2) {
-      progress = _postSeconds > 0 ? _seconds / _postSeconds : 0.0;
+      progress = _plannedPostSeconds > 0 ? _seconds / _plannedPostSeconds : 0.0;
     }
 
     String mainTitle;
@@ -1795,8 +2070,17 @@ class TimerPageState extends State<TimerPage>
         actionIcon = Icons.accessibility_new_rounded;
         break;
       case 1:
-        mainTitle = 'ACTIVIDAD EN CURSO';
-        actionAdvice = 'Ejecuta el ejercicio asignado';
+        final faceSeconds = _calibrationFaceSeconds;
+        if (faceSeconds != null && faceSeconds > 0) {
+          final faces = _batteryActivity!.faces ?? 6;
+          final face = ((_plannedActivitySeconds - _seconds) ~/ faceSeconds + 1)
+              .clamp(1, faces);
+          mainTitle = 'CAJA DE CALIBRACIÓN';
+          actionAdvice = 'Cara $face de $faces: no muevas la caja';
+        } else {
+          mainTitle = 'ACTIVIDAD EN CURSO';
+          actionAdvice = 'Ejecuta el ejercicio asignado';
+        }
         accentColor = const Color(0xFF34D399);
         bannerBg = const Color(0xFF065F46);
         screenBg = const Color(0xFF022C22);

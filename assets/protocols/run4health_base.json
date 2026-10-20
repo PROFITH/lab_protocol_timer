@@ -1,0 +1,138 @@
+{
+  "protocol_id": "run4health_base",
+  "protocol_version": "1",
+  "title": "RUN4HEALTH (base)",
+  "study": "RUN4HEALTH",
+  "moments": [
+    "da_0__visita_inici_arm_1",
+    "da_8__visita_final_arm_1"
+  ],
+  "activities": [
+    {
+      "name": "Caja de calibración inicial",
+      "kind": "calibration",
+      "duration_seconds": 360,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 6,
+      "notes": "Antes de colocar los sensores. Caja quieta 2 min (fase estática inicial), tres golpes secos con SINCRONIZAR, seis caras de 60 s y tres golpes al final."
+    },
+    {
+      "name": "Tumbado en reposo",
+      "compendium_code": "07011",
+      "met": 1.0,
+      "duration_seconds": 300,
+      "notes": "FC de reposo con la H10: boca arriba, en silencio."
+    },
+    {
+      "name": "De pie quieto",
+      "compendium_code": "07040",
+      "met": 1.3,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Sentado escribiendo en el ordenador",
+      "compendium_code": "09040",
+      "met": 1.3,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Caminar despacio con bolsas de la compra",
+      "compendium_code": "05054",
+      "met": 3.5,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Barrer",
+      "compendium_code": "05010",
+      "met": 3.3,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Subir escaleras",
+      "compendium_code": "17131",
+      "met": 6.8,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Trotar a ritmo propio",
+      "compendium_code": "12020",
+      "met": 7.5,
+      "duration_seconds": 240
+    },
+    {
+      "name": "Sentarse y levantarse 30 s",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "notes": "Brazos cruzados; máximo de repeticiones (physical_fitness)."
+    },
+    {
+      "name": "Marcha de 6 minutos",
+      "compendium_code": "17220",
+      "met": 5.5,
+      "duration_seconds": 360,
+      "notes": "Lo más rápido posible sin correr, circuito medido (physical_fitness)."
+    },
+    {
+      "name": "Caja de calibración final",
+      "kind": "calibration",
+      "duration_seconds": 360,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 6,
+      "notes": "Justo al quitar los sensores, sin conectar ningún Axivity al USB. Misma secuencia que la caja inicial."
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "matrix_wnd",
+      "type": "matrix",
+      "placement": "wrist_non_dominant",
+      "free_living": true
+    },
+    {
+      "sensor_id": "ax3_wnd",
+      "type": "ax3",
+      "placement": "wrist_non_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_wd",
+      "type": "ax3",
+      "placement": "wrist_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "sens_thigh",
+      "type": "sens",
+      "placement": "thigh",
+      "free_living": true
+    },
+    {
+      "sensor_id": "ax3_thigh",
+      "type": "ax3",
+      "placement": "thigh",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "polar_h10",
+      "type": "polar_h10",
+      "placement": "chest"
+    },
+    {
+      "sensor_id": "verity_arm",
+      "type": "verity_sense",
+      "placement": "upper_arm",
+      "free_living": true
+    },
+    {
+      "sensor_id": "cam_room",
+      "type": "camera",
+      "placement": "room"
+    }
+  ]
+}
