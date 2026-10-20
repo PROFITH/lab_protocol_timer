@@ -327,6 +327,11 @@ class PolarBleService {
   /// Sensores que estaban activos y deben reanudarse tras reconectar.
   final Set<String> _sensorsToRestore = {};
 
+  /// Signals asked for since the user connected, even if they could not
+  /// start (ACC and ECG while Windows refuses PMD). A reconnection brings
+  /// them back too, so pairing the sensor afterwards starts the ACC.
+  final Set<String> _requestedSensors = {};
+
   bool _userRequestedDisconnect = false;
   bool _reconnectLoopRunning = false;
   int _connectGeneration = 0;
@@ -523,6 +528,7 @@ class PolarBleService {
     if (_hrStreaming) _sensorsToRestore.add('heart_rate');
     if (_accStreaming) _sensorsToRestore.add('acc');
     if (_ecgStreaming) _sensorsToRestore.add('ecg');
+    _sensorsToRestore.addAll(_requestedSensors);
     return _sensorsToRestore.isNotEmpty;
   }
 
@@ -791,6 +797,8 @@ class PolarBleService {
     _userRequestedDisconnect = false;
     _connectGeneration++;
     _sensorsToRestore.clear();
+    _requestedSensors.clear();
+    _stopPairingWatch();
     _stopWatchdog();
 
     if (_connectedDevice != null) {
@@ -1062,9 +1070,55 @@ class PolarBleService {
       _pmdControlPoint = null;
       _pmdData = null;
       pmdProblem = 'Windows no deja usar el acelerómetro ni el ECG sin '
-          'emparejar el sensor (solo FC)';
+          'emparejar el sensor (solo FC). Si Windows pide «Permitir», '
+          'acéptalo: el acelerómetro se activará solo';
+      _startPairingWatch(device);
     }
   }
+
+  // While only heart rate works, watch whether Windows finishes pairing the
+  // sensor (the «Permitir» prompt) and then reconnect, which starts the ACC.
+  Timer? _pairingWatchTimer;
+
+  void _startPairingWatch(BleDevice device) {
+    _stopPairingWatch();
+    var ticks = 0;
+    _pairingWatchTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      ticks++;
+      if (ticks > 100 || _userRequestedDisconnect) {
+        _stopPairingWatch();
+        return;
+      }
+      if (_establishing || _attemptInProgress || _tearingDown) return;
+      if (_connectedDevice != null && hasPmd) {
+        _stopPairingWatch();
+        return;
+      }
+      bool? paired;
+      try {
+        paired = await device.isPaired(timeout: const Duration(seconds: 3));
+      } catch (_) {
+        return;
+      }
+      if (paired != true || _pairingWatchTimer == null) return;
+      _stopPairingWatch();
+      debugPrint('[POLAR DEBUG] Sensor emparejado: reconectando para el ACC');
+      _logEvent('paired_reconnect', _lastDeviceName);
+      try {
+        await retryConnection();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Reconexión tras emparejar fallida: $e');
+      }
+    });
+  }
+
+  void _stopPairingWatch() {
+    _pairingWatchTimer?.cancel();
+    _pairingWatchTimer = null;
+  }
+
+  /// PMD (ACC, ECG) is available on the connected device.
+  bool get hasPmd => _pmdControlPoint != null && _pmdData != null;
 
   /// Why PMD (ACC, ECG) is not available on the connected device, or null.
   String? pmdProblem;
@@ -1261,6 +1315,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startEcg() async {
+    _requestedSensors.add('ecg');
     if (_pmdControlPoint == null) {
       throw Exception(
         'PMD no está conectado',
@@ -1322,6 +1377,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startAcceleration() async {
+    _requestedSensors.add('acc');
     if (_pmdControlPoint == null) {
       throw Exception(
         'PMD no está conectado',
@@ -3110,6 +3166,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startHeartRate() async {
+    _requestedSensors.add('heart_rate');
     final characteristic = _hrCharacteristic;
 
     if (characteristic == null) {
@@ -3423,6 +3480,8 @@ class PolarBleService {
     _userRequestedDisconnect = true;
     _connectGeneration++;
     _sensorsToRestore.clear();
+    _requestedSensors.clear();
+    _stopPairingWatch();
     _stopWatchdog();
 
     if (_connectedDevice != null) {
@@ -3739,6 +3798,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> dispose() async {
+    _stopPairingWatch();
     await disconnect();
     linkStatus.dispose();
     await _connectionSubscription?.cancel();
