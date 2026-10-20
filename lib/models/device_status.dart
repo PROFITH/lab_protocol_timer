@@ -53,6 +53,10 @@ class DeviceStatus {
   final IconData icon;
   final DeviceConnectionStatus connectionStatus;
 
+  /// Texto corto bajo el nombre: dispositivo conectado, paso de conexión
+  /// en curso o último error.
+  final String? statusMessage;
+
   final List<SensorStatus> sensors;
 
   const DeviceStatus({
@@ -60,6 +64,7 @@ class DeviceStatus {
     required this.name,
     required this.icon,
     required this.connectionStatus,
+    this.statusMessage,
     this.sensors = const [],
   });
 }

@@ -70,6 +70,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   // Modo de acelerometría: 'VM' o 'XYZ'
   String _accMode = 'XYZ';
 
+  String _lastRecordingSummary = '';
+  bool _recoveringCamera = false;
+
   String _sourceId(
     String deviceId,
     String sensorId,
@@ -287,7 +290,116 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
     });
 
+    _polarService.linkStatus.addListener(_onPolarLinkStatusChanged);
+    _videoService.cameraError.addListener(_onCameraError);
+
     debugPrint('[MONITOR] Research Monitor inicializado con servicios locales.');
+  }
+
+  void _onPolarLinkStatusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// Si la cámara falla (p. ej. se desconecta el USB), se intenta
+  /// recuperar automáticamente; si estaba grabando, se abre un nuevo
+  /// segmento de vídeo.
+  void _onCameraError() {
+    final error = _videoService.cameraError.value;
+    if (!mounted) return;
+
+    setState(() {
+      if (error != null) _cameraReady = false;
+    });
+
+    if (error != null && !_recoveringCamera) {
+      _retryCamera(automatic: true);
+    }
+  }
+
+  Future<void> _retryCamera({bool automatic = false}) async {
+    if (_recoveringCamera || _videoService.lastCamera == null) {
+      if (_videoService.lastCamera == null && !automatic) {
+        await _showCameraConnectionDialog();
+      }
+      return;
+    }
+
+    setState(() => _recoveringCamera = true);
+
+    final wasRecording = _videoService.isRecording;
+    var ok = false;
+    for (var attempt = 1; attempt <= 3 && mounted; attempt++) {
+      ok = await _videoService.recoverCamera(
+        participantSummary: _lastRecordingSummary.isNotEmpty
+            ? _lastRecordingSummary
+            : _participantIds,
+        activityIndex: _activityIndex,
+        restartRecording: wasRecording,
+      );
+      if (ok) break;
+      await Future.delayed(Duration(seconds: 2 * attempt));
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _recoveringCamera = false;
+      _cameraReady = ok;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Cámara recuperada'
+              : 'No se pudo recuperar la cámara: '
+                  '${_videoService.lastStartError ?? _videoService.cameraError.value ?? 'error desconocido'}',
+        ),
+        backgroundColor: ok ? const Color(0xFF34D399) : Colors.redAccent,
+      ),
+    );
+  }
+
+  Future<void> _retryPolar() async {
+    if (!_polarService.hasLastDevice) {
+      _showPolarConnectionDialog();
+      return;
+    }
+
+    final ok = await _polarService.retryConnection(
+      configuration: _protocolConfiguration.deviceById('polar_h10'),
+    );
+
+    if (!mounted) return;
+    setState(() {});
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_polarService.linkStatus.value.message),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  VoidCallback? _retryActionForDevice(String deviceId) {
+    switch (deviceId) {
+      case 'polar_h10':
+        final status = _polarService.linkStatus.value;
+        if (_polarService.isConnected && !status.isBusy) return null;
+        if (status.state == PolarLinkState.pairing ||
+            status.state == PolarLinkState.connecting ||
+            status.state == PolarLinkState.configuring) {
+          return null;
+        }
+        return _polarService.hasLastDevice ? _retryPolar : null;
+      case 'camera':
+        if (_cameraReady || _recoveringCamera) return null;
+        return _videoService.lastCamera != null ? () => _retryCamera() : null;
+      default:
+        return null;
+    }
   }
 
   Future<void> _showCameraConnectionDialog() async {
@@ -369,6 +481,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
   @override
   void dispose() {
+    _polarService.linkStatus.removeListener(_onPolarLinkStatusChanged);
+    _videoService.cameraError.removeListener(_onCameraError);
     MultiWindowManager.current.removeListener(this);
     _polarService.dispose();
     _videoService.dispose();
@@ -461,21 +575,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return await _handleSessionFinished();
 
       case 'START_VIDEO_RECORDING':
+        // Devuelve {'ok': bool, 'reason': String?} para que la ventana
+        // principal muestre la causa concreta del fallo.
         if (!_cameraReady) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: cámara no preparada.',
-          );
-          return false;
+          const reason =
+              'La cámara no está preparada. Selecciónala o pulsa '
+              '"Reintentar" en el panel de dispositivos.';
+          debugPrint('[VIDEO] No se puede iniciar: $reason');
+          return {'ok': false, 'reason': reason};
         }
 
         if (_videoService.isRecording) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: ya existe una grabación activa.',
-          );
-          return false;
+          const reason = 'Ya existe una grabación activa.';
+          debugPrint('[VIDEO] No se puede iniciar: $reason');
+          return {'ok': false, 'reason': reason};
         }
 
         final summary = arguments?.toString() ?? _participantIds;
+        _lastRecordingSummary = summary;
 
         final success = await _videoService.startSessionRecording(
           participantSummary: summary,
@@ -486,10 +603,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         }
 
         debugPrint(
-          '[VIDEO] Resultado inicio grabación: $success',
+          '[VIDEO] Resultado inicio grabación: $success '
+          '${_videoService.lastStartError ?? ''}',
         );
 
-        return success;
+        return {
+          'ok': success,
+          'reason': _videoService.lastStartError,
+        };
 
       case 'STOP_VIDEO_RECORDING':
         if (_videoService.isRecording && arguments is Map) {
@@ -600,7 +721,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           _polarService.exportAccelerationCsv();
 
       final filePath = await _createTemporaryCsvFile(
-        'polar_acc_raw_200hz_$timestampStr.csv',
+        'polar_acc_raw_${_polarService.accSampleRateHz}hz_$timestampStr.csv',
         csvContent,
       );
 
@@ -625,6 +746,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       generatedFiles.add(filePath);
 
       debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
+    }
+
+    // ========================================================================
+    // 3b. EVENTOS DE CONEXIÓN POLAR (huecos de datos y reconexiones)
+    // ========================================================================
+
+    if (_polarService.connectionEvents.isNotEmpty) {
+      final filePath = await _createTemporaryCsvFile(
+        'polar_connection_events_$timestampStr.csv',
+        _polarService.exportConnectionEventsCsv(),
+      );
+
+      generatedFiles.add(filePath);
     }
 
     // ========================================================================
@@ -929,8 +1063,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     _polarService.startScan();
 
+    var connecting = false;
+
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -941,13 +1078,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 children: [
                   Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
                   SizedBox(width: 10),
-                  Text('Conectar Sensor Polar H10', style: TextStyle(color: Colors.white)),
+                  Text('Conectar sensor Polar', style: TextStyle(color: Colors.white)),
                 ],
               ),
               content: SizedBox(
                 width: 400,
                 height: 300,
-                child: StreamBuilder<List<BleDevice>>(
+                child: connecting
+                    ? _buildPolarConnectingView()
+                    : StreamBuilder<List<BleDevice>>(
                   stream: _polarService.scanStream,
                   builder: (context, snapshot) {
                     final results = snapshot.data ?? [];
@@ -982,34 +1121,42 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                               foregroundColor: Colors.black,
                             ),
                             onPressed: () async {
+                              setDialogState(() => connecting = true);
                               await _polarService.stopScan();
                               final connected = await _polarService.connectToDevice(device);
+                              var sensorErrors = <String, String>{};
                               if (connected) {
-                                try {
-                                  final polarConfiguration =
-                                      _protocolConfiguration.deviceById('polar_h10');
+                                final polarConfiguration =
+                                    _protocolConfiguration.deviceById('polar_h10');
 
-                                  if (polarConfiguration != null) {
-                                    await _polarService.startHeartRate();
-                                    await _polarService.startAcceleration();
-                                    await _polarService.startEcg();
-                                  }
-                                } catch (e) {
-                                  debugPrint(
-                                    '[POLAR DEBUG] Error al iniciar sensores: $e',
-                                  );
+                                if (polarConfiguration != null) {
+                                  sensorErrors = await _polarService
+                                      .startConfiguredSensors(polarConfiguration);
                                 }
                               }
                               if (dialogCtx.mounted) {
                                 Navigator.of(dialogCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(connected ? 'Conectado a $name' : 'Fallo de conexión'),
-                                    backgroundColor: connected ? const Color(0xFF34D399) : Colors.redAccent,
-                                  ),
-                                );
-                                setState(() {});
                               }
+                              if (!mounted) return;
+
+                              final message = !connected
+                                  ? _polarService.linkStatus.value.message
+                                  : sensorErrors.isEmpty
+                                      ? 'Conectado a $name'
+                                      : 'Conectado a $name. Sin iniciar: '
+                                          '${sensorErrors.entries.map((e) => '${e.key} (${e.value})').join(', ')}';
+
+                              ScaffoldMessenger.of(this.context).showSnackBar(
+                                SnackBar(
+                                  content: Text(message),
+                                  backgroundColor: !connected
+                                      ? Colors.redAccent
+                                      : sensorErrors.isEmpty
+                                          ? const Color(0xFF34D399)
+                                          : Colors.orange,
+                                ),
+                              );
+                              setState(() {});
                             },
                             child: const Text('Vincular'),
                           ),
@@ -1020,19 +1167,82 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () {
-                    _polarService.stopScan();
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
-                ),
+                if (connecting)
+                  TextButton(
+                    onPressed: () async {
+                      Navigator.of(dialogCtx).pop();
+                      await _polarService.cancelConnection();
+                    },
+                    child: const Text('Cancelar conexión', style: TextStyle(color: Colors.white54)),
+                  )
+                else
+                  TextButton(
+                    onPressed: () {
+                      _polarService.stopScan();
+                      Navigator.of(dialogCtx).pop();
+                    },
+                    child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+                  ),
               ],
             );
           },
         );
       },
     );
+  }
+
+  Widget _buildPolarConnectingView() {
+    return ValueListenableBuilder<PolarLinkStatus>(
+      valueListenable: _polarService.linkStatus,
+      builder: (context, status, _) {
+        final isError = status.state == PolarLinkState.error;
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isError)
+                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40)
+              else
+                const CircularProgressIndicator(color: Color(0xFF38BDF8)),
+              const SizedBox(height: 16),
+              Text(
+                status.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (status.state == PolarLinkState.pairing) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Si Windows pide permiso para emparejar, pulsa "Permitir". '
+                  'Si no aparece nada en un minuto, cancela y vuelve a intentarlo.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  DeviceConnectionStatus _polarConnectionStatus() {
+    final status = _polarService.linkStatus.value;
+    switch (status.state) {
+      case PolarLinkState.connected:
+        return DeviceConnectionStatus.connected;
+      case PolarLinkState.connecting:
+      case PolarLinkState.pairing:
+      case PolarLinkState.configuring:
+      case PolarLinkState.reconnecting:
+        return DeviceConnectionStatus.connecting;
+      case PolarLinkState.error:
+        return DeviceConnectionStatus.error;
+      case PolarLinkState.disconnected:
+        return _polarService.isConnected
+            ? DeviceConnectionStatus.connected
+            : DeviceConnectionStatus.disconnected;
+    }
   }
 
   List<DeviceStatus> get _deviceStatuses {
@@ -1046,9 +1256,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               id: device.deviceId,
               name: device.deviceName,
               icon: Icons.videocam_rounded,
-              connectionStatus: _cameraReady
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
+              connectionStatus: _recoveringCamera
+                  ? DeviceConnectionStatus.connecting
+                  : _cameraReady
+                      ? DeviceConnectionStatus.connected
+                      : _videoService.cameraError.value != null
+                          ? DeviceConnectionStatus.error
+                          : DeviceConnectionStatus.disconnected,
+              statusMessage: _recoveringCamera
+                  ? 'Recuperando cámara...'
+                  : _cameraReady
+                      ? null
+                      : _videoService.cameraError.value,
               sensors: [
                 if (device.hasSensor('video'))
                   SensorStatus(
@@ -1072,9 +1291,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               id: device.deviceId,
               name: device.deviceName,
               icon: Icons.favorite_rounded,
-              connectionStatus: _polarService.isConnected
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
+              connectionStatus: _polarConnectionStatus(),
+              statusMessage: _polarService.linkStatus.value.state ==
+                          PolarLinkState.connected ||
+                      _polarService.linkStatus.value.state ==
+                          PolarLinkState.disconnected
+                  ? (_polarService.hasLastDevice
+                      ? _polarService.lastDeviceName
+                      : null)
+                  : _polarService.linkStatus.value.message,
               sensors: [
                 if (device.hasSensor('heart_rate'))
                   SensorStatus(
@@ -1110,7 +1335,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         : _polarService.isConnected
                             ? SensorAcquisitionStatus.stopped
                             : SensorAcquisitionStatus.unavailable,
-                    detail: '200 Hz',
+                    detail: '${_polarService.accSampleRateHz} Hz',
                   ),
                 if (device.hasSensor('ecg'))
                   SensorStatus(
@@ -1119,7 +1344,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     icon: Icons.show_chart_rounded,
                     status: _polarService.isEcgStreaming
                         ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
+                        : _polarService.isConnected &&
+                                !_polarService.supportsEcg
+                            ? SensorAcquisitionStatus.unavailable
+                            : _polarService.isConnected
                             ? SensorAcquisitionStatus.stopped
                             : SensorAcquisitionStatus.unavailable,
                     detail: '130 Hz',
@@ -1642,6 +1870,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             onDeviceAction: _deviceActionForDevice(
               _deviceStatuses[index].id,
             ),
+            onRetry: _retryActionForDevice(
+              _deviceStatuses[index].id,
+            ),
           );
         },
       ),
@@ -2053,11 +2284,13 @@ class _DeviceStatusCard extends StatelessWidget {
   final DeviceStatus device;
   final void Function(String deviceId, String sensorId) onSensorTap;
   final VoidCallback? onDeviceAction;
+  final VoidCallback? onRetry;
 
   const _DeviceStatusCard({
     required this.device,
     required this.onSensorTap,
     this.onDeviceAction,
+    this.onRetry,
   });
 
   @override
@@ -2078,6 +2311,14 @@ class _DeviceStatusCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+                if (onRetry != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Reintentar conexión',
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    onPressed: onRetry,
+                  ),
+                ],
                 if (onDeviceAction != null) ...[
                   const SizedBox(width: 8),
                   IconButton(
@@ -2093,6 +2334,19 @@ class _DeviceStatusCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (device.statusMessage != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                device.statusMessage!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: device.connectionStatus ==
+                          DeviceConnectionStatus.error
+                      ? Colors.redAccent
+                      : Colors.white60,
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
             ...device.sensors.map(
               (sensor) => Padding(
