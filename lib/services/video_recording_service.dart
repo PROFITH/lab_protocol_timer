@@ -105,6 +105,21 @@ class VideoRecordingService {
   bool _isRecording = false;
   static const double minimumFreeSpaceGB = 10.0;
 
+  /// Motivo concreto del último fallo al iniciar la grabación, para
+  /// mostrarlo en la UI en lugar de un mensaje genérico.
+  String? lastStartError;
+
+  /// Último error reportado por la cámara (desconexión USB, fallo de
+  /// MediaFoundation...). null si la cámara funciona.
+  final ValueNotifier<String?> cameraError = ValueNotifier(null);
+
+  /// Última cámara usada, para poder reintentar la conexión.
+  CameraDescription? _lastCamera;
+  CameraDescription? get lastCamera => _lastCamera;
+
+  /// Carpeta donde se comprobó el espacio libre la última vez.
+  String? lastCheckedPath;
+
   DateTime? _currentRecordingStartTime;
   final List<VideoLogEntry> recordedVideoLogs = [];
 
@@ -125,6 +140,8 @@ class VideoRecordingService {
       debugPrint(
         '[VIDEO] Application documents path: ${directory.path}',
       );
+
+      lastCheckedPath = directory.path;
 
       final freeSpaceMB =
           await DiskSpace.getFreeDiskSpaceForPath(directory.path);
@@ -213,8 +230,13 @@ class VideoRecordingService {
         '${camera.name}',
       );
 
+      _lastCamera = camera;
+      cameraError.value = null;
+
       // Liberar el controlador anterior, si existe.
       if (_controller != null) {
+        _controller!.removeListener(_onControllerValueChanged);
+
         debugPrint('[VIDEO] Liberando controlador anterior...');
 
         try {
@@ -268,6 +290,8 @@ class VideoRecordingService {
       _selectedCamera = camera;
       _isInitialized = true;
 
+      _controller!.addListener(_onControllerValueChanged);
+
       debugPrint(
         '[VIDEO] Cámara inicializada correctamente: '
         '${camera.name}',
@@ -310,6 +334,62 @@ class VideoRecordingService {
     }
   }
 
+  void _onControllerValueChanged() {
+    final value = _controller?.value;
+    if (value == null) return;
+
+    if (value.hasError) {
+      final description = value.errorDescription ?? 'Error de cámara';
+      if (cameraError.value != description) {
+        debugPrint('[VIDEO] Error reportado por la cámara: $description');
+        cameraError.value = description;
+      }
+    }
+  }
+
+  /// Vuelve a inicializar la última cámara usada. Si estaba grabando,
+  /// intenta guardar lo grabado y empieza un nuevo segmento, que queda
+  /// registrado como otra entrada del log de vídeo.
+  Future<bool> recoverCamera({
+    String participantSummary = '',
+    int activityIndex = 0,
+    bool? restartRecording,
+  }) async {
+    final camera = _lastCamera;
+    if (camera == null) {
+      lastStartError = 'No hay ninguna cámara seleccionada.';
+      return false;
+    }
+
+    final wasRecording = _isRecording;
+    final shouldRecord = restartRecording ?? wasRecording;
+
+    if (wasRecording) {
+      try {
+        await stopSessionRecording(
+          participantSummary: participantSummary,
+          totalActivities: activityIndex,
+        );
+      } catch (e) {
+        debugPrint('[VIDEO] No se pudo cerrar el segmento anterior: $e');
+      }
+      _isRecording = false;
+    }
+
+    final ok = await initializeCamera(camera);
+    if (!ok) {
+      return false;
+    }
+
+    if (shouldRecord) {
+      return startSessionRecording(
+        participantSummary: participantSummary,
+      );
+    }
+
+    return true;
+  }
+
   // ===========================================================================
   // CONTROL DE GRABACIÓN DE SESIÓN CONTINUA
   // ===========================================================================
@@ -317,7 +397,16 @@ class VideoRecordingService {
   Future<bool> startSessionRecording({
     required String participantSummary,
   }) async {
-    if (!_isInitialized || _controller == null || _isRecording) {
+    lastStartError = null;
+
+    if (!_isInitialized || _controller == null) {
+      lastStartError =
+          'La cámara no está inicializada. Vuelve a seleccionarla.';
+      return false;
+    }
+
+    if (_isRecording) {
+      lastStartError = 'Ya hay una grabación en curso.';
       return false;
     }
 
@@ -327,11 +416,12 @@ class VideoRecordingService {
 
       if (freeSpaceGB != null &&
           freeSpaceGB < minimumFreeSpaceGB) {
-        debugPrint(
-          '[VIDEO] Espacio insuficiente para iniciar la grabación: '
-          '${freeSpaceGB.toStringAsFixed(2)} GB disponibles '
-          '(mínimo ${minimumFreeSpaceGB.toStringAsFixed(1)} GB).',
-        );
+        lastStartError =
+            'Espacio insuficiente en ${lastCheckedPath ?? 'la carpeta de '
+            'documentos'}: ${freeSpaceGB.toStringAsFixed(1)} GB libres '
+            '(mínimo ${minimumFreeSpaceGB.toStringAsFixed(0)} GB).';
+
+        debugPrint('[VIDEO] $lastStartError');
 
         return false;
       }
@@ -355,10 +445,14 @@ class VideoRecordingService {
       return true;
     } on CameraException catch (e) {
       debugPrint('[VIDEO] CameraException: ${e.code} - ${e.description}');
+      lastStartError =
+          'La cámara rechazó iniciar la grabación '
+          '(${e.code}: ${e.description ?? 'sin descripción'}).';
       _isRecording = false;
       return false;
     } catch (e, stackTrace) {
       debugPrint('[VIDEO] Error iniciando grabación: $e\n$stackTrace');
+      lastStartError = 'Error iniciando la grabación: $e';
       _isRecording = false;
       return false;
     }

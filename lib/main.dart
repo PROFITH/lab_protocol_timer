@@ -1160,16 +1160,28 @@ class TimerPageState extends State<TimerPage>
       '[SESSION] Solicitando inicio de grabación de vídeo...',
     );
 
-    final videoStarted =
+    final videoResult =
         await ResearchMonitorBridge.instance.startVideoRecording(
       participantSummary,
     );
 
+    // El monitor devuelve {'ok': bool, 'reason': String?}; se acepta
+    // también un bool por compatibilidad.
+    final videoStarted = videoResult is Map
+        ? videoResult['ok'] == true
+        : videoResult == true;
+    final videoFailureReason = videoResult is Map
+        ? videoResult['reason']?.toString()
+        : videoResult == null
+            ? 'No se recibió respuesta del Research Monitor. '
+                'Comprueba que la ventana del monitor está abierta.'
+            : null;
+
     debugPrint(
-      '[SESSION] Resultado inicio vídeo: $videoStarted',
+      '[SESSION] Resultado inicio vídeo: $videoResult',
     );
 
-    if (videoStarted != true) {
+    if (!videoStarted) {
       debugPrint(
         '[SESSION] No se puede iniciar la sesión: '
         'la grabación de vídeo no ha comenzado.',
@@ -1203,12 +1215,12 @@ class TimerPageState extends State<TimerPage>
                 ),
               ],
             ),
-            content: const Text(
+            content: Text(
               'La grabación de vídeo no ha podido iniciarse.\n\n'
-              'Comprueba que la cámara está disponible y que hay '
-              'suficiente espacio libre en el disco.\n\n'
-              'El protocolo NO se ha iniciado.',
-              style: TextStyle(
+              '${videoFailureReason ?? 'Comprueba que la cámara está '
+                  'disponible y que hay suficiente espacio libre en el disco.'}'
+              '\n\nEl protocolo NO se ha iniciado.',
+              style: const TextStyle(
                 color: Colors.white70,
               ),
             ),
