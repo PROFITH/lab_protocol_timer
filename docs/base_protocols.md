@@ -2,7 +2,15 @@
 
 Three protocols ship in `assets/protocols/`. Codes and METs are from the 2024 Adult Compendium bundled in `assets/compendium/compendium_2024.csv`; `test/session_setup_test.dart` checks that every code exists with that MET. Points marked **[revisar]** are defaults chosen here, not taken from the sources. Edit them in the app and save the result as a new protocol rather than changing the base files.
 
-Every protocol starts with a calibration box (2 min still with three taps, six faces of 60 s, three taps) and the day-0 and RUN4HEALTH protocols end with another one after the sensors are removed. **[revisar]** In the RUN4HEALTH guide (Protocol 4.1) the first box is done during consent, before the session starts; inside the session the camera already records during that box. Remove the segment if the box stays outside the session.
+The WEARGAP protocols start with a calibration box (2 min still with three taps, six faces of 60 s, three taps) and the day-0 protocol ends with another one after the sensors are removed. RUN4HEALTH has no calibration box (decided on 2026-10-20): how far off the sensors are is measured from the laboratory data instead, as a finding for WEARGAP.
+
+Protocol files can also say, for the timer screen and REDCap:
+
+- `instructions` (what the participant sees under the activity name) and `animation` (the figure: `lie`, `stand`, `sit`, `type`, `walk`, `walk_bags`, `walk_fast`, `run`, `stairs`, `uphill`, `sweep`, `dishes`, `cycle`, `sit_to_stand`, `treadmill`; guessed from the name when missing).
+- `sync`: `kind` (`clap` or `jump`) and `auto` (`every_static`, `first_last` or `manual`): when the timer gives the sync cue by itself.
+- `ask_rpe`: ask the effort (0-10) after every activity, for `la_rpe`.
+- `resting_hr`: the mean heart rate of the last 2 min of that activity goes to `ws_hr_rest` (method 1). **[revisar]** 2 min is the default of the RUN4HEALTH guide.
+- `redcap`: fields of the visit's record that the activity fills: `done_field` (yes/no), `start_field`, `rpe_before_field`, `rpe_after_field` and `fields` typed in the Research Monitor (repetitions, laps...).
 
 ## RUN4HEALTH (`run4health_base`, day 0 and day 8)
 
@@ -10,7 +18,6 @@ Source: *Protocolos RUN4HEALTH: recogida y sincronización v1* (Protocols 4-6) a
 
 | # | Activity | Code | MET | Duration |
 |---|---|---|---|---|
-| | Calibration box | | | 6 × 60 s |
 | 1 | Tumbado en reposo | 07011 | 1.0 | 5:00 |
 | 2 | De pie quieto | 07040 | 1.3 | 4:00 |
 | 3 | Sentado escribiendo en el ordenador | 09040 | 1.3 | 4:00 |
@@ -20,9 +27,9 @@ Source: *Protocolos RUN4HEALTH: recogida y sincronización v1* (Protocols 4-6) a
 | 7 | Trotar a ritmo propio | 12020 | 7.5 | 4:00 |
 | 8 | Sentarse y levantarse 30 s | 02344 | 4.0 | 0:30 |
 | 9 | Marcha de 6 minutos | 17220 | 5.5 | 6:00 |
-| | Calibration box | | | 6 × 60 s |
 
-- Resting first (300 s, resting HR) and the two fitness tests last follow the guide's recommendation.
+- Resting first (300 s, resting HR) and the two fitness tests last follow the guide's recommendation. The sit-to-stand fills `chairstand_*` (repetitions and incidents typed in the monitor) and the walk fills `mwt_*`, `circuito_m`, `vueltas_6mwt` and `adicional_6mwt` in `physical_fitness`.
+- Sync: a clap in every static phase, given by the timer (Protocol 5.3 of the guide).
 - **[revisar]** Activities 2-7: the guide leaves the list pending ("5-10 activities chosen from the 16 of WEARGAP"). These six are among those the WEARGAP proposal names; 4 min each is a default for a steady heart rate.
 - **[revisar]** 02344 (sit to stand, 18-24/min) is the closest code to a 30-s maximal test; 17220 (6.4-7.1 km/h) assumes runners walk fast. Check against the measured speed.
 - Sensors from the guide's table: Matrix (non-dominant wrist, free living), AX3 non-dominant wrist, AX3 dominant wrist, SENS (thigh, free living), AX3 thigh, Polar H10 (chest, live), Verity Sense (arm, live in the lab and free living), fixed camera. AX3 at 100 Hz and ±8 g as the guide's default. **[revisar]** Thigh AX3 marked as not staying in free living (guide default); the optional shoe AX3s are not in the list.

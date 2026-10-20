@@ -1,87 +1,154 @@
 {
   "protocol_id": "run4health_base",
-  "protocol_version": "1",
+  "protocol_version": "2",
   "title": "RUN4HEALTH (base)",
   "study": "RUN4HEALTH",
   "moments": [
     "da_0__visita_inici_arm_1",
     "da_8__visita_final_arm_1"
   ],
+  "sync": {
+    "kind": "clap",
+    "auto": "every_static"
+  },
+  "ask_rpe": true,
   "activities": [
-    {
-      "name": "Caja de calibración inicial",
-      "kind": "calibration",
-      "duration_seconds": 360,
-      "prep_seconds": 120,
-      "post_seconds": 30,
-      "faces": 6,
-      "notes": "Antes de colocar los sensores. Caja quieta 2 min (fase estática inicial), tres golpes secos con SINCRONIZAR, seis caras de 60 s y tres golpes al final."
-    },
     {
       "name": "Tumbado en reposo",
       "compendium_code": "07011",
       "met": 1.0,
       "duration_seconds": 300,
-      "notes": "FC de reposo con la H10: boca arriba, en silencio."
+      "animation": "lie",
+      "instructions": "Túmbate boca arriba, relajado. No hables ni te muevas.",
+      "resting_hr": true,
+      "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos."
     },
     {
       "name": "De pie quieto",
       "compendium_code": "07040",
       "met": 1.3,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "stand",
+      "instructions": "Quédate de pie, quieto y relajado, con los brazos a los lados."
     },
     {
       "name": "Sentado escribiendo en el ordenador",
       "compendium_code": "09040",
       "met": 1.3,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "type",
+      "instructions": "Siéntate y escribe en el teclado a tu ritmo habitual."
     },
     {
       "name": "Caminar despacio con bolsas de la compra",
       "compendium_code": "05054",
       "met": 3.5,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "walk_bags",
+      "instructions": "Camina despacio con una bolsa en cada mano, sin parar."
     },
     {
       "name": "Barrer",
       "compendium_code": "05010",
       "met": 3.3,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "sweep",
+      "instructions": "Barre el suelo como lo harías en casa, sin parar."
     },
     {
       "name": "Subir escaleras",
       "compendium_code": "17131",
       "met": 6.8,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "stairs",
+      "instructions": "Sube las escaleras a ritmo constante. Baja con calma y vuelve a subir."
     },
     {
       "name": "Trotar a ritmo propio",
       "compendium_code": "12020",
       "met": 7.5,
-      "duration_seconds": 240
+      "duration_seconds": 240,
+      "animation": "run",
+      "instructions": "Trota a un ritmo cómodo y constante, el que podrías mantener mucho rato."
     },
     {
       "name": "Sentarse y levantarse 30 s",
       "compendium_code": "02344",
       "met": 4.0,
       "duration_seconds": 30,
-      "notes": "Brazos cruzados; máximo de repeticiones (physical_fitness)."
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas.",
+      "redcap": {
+        "done_field": "chairstand_realiza",
+        "start_field": "chairstand_start",
+        "rpe_before_field": "rpe_chairstand_pre",
+        "rpe_after_field": "rpe_chairstand_post",
+        "fields": [
+          {
+            "field": "chairstand_repeticiones",
+            "label": "Repeticiones completas",
+            "type": "integer",
+            "min": 0,
+            "max": 80
+          },
+          {
+            "field": "incidencia_chairstand",
+            "label": "Incidencias",
+            "type": "choice",
+            "choices": {
+              "0": "Sin incidencias",
+              "1": "Detenido por fatiga",
+              "2": "Dolor/Molestia",
+              "3": "No completado"
+            },
+            "default": "0"
+          }
+        ]
+      }
     },
     {
       "name": "Marcha de 6 minutos",
       "compendium_code": "17220",
       "met": 5.5,
       "duration_seconds": 360,
-      "notes": "Lo más rápido posible sin correr, circuito medido (physical_fitness)."
-    },
-    {
-      "name": "Caja de calibración final",
-      "kind": "calibration",
-      "duration_seconds": 360,
-      "prep_seconds": 120,
-      "post_seconds": 30,
-      "faces": 6,
-      "notes": "Justo al quitar los sensores, sin conectar ningún Axivity al USB. Misma secuencia que la caja inicial."
+      "animation": "walk_fast",
+      "instructions": "Camina lo más rápido que puedas sin correr, dando vueltas al circuito.",
+      "notes": "El evaluador/a B cuenta las vueltas y mide la distancia adicional al final.",
+      "redcap": {
+        "done_field": "mwt_realiza",
+        "start_field": "mwt_start",
+        "rpe_before_field": "rpe_6mwt_pre",
+        "rpe_after_field": "rpe_6mwt_post",
+        "fields": [
+          {
+            "field": "circuito_m",
+            "label": "Longitud del circuito (m)",
+            "type": "number",
+            "min": 1,
+            "max": 400
+          },
+          {
+            "field": "vueltas_6mwt",
+            "label": "Vueltas completas",
+            "type": "integer",
+            "min": 0,
+            "max": 100
+          },
+          {
+            "field": "adicional_6mwt",
+            "label": "Distancia adicional al final (m)",
+            "type": "number",
+            "min": 0,
+            "max": 400
+          },
+          {
+            "field": "obs_6mwt",
+            "label": "Observaciones",
+            "type": "text"
+          }
+        ]
+      }
     }
   ],
   "sensors": [

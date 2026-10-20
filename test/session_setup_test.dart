@@ -48,7 +48,10 @@ void main() {
           expect(protocol.moments, isNotEmpty);
           expect(protocol.activities.every((a) => a.durationSeconds != null),
               isTrue);
-          expect(protocol.activities.first.isCalibration, isTrue);
+          // RUN4HEALTH looks at how far off the sensors are in the lab data
+          // instead of doing the calibration box (decided on 2026-10-20).
+          expect(protocol.activities.first.isCalibration,
+              protocol.study != 'RUN4HEALTH');
           for (final box in protocol.activities.where((a) => a.isCalibration)) {
             expect(box.faces, 6);
             expect(box.compendiumCode, isNull);
@@ -79,7 +82,19 @@ void main() {
       expect(lab[lab.length - 2].durationSeconds, 30);
       expect(lab.last.name, 'Marcha de 6 minutos');
       expect(lab.last.durationSeconds, 360);
-      expect(r4h.activities.last.isCalibration, isTrue);
+      expect(r4h.activities.any((a) => a.isCalibration), isFalse);
+      expect(lab, hasLength(r4h.activities.length));
+      // Resting heart rate and the two fitness tests go to REDCap.
+      expect(lab.first.restingHr, isTrue);
+      expect(lab[lab.length - 2].redcap?.doneField, 'chairstand_realiza');
+      expect(lab.last.redcap?.fields.map((f) => f.field),
+          containsAll(['circuito_m', 'vueltas_6mwt', 'adicional_6mwt']));
+      expect(r4h.sync.kind, SyncKind.clap);
+      expect(r4h.sync.auto, AutoSync.everyStatic);
+      for (final a in lab) {
+        expect(a.instructions, isNotNull, reason: a.name);
+        expect(activityAnimations, contains(a.animation), reason: a.name);
+      }
       // No SensWear or portable calorimeter in the pilot.
       expect(r4h.sensors.map((s) => s.type), isNot(contains('senswear')));
       expect(

@@ -38,7 +38,7 @@ void main() {
     )));
 
     expect(find.text('RUN4HEALTH (base)'), findsOneWidget);
-    expect(find.textContaining('9 actividades y 2 cajas de calibración'),
+    expect(find.textContaining('9 actividades · '),
         findsOneWidget);
     expect(find.text('7 sensores sin número de serie'), findsOneWidget);
     expect(find.text('Editar actividades y sensores'), findsOneWidget);
@@ -71,12 +71,12 @@ void main() {
     await tester.tap(find.text('abrir'));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('ACTIVIDADES (11'), findsOneWidget);
+    expect(find.textContaining('ACTIVIDADES (9'), findsOneWidget);
     expect(find.text('Tumbado en reposo'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('Eliminar').first);
+    await tester.tap(find.byTooltip('Eliminar').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('ACTIVIDADES (10'), findsOneWidget);
+    expect(find.textContaining('ACTIVIDADES (8'), findsOneWidget);
 
     await tester.tap(find.text('Tumbado en reposo'));
     await tester.pumpAndSettle();
@@ -101,9 +101,14 @@ void main() {
 
     await tester.tap(find.text('Usar en esta sesión'));
     await tester.pumpAndSettle();
-    expect(result?.activities, hasLength(10));
+    expect(result?.activities, hasLength(8));
     expect(result?.activities.first.name, 'Tumbado');
     expect(result?.activities.first.compendiumCode, '07011');
+    // Editing keeps what the dialog does not show.
+    expect(result?.activities.first.restingHr, isTrue);
+    expect(result?.activities.first.animation, 'lie');
+    expect(result?.activities.first.instructions, isNotNull);
+    expect(result?.activities.last.redcap?.doneField, 'chairstand_realiza');
     expect(result?.sensors, hasLength(8));
     expect(result?.sensors.firstWhere((s) => s.type == 'polar_h10').serial,
         'C0FFEE');

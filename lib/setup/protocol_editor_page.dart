@@ -443,6 +443,9 @@ class _ActivityDialogState extends State<_ActivityDialog> {
   late final _faces =
       TextEditingController(text: (widget.initial?.faces ?? 6).toString());
   late final _notes = TextEditingController(text: widget.initial?.notes);
+  late final _instructions =
+      TextEditingController(text: widget.initial?.instructions);
+  late String? _animation = widget.initial?.animation;
   late ActivityKind _kind = widget.initial?.kind ?? ActivityKind.activity;
   late String? _code = widget.initial?.compendiumCode;
   late double? _met = widget.initial?.met;
@@ -459,7 +462,7 @@ class _ActivityDialogState extends State<_ActivityDialog> {
 
   @override
   void dispose() {
-    for (final c in [_name, _duration, _prep, _post, _faces, _notes]) {
+    for (final c in [_name, _duration, _prep, _post, _faces, _notes, _instructions]) {
       c.dispose();
     }
     super.dispose();
@@ -482,19 +485,34 @@ class _ActivityDialogState extends State<_ActivityDialog> {
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final notes = _notes.text.trim();
+    final instructions = _instructions.text.trim();
+    final calibration = _kind == ActivityKind.calibration;
+    final duration = parseSeconds(_duration.text);
+    final prep = parseSeconds(_prep.text);
+    final post = parseSeconds(_post.text);
+    // copyWith keeps what this dialog does not show (REDCap fields, resting
+    // heart rate).
     Navigator.of(context).pop(
-      BatteryActivity(
+      (widget.initial ?? const BatteryActivity(name: '')).copyWith(
         name: _name.text.trim(),
         kind: _kind,
-        compendiumCode: _kind == ActivityKind.calibration ? null : _code,
-        met: _kind == ActivityKind.calibration ? null : _met,
-        durationSeconds: parseSeconds(_duration.text),
-        prepSeconds: parseSeconds(_prep.text),
-        postSeconds: parseSeconds(_post.text),
-        faces: _kind == ActivityKind.calibration
-            ? int.tryParse(_faces.text.trim())
-            : null,
+        compendiumCode: calibration ? null : _code,
+        met: calibration ? null : _met,
+        clearCompendium: calibration || _code == null,
+        durationSeconds: duration,
+        clearDuration: duration == null,
+        prepSeconds: prep,
+        clearPrep: prep == null,
+        postSeconds: post,
+        clearPost: post == null,
+        faces: calibration ? int.tryParse(_faces.text.trim()) : null,
+        clearFaces: !calibration,
         notes: notes.isEmpty ? null : notes,
+        clearNotes: notes.isEmpty,
+        instructions: instructions.isEmpty ? null : instructions,
+        clearInstructions: instructions.isEmpty,
+        animation: _animation,
+        clearAnimation: _animation == null,
       ),
     );
   }
@@ -653,6 +671,36 @@ class _ActivityDialogState extends State<_ActivityDialog> {
                     hint: 'Material, velocidad, carga...',
                   ),
                 ),
+                if (!calibration) ...[
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _instructions,
+                    maxLines: 2,
+                    decoration: _decoration(
+                      'Instrucciones para el participante',
+                      hint: 'Se muestran en la pantalla del cronómetro',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String?>(
+                    initialValue: _animation,
+                    decoration: _decoration('Figura en pantalla'),
+                    items: [
+                      DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text(
+                          'Automática (${animationLabels[guessAnimation(_name.text)]})',
+                        ),
+                      ),
+                      for (final key in activityAnimations)
+                        DropdownMenuItem<String?>(
+                          value: key,
+                          child: Text(animationLabels[key] ?? key),
+                        ),
+                    ],
+                    onChanged: (value) => setState(() => _animation = value),
+                  ),
+                ],
               ],
             ),
           ),

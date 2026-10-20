@@ -23,6 +23,28 @@ class ParticipantEntry {
       );
 }
 
+/// How an activity attempt ended, as `la_completed` in REDCap.
+class ActivityCompletion {
+  static const complete = 'complete';
+  static const partial = 'partial';
+  static const skipped = 'skipped';
+
+  /// REDCap code of `la_completed` (1 Completa, 2 Parcial, 3 No realizada).
+  static String redcapCode(String completion) => switch (completion) {
+        partial => '2',
+        skipped => '3',
+        _ => '1',
+      };
+
+  static String label(String completion) => switch (completion) {
+        partial => 'Parcial',
+        skipped => 'No realizada',
+        _ => 'Completa',
+      };
+}
+
+/// One attempt at an activity of the session: its main phase, how it ended
+/// and what the evaluator noted about it.
 class ActivityLog {
   /// Activity index
   final int activityIndex;
@@ -31,7 +53,7 @@ class ActivityLog {
   final DateTime activityStartTime;
   final DateTime activityEndTime;
 
-  /// Duration of the main activity in seconds.
+  /// Duration of the main activity in seconds, without pauses.
   final double durationSeconds;
 
   /// Activity metadata from the protocol battery, when one was loaded.
@@ -48,7 +70,36 @@ class ActivityLog {
   /// `activity` or `calibration` (see [ActivityKind]).
   final String activityKind;
 
+  /// 1 for the first time the activity is done, 2 when it is repeated...
+  final int attempt;
+
+  /// [ActivityCompletion.complete], `partial` or `skipped`.
+  final String completion;
+
+  /// Why the main phase ended: `timer`, `early` (the evaluator ended it),
+  /// `repeat`, `finish` (end of session), `interrupted` (the app closed) or
+  /// `skipped`.
+  final String endReason;
+
+  /// Seconds the main phase was paused (not counted in [durationSeconds]).
+  final double pausedSeconds;
+
+  /// Effort (0-10) after and, when the protocol asks for it, before.
+  final int? rpe;
+  final int? rpeBefore;
+
+  /// Free text typed by the evaluator.
+  final String? incident;
+
+  /// Values of the activity's REDCap fields (repetitions, laps...).
+  final Map<String, String> fieldValues;
+
+  /// Resting heart rate measured during this activity (`resting_hr`).
+  final int? restingHrBpm;
+  final DateTime? restingHrTime;
+
   bool get isCalibration => activityKind == 'calibration';
+  bool get isSkipped => completion == ActivityCompletion.skipped;
 
   ActivityLog({
     required this.activityIndex,
@@ -61,7 +112,55 @@ class ActivityLog {
     this.met,
     this.labIndex,
     this.activityKind = 'activity',
+    this.attempt = 1,
+    this.completion = ActivityCompletion.complete,
+    this.endReason = 'timer',
+    this.pausedSeconds = 0,
+    this.rpe,
+    this.rpeBefore,
+    this.incident,
+    this.fieldValues = const {},
+    this.restingHrBpm,
+    this.restingHrTime,
   });
+
+  ActivityLog copyWith({
+    String? completion,
+    String? endReason,
+    int? rpe,
+    int? rpeBefore,
+    String? incident,
+    Map<String, String>? fieldValues,
+    int? restingHrBpm,
+    DateTime? restingHrTime,
+    bool clearRpe = false,
+    bool clearRpeBefore = false,
+    bool clearIncident = false,
+    bool clearRestingHr = false,
+  }) =>
+      ActivityLog(
+        activityIndex: activityIndex,
+        activityStartTime: activityStartTime,
+        activityEndTime: activityEndTime,
+        durationSeconds: durationSeconds,
+        activityName: activityName,
+        compendiumCode: compendiumCode,
+        plannedDurationSeconds: plannedDurationSeconds,
+        met: met,
+        labIndex: labIndex,
+        activityKind: activityKind,
+        attempt: attempt,
+        completion: completion ?? this.completion,
+        endReason: endReason ?? this.endReason,
+        pausedSeconds: pausedSeconds,
+        rpe: clearRpe ? null : rpe ?? this.rpe,
+        rpeBefore: clearRpeBefore ? null : rpeBefore ?? this.rpeBefore,
+        incident: clearIncident ? null : incident ?? this.incident,
+        fieldValues: fieldValues ?? this.fieldValues,
+        restingHrBpm: clearRestingHr ? null : restingHrBpm ?? this.restingHrBpm,
+        restingHrTime:
+            clearRestingHr ? null : restingHrTime ?? this.restingHrTime,
+      );
 
   Map<String, dynamic> toJson() => {
         'activity_index': activityIndex,
@@ -75,20 +174,27 @@ class ActivityLog {
         if (met != null) 'met': met,
         if (labIndex != null && labIndex != activityIndex) 'lab_index': labIndex,
         if (activityKind != 'activity') 'activity_kind': activityKind,
+        if (attempt != 1) 'attempt': attempt,
+        if (completion != ActivityCompletion.complete) 'completion': completion,
+        if (endReason != 'timer') 'end_reason': endReason,
+        if (pausedSeconds > 0) 'paused_seconds': pausedSeconds,
+        if (rpe != null) 'rpe': rpe,
+        if (rpeBefore != null) 'rpe_before': rpeBefore,
+        if (incident != null && incident!.isNotEmpty) 'incident': incident,
+        if (fieldValues.isNotEmpty) 'redcap_fields': fieldValues,
+        if (restingHrBpm != null) 'resting_hr_bpm': restingHrBpm,
+        if (restingHrTime != null)
+          'resting_hr_time_utc': restingHrTime!.toUtc().toIso8601String(),
       };
 
   factory ActivityLog.fromJson(Map<String, dynamic> json) => ActivityLog(
         activityIndex: json['activity_index'] as int,
-        activityStartTime: 
-            DateTime.parse(
-              json['activity_start_time_utc'] ??
-                  json['activity_start_time'],
-            ).toUtc(),
-       activityEndTime:
-            DateTime.parse(
-              json['activity_end_time_utc'] ??
-                  json['activity_end_time'],
-            ).toUtc(),
+        activityStartTime: DateTime.parse(
+          json['activity_start_time_utc'] ?? json['activity_start_time'],
+        ).toUtc(),
+        activityEndTime: DateTime.parse(
+          json['activity_end_time_utc'] ?? json['activity_end_time'],
+        ).toUtc(),
         durationSeconds: (json['duration_seconds'] as num).toDouble(),
         activityName: json['activity_name'] as String?,
         compendiumCode: json['compendium_code']?.toString(),
@@ -97,6 +203,23 @@ class ActivityLog {
         met: (json['met'] as num?)?.toDouble(),
         labIndex: json['lab_index'] as int? ?? json['activity_index'] as int,
         activityKind: json['activity_kind'] as String? ?? 'activity',
+        attempt: json['attempt'] as int? ?? 1,
+        completion:
+            json['completion'] as String? ?? ActivityCompletion.complete,
+        endReason: json['end_reason'] as String? ?? 'timer',
+        pausedSeconds: (json['paused_seconds'] as num?)?.toDouble() ?? 0,
+        rpe: json['rpe'] as int?,
+        rpeBefore: json['rpe_before'] as int?,
+        incident: json['incident'] as String?,
+        fieldValues: {
+          for (final e
+              in (json['redcap_fields'] as Map? ?? const {}).entries)
+            e.key.toString(): e.value.toString(),
+        },
+        restingHrBpm: json['resting_hr_bpm'] as int?,
+        restingHrTime: json['resting_hr_time_utc'] == null
+            ? null
+            : DateTime.parse(json['resting_hr_time_utc'] as String).toUtc(),
       );
 }
 
