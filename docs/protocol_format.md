@@ -7,7 +7,7 @@ The participant screen has a **Configuración de la sesión** block under the pa
 1. **Protocolo de actividades**: a list with the base protocols bundled with the app (`assets/protocols/`: RUN4HEALTH, WEARGAP day 0, WEARGAP day 8), the protocols saved on this computer, and "Sin protocolo" (numbered activities that all last the Research Monitor duration, as before). When the visit of the first participant changes, a protocol of the same study meant for that visit replaces the current one (WEARGAP day 0 ↔ day 8).
 2. **Editar actividades y sensores** opens an editor with two tabs:
    - *Actividades*: add, remove, duplicate and drag to reorder. Each activity has a name (read aloud), a Compendium code picked from the bundled 2024 Compendium (the MET comes with it), a duration, optional static phases that override the Research Monitor values, and notes for the evaluators. *Añadir caja de calibración* adds a calibration box segment.
-   - *Sensores*: type (Axivity AX3/AX6, Parmay Matrix, SENS motion, SensWear, Polar H10, Polar Verity Sense, camera, other), placement, serial number, sampling rate, range and whether it stays on for the free-living days. The sensor ID (`ax3_wnd`, `ax6_shoe_l`...) is suggested from type and placement and is the key in the manifest and in file names.
+   - *Sensores*: type (Axivity AX3/AX6, ActiGraph GT3X, GENEActiv, Parmay Matrix, SENS motion, SensWear, Polar H10, Polar Verity Sense, camera, other), placement with optional dominance (dominant / non-dominant) and side (left / right), serial number, sampling rate, range and whether it stays on for the free-living days. The sensor ID (`ax3_wnd`, `ax3_wnd_r`, `ax6_shoe_l`, `gt3x_hip_r`...) is suggested from type, placement, dominance and side and is the key in the manifest and in file names.
    - *Guardar como protocolo* stores the edited protocol on this computer under a name; *Exportar JSON* writes it to a file for another computer. *Usar en esta sesión* applies the changes to this session only.
 3. **Importar JSON** loads a protocol file (format below).
 
@@ -31,10 +31,10 @@ See the base protocols in [`../assets/protocols/`](../assets/protocols/) and [`b
 | `activities[].prep_seconds`, `post_seconds` | no | Static phases before and after; when missing, the Research Monitor values |
 | `activities[].faces` | no | Calibration: box faces announced during the main phase (default 6) |
 | `activities[].notes` | no | Notes for the evaluators, not read aloud |
-| `sensors[]` | no | `sensor_id`, `type`, `placement`, `serial`, `sampling_rate_hz`, `range_g`, `free_living` |
+| `sensors[]` | no | `sensor_id`, `type`, `placement`, `dominance`, `side`, `serial`, `sampling_rate_hz`, `range_g`, `free_living` |
 | `offline_sensors[]` | no | Older format: `sensor_id`, `device_name`, `placement`, `timestamp_domain` |
 
-`type` is one of `ax3`, `ax6`, `matrix`, `sens`, `senswear`, `polar_h10`, `verity_sense`, `camera`, `other`; `placement` one of `wrist_non_dominant`, `wrist_dominant`, `thigh`, `hip`, `chest`, `upper_arm`, `ankle`, `shoe_left`, `shoe_right`, `room`, `other`.
+`type` is one of `ax3`, `ax6`, `actigraph_gt3x`, `geneactiv`, `matrix`, `sens`, `senswear`, `polar_h10`, `verity_sense`, `camera`, `other`; `placement` one of `wrist`, `upper_arm`, `chest`, `hip`, `thigh`, `ankle`, `shoe`, `room`, `other`; `dominance` `dominant` or `non_dominant` and `side` `left` or `right`, both optional for every placement (leave them out when they do not apply, e.g. the chest strap). Older files with `wrist_non_dominant`, `wrist_dominant`, `shoe_left` or `shoe_right` still load and are split into placement, dominance and side. The manifest writes `placement`, `dominance`, `side` and a readable `placement_label` ("Muñeca no dominante, izquierda").
 
 Activities beyond the end of the list fall back to numbered activities with the Research Monitor duration. The protocol is saved with the local backup, so a resumed session keeps it.
 

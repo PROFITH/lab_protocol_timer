@@ -183,7 +183,9 @@ void main() {
         const SessionSensor(
           sensorId: 'ax3_wnd',
           type: 'ax3',
-          placement: 'wrist_non_dominant',
+          placement: 'wrist',
+          dominance: 'non_dominant',
+          side: 'left',
           serial: '41234',
           samplingRateHz: 100,
           rangeG: 8,
@@ -210,10 +212,12 @@ void main() {
         'present': true,
         'timestamp_domain': 'device_clock_local',
         'device_name': 'Axivity AX3',
-        'placement': 'wrist_non_dominant',
+        'placement': 'wrist',
         'connection': 'offline',
         'device_type': 'ax3',
-        'placement_label': 'Muñeca no dominante',
+        'dominance': 'non_dominant',
+        'side': 'left',
+        'placement_label': 'Muñeca no dominante, izquierda',
         'serial': '41234',
         'sampling_rate_hz': 100.0,
         'range_g': 8.0,
@@ -286,15 +290,44 @@ void main() {
         () => SessionSensor.fromJson({'sensor_id': 's', 'type': 'actigraph'}),
         throwsFormatException,
       );
+      expect(
+        () => SessionSensor.fromJson({'sensor_id': 's', 'type': 'ax3', 'side': 'up'}),
+        throwsFormatException,
+      );
     });
 
-    test('suggests IDs from type and placement', () {
-      expect(SessionSensor.suggestId('ax3', 'wrist_dominant'), 'ax3_wd');
-      expect(SessionSensor.suggestId('ax6', 'shoe_left'), 'ax6_shoe_l');
+    test('suggests IDs from type, placement, dominance and side', () {
+      expect(SessionSensor.suggestId('ax3', 'wrist', dominance: 'dominant'), 'ax3_wd');
+      expect(SessionSensor.suggestId('ax3', 'wrist', dominance: 'non_dominant', side: 'right'), 'ax3_wnd_r');
+      expect(SessionSensor.suggestId('ax3', 'wrist'), 'ax3_wrist');
+      expect(SessionSensor.suggestId('ax6', 'shoe', side: 'left'), 'ax6_shoe_l');
+      expect(SessionSensor.suggestId('actigraph_gt3x', 'hip', side: 'right'), 'gt3x_hip_r');
+      expect(SessionSensor.suggestId('geneactiv', 'thigh', dominance: 'dominant'), 'geneactiv_thigh_d');
+      expect(SessionSensor.suggestId('polar_h10', 'chest'), 'polar_h10_chest');
       expect(
-        SessionSensor.suggestId('camera', 'room', ['cam_room', 'cam_room_2']),
+        SessionSensor.suggestId('camera', 'room', taken: ['cam_room', 'cam_room_2']),
         'cam_room_3',
       );
+    });
+
+    test('dominance and side are optional everywhere and old placement keys still load', () {
+      final h10 = SessionSensor.fromJson({'sensor_id': 'h', 'type': 'polar_h10', 'placement': 'chest'});
+      expect([h10.dominance, h10.side, h10.placementLabel], [null, null, 'Pecho']);
+
+      final old = SessionSensor.fromJson({'sensor_id': 'a', 'type': 'ax3', 'placement': 'wrist_dominant'});
+      expect([old.placement, old.dominance, old.side], ['wrist', 'dominant', null]);
+      final shoe = SessionSensor.fromJson({'sensor_id': 'b', 'type': 'ax6', 'placement': 'shoe_right'});
+      expect([shoe.placement, shoe.side, shoe.placementLabel], ['shoe', 'right', 'Calzado, derecha']);
+      expect(old.redcapLocationCode, '2');
+      expect(shoe.redcapLocationCode, '6');
+
+      final roundTrip = SessionSensor.fromJson(
+        const SessionSensor(sensorId: 'g', type: 'geneactiv', placement: 'ankle', dominance: 'dominant', side: 'left')
+            .toJson(),
+      );
+      expect([roundTrip.type, roundTrip.dominance, roundTrip.side], ['geneactiv', 'dominant', 'left']);
+      expect(sensorTypeByKey('actigraph_gt3x').label, 'ActiGraph GT3X');
+      expect(sensorTypeByKey('geneactiv').label, 'GENEActiv');
     });
   });
 

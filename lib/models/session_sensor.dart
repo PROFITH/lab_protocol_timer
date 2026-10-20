@@ -31,7 +31,8 @@ class SensorType {
   });
 }
 
-/// Body location of a sensor (or the room, for cameras).
+/// Body location of a sensor (or the room, for cameras). Dominance and side
+/// are chosen apart ([SensorDominance], [SensorSide]) and are optional.
 class SensorPlacement {
   final String key;
   final String label;
@@ -40,7 +41,8 @@ class SensorPlacement {
   /// `wnd`, `wd`, `thigh`, `chest`, `arm` and `shoe` in file names.
   final String short;
 
-  /// Code of the location in the REDCap `sensor_log` instrument (`sl_location`).
+  /// Code of the location in the REDCap `sensor_log` instrument
+  /// (`sl_location`). Wrists use [SensorDominance] to pick 1 or 2.
   final String redcapCode;
 
   const SensorPlacement({
@@ -71,6 +73,26 @@ const sensorTypes = <SensorType>[
     redcapCode: '2',
     defaultSamplingRateHz: 100,
     defaultRangeG: 16,
+  ),
+  SensorType(
+    key: 'actigraph_gt3x',
+    label: 'ActiGraph GT3X',
+    connection: 'offline',
+    timestampDomain: 'device_clock_local',
+    idPrefix: 'gt3x',
+    redcapCode: '10',
+    defaultSamplingRateHz: 30,
+    defaultRangeG: 8,
+  ),
+  SensorType(
+    key: 'geneactiv',
+    label: 'GENEActiv',
+    connection: 'offline',
+    timestampDomain: 'device_clock_local',
+    idPrefix: 'geneactiv',
+    redcapCode: '11',
+    defaultSamplingRateHz: 100,
+    defaultRangeG: 8,
   ),
   SensorType(
     key: 'matrix',
@@ -131,18 +153,82 @@ const sensorTypes = <SensorType>[
 ];
 
 const sensorPlacements = <SensorPlacement>[
-  SensorPlacement(key: 'wrist_non_dominant', label: 'Muñeca no dominante', short: 'wnd', redcapCode: '1'),
-  SensorPlacement(key: 'wrist_dominant', label: 'Muñeca dominante', short: 'wd', redcapCode: '2'),
-  SensorPlacement(key: 'thigh', label: 'Muslo', short: 'thigh', redcapCode: '3'),
+  SensorPlacement(
+      key: 'wrist', label: 'Muñeca', short: 'wrist', redcapCode: '1'),
+  SensorPlacement(
+      key: 'upper_arm', label: 'Brazo', short: 'arm', redcapCode: '5'),
+  SensorPlacement(
+      key: 'chest', label: 'Pecho', short: 'chest', redcapCode: '4'),
   SensorPlacement(key: 'hip', label: 'Cadera', short: 'hip', redcapCode: '7'),
-  SensorPlacement(key: 'chest', label: 'Pecho', short: 'chest', redcapCode: '4'),
-  SensorPlacement(key: 'upper_arm', label: 'Brazo', short: 'arm', redcapCode: '5'),
-  SensorPlacement(key: 'ankle', label: 'Tobillo', short: 'ankle', redcapCode: '9'),
-  SensorPlacement(key: 'shoe_left', label: 'Calzado izquierdo', short: 'shoe_l', redcapCode: '6'),
-  SensorPlacement(key: 'shoe_right', label: 'Calzado derecho', short: 'shoe_r', redcapCode: '6'),
-  SensorPlacement(key: 'room', label: 'Fija en la sala', short: 'room', redcapCode: '8'),
+  SensorPlacement(
+      key: 'thigh', label: 'Muslo', short: 'thigh', redcapCode: '3'),
+  SensorPlacement(
+      key: 'ankle', label: 'Tobillo', short: 'ankle', redcapCode: '9'),
+  SensorPlacement(
+      key: 'shoe', label: 'Calzado', short: 'shoe', redcapCode: '6'),
+  SensorPlacement(
+      key: 'room', label: 'Fija en la sala', short: 'room', redcapCode: '8'),
   SensorPlacement(key: 'other', label: 'Otra', short: 'other', redcapCode: '9'),
 ];
+
+/// Dominant or non-dominant side, for any placement (empty when it does not
+/// apply, e.g. the chest strap).
+class SensorDominance {
+  static const dominant = 'dominant';
+  static const nonDominant = 'non_dominant';
+  static const values = [dominant, nonDominant];
+  static const labels = {dominant: 'dominante', nonDominant: 'no dominante'};
+  static const shorts = {dominant: 'd', nonDominant: 'nd'};
+}
+
+/// Left or right side, for any placement (empty when it does not apply).
+class SensorSide {
+  static const left = 'left';
+  static const right = 'right';
+  static const values = [left, right];
+  static const labels = {left: 'izquierda', right: 'derecha'};
+  static const shorts = {left: 'l', right: 'r'};
+}
+
+/// Placement keys of protocol files written before dominance and side were
+/// separate fields.
+const _legacyPlacements = <String, (String, String?, String?)>{
+  'wrist_non_dominant': ('wrist', SensorDominance.nonDominant, null),
+  'wrist_dominant': ('wrist', SensorDominance.dominant, null),
+  'shoe_left': ('shoe', null, SensorSide.left),
+  'shoe_right': ('shoe', null, SensorSide.right),
+};
+
+/// Label such as «Muñeca no dominante, izquierda».
+String placementLabelOf(String? placement, String? dominance, String? side) {
+  final base = sensorPlacementByKey(placement)?.label ?? placement;
+  final parts = [
+    if (base != null) base,
+    if (dominance != null) SensorDominance.labels[dominance] ?? dominance,
+  ];
+  if (parts.isEmpty && side == null) return '';
+  final label = parts.join(' ');
+  if (side == null) return label;
+  final sideLabel = SensorSide.labels[side] ?? side;
+  return label.isEmpty ? sideLabel : '$label, $sideLabel';
+}
+
+/// Short code for IDs and file names: `wnd`, `wd`, `thigh_nd`, `shoe_l`,
+/// `wnd_r`… (wrists keep the codes SAVES Studio already recognises).
+String placementShortOf(String? placement, String? dominance, String? side) {
+  final base = sensorPlacementByKey(placement)?.short;
+  final dom = SensorDominance.shorts[dominance];
+  final parts = <String>[
+    if (base == 'wrist' && dom != null)
+      'w$dom'
+    else ...[
+      if (base != null) base,
+      if (dom != null) dom,
+    ],
+    if (SensorSide.shorts[side] != null) SensorSide.shorts[side]!,
+  ];
+  return parts.join('_');
+}
 
 SensorType sensorTypeByKey(String key) => sensorTypes.firstWhere(
       (t) => t.key == key,
@@ -176,6 +262,12 @@ class SessionSensor {
   /// Key of [sensorPlacements] (older files may carry free text).
   final String? placement;
 
+  /// [SensorDominance] value, or null when it does not apply.
+  final String? dominance;
+
+  /// [SensorSide] value, or null when it does not apply.
+  final String? side;
+
   final String? serial;
   final double? samplingRateHz;
   final double? rangeG;
@@ -193,6 +285,8 @@ class SessionSensor {
     required this.sensorId,
     required this.type,
     this.placement,
+    this.dominance,
+    this.side,
     this.serial,
     this.samplingRateHz,
     this.rangeG,
@@ -210,8 +304,20 @@ class SessionSensor {
 
   String get connection => sensorType.connection;
 
-  String? get placementLabel =>
-      sensorPlacementByKey(placement)?.label ?? placement;
+  String? get placementLabel {
+    final label = placementLabelOf(placement, dominance, side);
+    return label.isEmpty ? null : label;
+  }
+
+  /// Code of the location in REDCap `sl_location` (wrists: 1 non-dominant,
+  /// 2 dominant).
+  String? get redcapLocationCode {
+    final p = sensorPlacementByKey(placement);
+    if (p == null) return null;
+    if (p.key == 'wrist')
+      return dominance == SensorDominance.dominant ? '2' : '1';
+    return p.redcapCode;
+  }
 
   bool get hasSerial => serial != null && serial!.trim().isNotEmpty;
 
@@ -219,12 +325,14 @@ class SessionSensor {
   /// number when [taken] already has it.
   static String suggestId(
     String type,
-    String? placement, [
+    String? placement, {
+    String? dominance,
+    String? side,
     Iterable<String> taken = const [],
-  ]) {
+  }) {
     final prefix = sensorTypeByKey(type).idPrefix;
-    final short = sensorPlacementByKey(placement)?.short;
-    final base = short == null ? prefix : '${prefix}_$short';
+    final short = placementShortOf(placement, dominance, side);
+    final base = short.isEmpty ? prefix : '${prefix}_$short';
     final used = taken.toSet();
     if (!used.contains(base)) return base;
     var n = 2;
@@ -238,6 +346,8 @@ class SessionSensor {
     String? sensorId,
     String? type,
     String? placement,
+    String? dominance,
+    String? side,
     String? serial,
     double? samplingRateHz,
     double? rangeG,
@@ -250,6 +360,8 @@ class SessionSensor {
         sensorId: sensorId ?? this.sensorId,
         type: type ?? this.type,
         placement: placement ?? this.placement,
+        dominance: dominance ?? this.dominance,
+        side: side ?? this.side,
         serial: clearSerial ? null : serial ?? this.serial,
         samplingRateHz:
             clearSamplingRate ? null : samplingRateHz ?? this.samplingRateHz,
@@ -263,6 +375,8 @@ class SessionSensor {
         'sensor_id': sensorId,
         'type': type,
         if (placement != null) 'placement': placement,
+        if (dominance != null) 'dominance': dominance,
+        if (side != null) 'side': side,
         if (hasSerial) 'serial': serial!.trim(),
         if (samplingRateHz != null) 'sampling_rate_hz': samplingRateHz,
         if (rangeG != null) 'range_g': rangeG,
@@ -281,7 +395,8 @@ class SessionSensor {
     }
 
     final timestampDomain = json['timestamp_domain']?.toString();
-    if (timestampDomain != null && !timestampDomains.contains(timestampDomain)) {
+    if (timestampDomain != null &&
+        !timestampDomains.contains(timestampDomain)) {
       throw FormatException(
         'El sensor "$sensorId" tiene un timestamp_domain no válido: '
         '$timestampDomain.',
@@ -301,15 +416,38 @@ class SessionSensor {
       final value = json[key];
       if (value == null) return null;
       if (value is! num || value <= 0) {
-        throw FormatException('El sensor "$sensorId" tiene un "$key" no válido.');
+        throw FormatException(
+            'El sensor "$sensorId" tiene un "$key" no válido.');
       }
       return value.toDouble();
+    }
+
+    String? choice(String key, List<String> allowed) {
+      final value = json[key]?.toString();
+      if (value == null || value.isEmpty) return null;
+      if (!allowed.contains(value)) {
+        throw FormatException(
+            'El sensor "$sensorId" tiene un "$key" no válido: $value.');
+      }
+      return value;
+    }
+
+    var placement = json['placement']?.toString();
+    var dominance = choice('dominance', SensorDominance.values);
+    var side = choice('side', SensorSide.values);
+    final legacy = _legacyPlacements[placement];
+    if (legacy != null) {
+      placement = legacy.$1;
+      dominance ??= legacy.$2;
+      side ??= legacy.$3;
     }
 
     return SessionSensor(
       sensorId: sensorId.trim(),
       type: type,
-      placement: json['placement']?.toString(),
+      placement: placement,
+      dominance: dominance,
+      side: side,
       serial: json['serial']?.toString(),
       samplingRateHz: number('sampling_rate_hz'),
       rangeG: number('range_g'),
@@ -317,9 +455,8 @@ class SessionSensor {
       // Older files name the device and its clock themselves.
       deviceNameOverride:
           type == 'other' ? (deviceName ?? sensorId.trim()) : null,
-      timestampDomainOverride: rawType == null
-          ? (timestampDomain ?? 'unknown')
-          : timestampDomain,
+      timestampDomainOverride:
+          rawType == null ? (timestampDomain ?? 'unknown') : timestampDomain,
     );
   }
 }

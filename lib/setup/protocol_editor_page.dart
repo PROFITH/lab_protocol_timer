@@ -99,7 +99,8 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
       return;
     }
     final controller = TextEditingController(
-      text: _battery.protocolId.startsWith('custom_') ? _battery.displayName : '',
+      text:
+          _battery.protocolId.startsWith('custom_') ? _battery.displayName : '',
     );
     final name = await showDialog<String>(
       context: context,
@@ -163,7 +164,8 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
   }
 
   void _snack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _apply() {
@@ -281,8 +283,8 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                       IconButton(
                         tooltip: 'Duplicar',
                         icon: const Icon(Icons.copy_rounded, size: 20),
-                        onPressed: () =>
-                            setState(() => _activities.insert(i + 1, a.copyWith())),
+                        onPressed: () => setState(
+                            () => _activities.insert(i + 1, a.copyWith())),
                       ),
                       IconButton(
                         tooltip: 'Eliminar',
@@ -368,7 +370,8 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                     },
                     color: _accent,
                   ),
-                  title: Text('${s.deviceName} · ${s.placementLabel ?? 'sin ubicación'}'),
+                  title: Text(
+                      '${s.deviceName} · ${s.placementLabel ?? 'sin ubicación'}'),
                   subtitle: Text(
                     details,
                     style: TextStyle(
@@ -510,7 +513,8 @@ class _ActivityDialogState extends State<_ActivityDialog> {
     final calibration = _kind == ActivityKind.calibration;
     return AlertDialog(
       backgroundColor: _card,
-      title: Text(widget.initial == null ? 'Nueva actividad' : 'Editar actividad'),
+      title:
+          Text(widget.initial == null ? 'Nueva actividad' : 'Editar actividad'),
       content: SizedBox(
         width: 560,
         child: Form(
@@ -561,7 +565,8 @@ class _ActivityDialogState extends State<_ActivityDialog> {
                                 : 'Compendio $_code · ${formatDecimal(_met)} MET'
                                     '${_codeDescription == null ? '' : '\n$_codeDescription'}',
                             style: TextStyle(
-                              color: _code == null ? Colors.white38 : Colors.white,
+                              color:
+                                  _code == null ? Colors.white38 : Colors.white,
                             ),
                           ),
                         ),
@@ -765,11 +770,14 @@ class _SensorDialogState extends State<_SensorDialog> {
   late String _type = widget.initial?.type ?? 'ax3';
   late String? _placement =
       sensorPlacementByKey(widget.initial?.placement)?.key ??
-          (widget.initial == null ? 'wrist_non_dominant' : null);
+          (widget.initial == null ? 'wrist' : null);
+  late String? _dominance = widget.initial == null
+      ? SensorDominance.nonDominant
+      : widget.initial!.dominance;
+  late String? _side = widget.initial?.side;
   late bool _freeLiving = widget.initial?.freeLiving ?? false;
   late final _id = TextEditingController(
-    text: widget.initial?.sensorId ??
-        SessionSensor.suggestId(_type, _placement, widget.takenIds),
+    text: widget.initial?.sensorId ?? _suggestedId(),
   );
   late final _serial = TextEditingController(text: widget.initial?.serial);
   late final _rate = TextEditingController(
@@ -793,8 +801,18 @@ class _SensorDialogState extends State<_SensorDialog> {
           SessionSensor.suggestId(
             widget.initial!.type,
             widget.initial!.placement,
-            widget.takenIds,
+            dominance: widget.initial!.dominance,
+            side: widget.initial!.side,
+            taken: widget.takenIds,
           );
+
+  String _suggestedId() => SessionSensor.suggestId(
+        _type,
+        _placement,
+        dominance: _dominance,
+        side: _side,
+        taken: widget.takenIds,
+      );
 
   @override
   void dispose() {
@@ -806,7 +824,7 @@ class _SensorDialogState extends State<_SensorDialog> {
 
   void _typeOrPlacementChanged() {
     if (!_idEdited) {
-      _id.text = SessionSensor.suggestId(_type, _placement, widget.takenIds);
+      _id.text = _suggestedId();
     }
   }
 
@@ -819,6 +837,8 @@ class _SensorDialogState extends State<_SensorDialog> {
         sensorId: _id.text.trim(),
         type: _type,
         placement: _placement ?? base?.placement,
+        dominance: _dominance,
+        side: _side,
         serial: serial.isEmpty ? null : serial,
         samplingRateHz: parseDecimal(_rate.text),
         rangeG: parseDecimal(_range.text),
@@ -866,7 +886,11 @@ class _SensorDialogState extends State<_SensorDialog> {
                       final t = sensorTypeByKey(v);
                       _rate.text = formatDecimal(t.defaultSamplingRateHz);
                       _range.text = formatDecimal(t.defaultRangeG);
-                      if (t.connection == 'video') _placement = 'room';
+                      if (t.connection == 'video') {
+                        _placement = 'room';
+                        _dominance = null;
+                        _side = null;
+                      }
                       _typeOrPlacementChanged();
                     });
                   },
@@ -877,9 +901,10 @@ class _SensorDialogState extends State<_SensorDialog> {
                   dropdownColor: _card,
                   decoration: _decoration(
                     'Ubicación',
-                    helper: _placement == null && widget.initial?.placement != null
-                        ? 'Ahora: ${widget.initial!.placement}'
-                        : null,
+                    helper:
+                        _placement == null && widget.initial?.placement != null
+                            ? 'Ahora: ${widget.initial!.placement}'
+                            : null,
                   ),
                   items: [
                     for (final p in sensorPlacements)
@@ -889,6 +914,52 @@ class _SensorDialogState extends State<_SensorDialog> {
                     _placement = v;
                     _typeOrPlacementChanged();
                   }),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<String?>(
+                        key: const ValueKey('sensor_dominance'),
+                        initialValue: _dominance,
+                        dropdownColor: _card,
+                        decoration: _decoration('Dominancia',
+                            helper: 'Vacío si no aplica'),
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('—')),
+                          for (final d in SensorDominance.values)
+                            DropdownMenuItem(
+                                value: d,
+                                child: Text(SensorDominance.labels[d]!)),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _dominance = v;
+                          _typeOrPlacementChanged();
+                        }),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: DropdownButtonFormField<String?>(
+                        key: const ValueKey('sensor_side'),
+                        initialValue: _side,
+                        dropdownColor: _card,
+                        decoration:
+                            _decoration('Lado', helper: 'Vacío si no aplica'),
+                        items: [
+                          const DropdownMenuItem(value: null, child: Text('—')),
+                          for (final side in SensorSide.values)
+                            DropdownMenuItem(
+                                value: side,
+                                child: Text(SensorSide.labels[side]!)),
+                        ],
+                        onChanged: (v) => setState(() {
+                          _side = v;
+                          _typeOrPlacementChanged();
+                        }),
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
                 TextFormField(

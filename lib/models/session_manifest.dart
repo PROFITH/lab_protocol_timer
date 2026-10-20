@@ -47,6 +47,8 @@ Map<String, dynamic> buildSessionManifest({
   for (final sensor in battery?.sensors ?? const <SessionSensor>[]) {
     final details = <String, dynamic>{
       if (sensor.type != 'other') 'device_type': sensor.type,
+      if (sensor.dominance != null) 'dominance': sensor.dominance,
+      if (sensor.side != null) 'side': sensor.side,
       if (sensor.placementLabel != null &&
           sensor.placementLabel != sensor.placement)
         'placement_label': sensor.placementLabel,

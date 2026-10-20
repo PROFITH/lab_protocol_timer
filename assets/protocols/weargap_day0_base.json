@@ -119,21 +119,24 @@
     {
       "sensor_id": "ax3_wd",
       "type": "ax3",
-      "placement": "wrist_dominant",
+      "placement": "wrist",
+      "dominance": "dominant",
       "sampling_rate_hz": 100,
       "range_g": 8
     },
     {
       "sensor_id": "ax3_wnd",
       "type": "ax3",
-      "placement": "wrist_non_dominant",
+      "placement": "wrist",
+      "dominance": "non_dominant",
       "sampling_rate_hz": 100,
       "range_g": 8
     },
     {
       "sensor_id": "senswear_wnd",
       "type": "senswear",
-      "placement": "wrist_non_dominant",
+      "placement": "wrist",
+      "dominance": "non_dominant",
       "free_living": true
     },
     {
@@ -147,7 +150,8 @@
     {
       "sensor_id": "ax6_shoe_l",
       "type": "ax6",
-      "placement": "shoe_left",
+      "placement": "shoe",
+      "side": "left",
       "free_living": true,
       "sampling_rate_hz": 100,
       "range_g": 16
@@ -155,7 +159,8 @@
     {
       "sensor_id": "ax6_shoe_r",
       "type": "ax6",
-      "placement": "shoe_right",
+      "placement": "shoe",
+      "side": "right",
       "free_living": true,
       "sampling_rate_hz": 100,
       "range_g": 16
