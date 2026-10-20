@@ -1042,10 +1042,32 @@ class PolarBleService {
     // PMD
     // -------------------------------------------------------------------------
 
-    await _setupPmd(device);
-
-    await _readPmdFeatures();
+    // If Windows refuses PMD (ACC, ECG) for lack of pairing, stay connected
+    // with heart rate only, as the web app does («Conectado (solo FC)»),
+    // instead of dropping the whole device.
+    pmdProblem = null;
+    try {
+      await _setupPmd(device);
+      await _readPmdFeatures();
+    } catch (e) {
+      if (!_isAuthenticationError(e)) rethrow;
+      debugPrint('[POLAR DEBUG] PMD pide autenticación; solo FC: $e');
+      _logEvent('pmd_needs_pairing', '$e');
+      try {
+        await _pmdDataSubscription?.cancel();
+        await _pmdControlSubscription?.cancel();
+      } catch (_) {}
+      _pmdDataSubscription = null;
+      _pmdControlSubscription = null;
+      _pmdControlPoint = null;
+      _pmdData = null;
+      pmdProblem = 'Windows no deja usar el acelerómetro ni el ECG sin '
+          'emparejar el sensor (solo FC)';
+    }
   }
+
+  /// Why PMD (ACC, ECG) is not available on the connected device, or null.
+  String? pmdProblem;
 
   // ===========================================================================
   // PMD FEATURES

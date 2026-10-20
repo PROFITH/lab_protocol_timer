@@ -1361,8 +1361,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                                           ? service.linkStatus.value.message
                                           : failed.isEmpty
                                               ? 'Conectado a $name'
-                                              : 'Conectado a $name, sin ${failed.join(', ')}',
+                                              : 'Conectado a $name, sin ${failed.join(', ')}'
+                                                  '${service.pmdProblem == null ? '' : '. ${service.pmdProblem}.'}',
                                     ),
+                                    duration: Duration(seconds: connected && failed.isEmpty ? 4 : 12),
                                     backgroundColor: !connected
                                         ? Colors.redAccent
                                         : failed.isEmpty
