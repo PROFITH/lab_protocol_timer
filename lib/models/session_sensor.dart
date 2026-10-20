@@ -129,8 +129,8 @@ const sensorTypes = <SensorType>[
   SensorType(
     key: 'verity_sense',
     label: 'Polar Verity Sense',
-    connection: 'offline',
-    timestampDomain: 'unknown',
+    connection: 'live',
+    timestampDomain: 'native_plus_host_utc',
     idPrefix: 'verity',
     redcapCode: '6',
   ),

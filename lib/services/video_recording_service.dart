@@ -7,6 +7,9 @@ import 'package:disk_space_2/disk_space_2.dart';
 
 class VideoLogEntry {
   final String filePath;
+
+  /// Camera of the session (`cam_room`...), empty in older logs.
+  final String cameraId;
   final String participantId;
   final int activityIndex;
 
@@ -23,6 +26,7 @@ class VideoLogEntry {
 
   VideoLogEntry({
     required this.filePath,
+    this.cameraId = '',
     required this.participantId,
     required this.activityIndex,
     required this.recordingStartTime,
@@ -39,6 +43,7 @@ class VideoLogEntry {
 
   Map<String, dynamic> toJson() => {
       'file_path': filePath,
+      'camera_id': cameraId,
       'participant_id': participantId,
       'activity_index': activityIndex,
       'recording_start_time_utc':
@@ -53,6 +58,7 @@ class VideoLogEntry {
   factory VideoLogEntry.fromJson(Map<String, dynamic> json) =>
       VideoLogEntry(
         filePath: json['file_path'] as String,
+        cameraId: json['camera_id'] as String? ?? '',
         participantId: json['participant_id'] as String,
         activityIndex: json['activity_index'] as int,
         recordingStartTime:
@@ -73,7 +79,8 @@ class VideoLogEntry {
 
   static const String csvHeader =
       'file_path,participant_id,activity_index,'
-      'recording_start_time_utc,recording_end_time_utc,duration_seconds';
+      'recording_start_time_utc,recording_end_time_utc,duration_seconds,'
+      'camera_id';
 
   String toCsvRow() {
     final startIso =
@@ -92,11 +99,37 @@ class VideoLogEntry {
         '$activityIndex,'
         '$startIso,'
         '$endIso,'
-        '$durationSec';
+        '$durationSec,'
+        '"$cameraId"';
   }
 }
 
 class VideoRecordingService {
+  /// Camera of the session; it goes into the video file name.
+  final String cameraId;
+
+  VideoRecordingService({this.cameraId = ''});
+
+  /// 1080p by default (the old 480p lost detail in a whole-room view).
+  ResolutionPreset resolutionPreset = ResolutionPreset.veryHigh;
+
+  /// True when the microphone could not be opened and the camera records
+  /// video only.
+  bool audioUnavailable = false;
+
+  String get resolutionLabel {
+    final size = _controller?.value.previewSize;
+    if (size != null) {
+      return '${size.width.round()}×${size.height.round()}';
+    }
+    return switch (resolutionPreset) {
+      ResolutionPreset.high => '720p',
+      ResolutionPreset.veryHigh => '1080p',
+      ResolutionPreset.ultraHigh => '4K',
+      _ => resolutionPreset.name,
+    };
+  }
+
   CameraController? _controller;
   List<CameraDescription> _camerasList = [];
   CameraDescription? _selectedCamera;
@@ -233,18 +266,26 @@ class VideoRecordingService {
         );
       }
 
-      // Crear controlador para la cámara seleccionada.
-      _controller = CameraController(
-        camera,
-        ResolutionPreset.medium,
-        enableAudio: false,
-        videoBitrate: 5 * 1024 * 1024, // 5 Mbps
-      );
-
-      debugPrint('[VIDEO] CameraController creado.');
-
-      // Inicializar cámara.
-      await _controller!.initialize();
+      // Crear controlador para la cámara seleccionada, con audio (las
+      // palmadas de sincronización). On Windows the audio comes from the
+      // first capture device; if it cannot be opened, the camera is opened
+      // again without audio.
+      audioUnavailable = false;
+      try {
+        await _openController(camera, enableAudio: true);
+      } on CameraException catch (e) {
+        debugPrint(
+          '[VIDEO] No se pudo abrir con audio (${e.code}); '
+          'reintentando sin audio.',
+        );
+        try {
+          await _controller?.dispose();
+        } catch (_) {}
+        _controller = null;
+        await Future.delayed(const Duration(milliseconds: 300));
+        await _openController(camera, enableAudio: false);
+        audioUnavailable = true;
+      }
 
       final freeSpaceGB = await getFreeDiskSpaceGB();
 
@@ -308,6 +349,32 @@ class VideoRecordingService {
 
       return false;
     }
+  }
+
+  Future<void> _openController(
+    CameraDescription camera, {
+    required bool enableAudio,
+  }) async {
+    _controller = CameraController(
+      camera,
+      resolutionPreset,
+      enableAudio: enableAudio,
+      // 1080p of a whole room needs more than the old 5 Mbps.
+      videoBitrate: switch (resolutionPreset) {
+        ResolutionPreset.ultraHigh => 35 * 1000 * 1000,
+        ResolutionPreset.veryHigh => 12 * 1000 * 1000,
+        _ => 6 * 1000 * 1000,
+      },
+      audioBitrate: enableAudio ? 128 * 1000 : null,
+    );
+
+    debugPrint(
+      '[VIDEO] CameraController creado '
+      '(${resolutionPreset.name}, audio: $enableAudio).',
+    );
+
+    // Inicializar cámara.
+    await _controller!.initialize();
   }
 
   // ===========================================================================
@@ -385,14 +452,16 @@ class VideoRecordingService {
 
       final timeStr = endTime.toIso8601String().replaceAll(':', '-').split('.').first;
       final cleanParticipant = participantSummary.replaceAll(';', '_').replaceAll(' ', '');
+      final cameraPart = cameraId.isEmpty ? '' : '_$cameraId';
       final destinationPath =
-          '${videosDir.path}/video_session_${cleanParticipant}_$timeStr.mp4';
+          '${videosDir.path}/video_session_$cleanParticipant${cameraPart}_$timeStr.mp4';
 
       final savedFile = await File(xFile.path).copy(destinationPath);
       await File(xFile.path).delete();
 
       final logEntry = VideoLogEntry(
         filePath: savedFile.path,
+        cameraId: cameraId,
         participantId: participantSummary,
         activityIndex: totalActivities,
         recordingStartTime: _currentRecordingStartTime ?? endTime,
@@ -415,10 +484,13 @@ class VideoRecordingService {
   // EXPORTAR REGISTRO DE VÍDEOS (SINCRONIZACIÓN)
   // ===========================================================================
 
-  String exportVideoSyncCsv() {
+  String exportVideoSyncCsv() => exportVideoSyncCsvFor(recordedVideoLogs);
+
+  /// One CSV for the videos of every camera of the session.
+  static String exportVideoSyncCsvFor(Iterable<VideoLogEntry> entries) {
     final buffer = StringBuffer();
     buffer.writeln(VideoLogEntry.csvHeader);
-    for (final entry in recordedVideoLogs) {
+    for (final entry in entries) {
       buffer.writeln(entry.toCsvRow());
     }
     return buffer.toString();

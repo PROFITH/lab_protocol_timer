@@ -1,24 +1,34 @@
 import 'package:flutter/material.dart';
 
+import 'live_signal.dart';
+
 class ChartSeries {
-  final List<double> points;
+  final SignalBuffer buffer;
   final Color color;
   final String label;
 
   ChartSeries({
-    required this.points,
+    required this.buffer,
     required this.color,
     required this.label,
   });
 }
 
+/// Live chart of one or more signals over the last [window].
+///
+/// The card repaints when [clock] ticks (once per screen frame with new
+/// data), without rebuilding the monitor. The trace keeps every sample: each
+/// pixel column draws the range between the lowest and highest sample that
+/// fall in it, so peaks are never smoothed away.
 class SensorChartCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final IconData icon;
-  final String currentValue;
+  final String Function() currentValue;
   final String unit;
   final List<ChartSeries> seriesList;
+  final Duration window;
+  final Listenable clock;
   final Widget? trailingAction; // Aquí colocaremos el Toggle de opciones
 
   const SensorChartCard({
@@ -29,6 +39,8 @@ class SensorChartCard extends StatelessWidget {
     required this.currentValue,
     required this.unit,
     required this.seriesList,
+    required this.window,
+    required this.clock,
     this.trailingAction,
   });
 
@@ -47,54 +59,45 @@ class SensorChartCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(icon, color: primaryColor, size: 18),
-                  const SizedBox(width: 8),
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(color: Colors.white38, fontSize: 10),
-                  ),
-                ],
+              Icon(icon, color: primaryColor, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-              Row(
-                children: [
-                  if (trailingAction != null) ...[
-                    trailingAction!,
-                    const SizedBox(width: 12),
-                  ],
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Text(
-                        currentValue,
-                        style: TextStyle(
-                          color: primaryColor,
-                          fontSize: 14,
-                          fontFamily: 'monospace',
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        unit,
-                        style: const TextStyle(color: Colors.white38, fontSize: 10),
-                      ),
-                    ],
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  subtitle,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                ),
+              ),
+              if (trailingAction != null) ...[
+                trailingAction!,
+                const SizedBox(width: 12),
+              ],
+              ListenableBuilder(
+                listenable: clock,
+                builder: (context, _) => Text(
+                  currentValue(),
+                  style: TextStyle(
+                    color: primaryColor,
+                    fontSize: 14,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.w900,
                   ),
-                ],
+                ),
+              ),
+              const SizedBox(width: 3),
+              Text(
+                unit,
+                style: const TextStyle(color: Colors.white38, fontSize: 10),
               ),
             ],
           ),
@@ -105,10 +108,13 @@ class SensorChartCard extends StatelessWidget {
               child: Container(
                 color: const Color(0xFF0F172A),
                 width: double.infinity,
-                child: CustomPaint(
-                  painter: _MultiWaveformPainter(
-                    seriesList: seriesList,
-                    unit: unit,
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    painter: LiveChartPainter(
+                      seriesList: seriesList,
+                      window: window,
+                      repaint: clock,
+                    ),
                   ),
                 ),
               ),
@@ -120,32 +126,47 @@ class SensorChartCard extends StatelessWidget {
   }
 }
 
-class _MultiWaveformPainter extends CustomPainter {
+class LiveChartPainter extends CustomPainter {
   final List<ChartSeries> seriesList;
-  final String unit;
+  final Duration window;
 
-  _MultiWaveformPainter({
+  LiveChartPainter({
     required this.seriesList,
-    required this.unit,
+    required this.window,
+    super.repaint,
   });
+
+  static const double rightPadding = 45.0;
 
   @override
   void paint(Canvas canvas, Size size) {
-    const double rightPadding = 45.0;
-    final double chartWidth = size.width - rightPadding;
+    final chartWidth = size.width - rightPadding;
+    if (seriesList.isEmpty || chartWidth <= 4) return;
 
-    if (seriesList.isEmpty) return;
+    // The chart ends at the newest sample of any series.
+    double? end;
+    for (final series in seriesList) {
+      final t = series.buffer.lastTime;
+      if (t != null && (end == null || t > end)) end = t;
+    }
 
-    // Calcular min y max globales entre todas las series activas para escalar el eje Y
-    double globalMin = double.infinity;
-    double globalMax = double.negativeInfinity;
-
-    for (var series in seriesList) {
-      if (series.points.isNotEmpty) {
-        double sMin = series.points.reduce((a, b) => a < b ? a : b);
-        double sMax = series.points.reduce((a, b) => a > b ? a : b);
-        if (sMin < globalMin) globalMin = sMin;
-        if (sMax > globalMax) globalMax = sMax;
+    final columns = chartWidth.floor();
+    final envelopes = <ColumnEnvelope>[];
+    var globalMin = double.infinity;
+    var globalMax = double.negativeInfinity;
+    if (end != null) {
+      for (final series in seriesList) {
+        final envelope = columnEnvelope(
+          series.buffer,
+          columns: columns,
+          endMicros: end,
+          window: window,
+        );
+        envelopes.add(envelope);
+        if (!envelope.isEmpty) {
+          if (envelope.lowest < globalMin) globalMin = envelope.lowest;
+          if (envelope.highest > globalMax) globalMax = envelope.highest;
+        }
       }
     }
 
@@ -158,37 +179,62 @@ class _MultiWaveformPainter extends CustomPainter {
       globalMax += 1;
     }
 
+    _drawTimeGrid(canvas, size, chartWidth);
     _drawAxisLabelsAndGrid(canvas, size, chartWidth, globalMin, globalMax);
 
-    // Dibujar cada serie de datos
-    for (var series in seriesList) {
-      if (series.points.isEmpty) continue;
+    final range = globalMax - globalMin;
+    double y(double v) =>
+        size.height - ((v - globalMin) / range) * (size.height * 0.8) - (size.height * 0.1);
+    final dx = chartWidth / columns;
+
+    for (var s = 0; s < envelopes.length; s++) {
+      final envelope = envelopes[s];
+      if (envelope.isEmpty) continue;
 
       final paint = Paint()
-        ..color = series.color
-        ..strokeWidth = 1.5
+        ..color = seriesList[s].color
+        ..strokeWidth = 1.2
         ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round;
+        ..strokeJoin = StrokeJoin.round;
 
       final path = Path();
-      double range = globalMax - globalMin;
-      final dx = chartWidth / (series.points.length > 1 ? series.points.length - 1 : 1);
-
-      for (int i = 0; i < series.points.length; i++) {
-        final normalizedY = size.height -
-            ((series.points[i] - globalMin) / range) * (size.height * 0.8) -
-            (size.height * 0.1);
-        final x = i * dx;
-
-        if (i == 0) {
-          path.moveTo(x, normalizedY);
+      var started = false;
+      for (var c = 0; c < columns; c++) {
+        if (envelope.filled[c] == 0) continue;
+        final x = (c + 0.5) * dx;
+        if (!started) {
+          path.moveTo(x, y(envelope.first[c]));
+          started = true;
         } else {
-          path.lineTo(x, normalizedY);
+          path.lineTo(x, y(envelope.first[c]));
         }
+        if (envelope.min[c] != envelope.max[c]) {
+          path.lineTo(x, y(envelope.min[c]));
+          path.lineTo(x, y(envelope.max[c]));
+        }
+        path.lineTo(x, y(envelope.last[c]));
       }
-
       canvas.drawPath(path, paint);
     }
+  }
+
+  /// Vertical lines every second (windows up to 10 s), 10 s or 30 s.
+  void _drawTimeGrid(Canvas canvas, Size size, double chartWidth) {
+    final seconds = window.inMilliseconds / 1000.0;
+    final step = seconds <= 10 ? 1.0 : (seconds <= 60 ? 10.0 : 30.0);
+    final paint = Paint()
+      ..color = Colors.white.withAlpha(10)
+      ..strokeWidth = 1.0;
+    for (var t = step; t < seconds; t += step) {
+      final x = chartWidth * (1 - t / seconds);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    _drawText(
+      canvas,
+      '${seconds.toStringAsFixed(seconds < 10 ? 1 : 0)} s',
+      4,
+      size.height - 13,
+    );
   }
 
   void _drawAxisLabelsAndGrid(Canvas canvas, Size size, double chartWidth, double minY, double maxY) {
@@ -236,7 +282,13 @@ class _MultiWaveformPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _MultiWaveformPainter oldDelegate) {
-    return oldDelegate.seriesList != seriesList;
+  bool shouldRepaint(covariant LiveChartPainter oldDelegate) {
+    return oldDelegate.window != window ||
+        oldDelegate.seriesList.length != seriesList.length ||
+        [
+          for (var i = 0; i < seriesList.length; i++)
+            !identical(oldDelegate.seriesList[i].buffer, seriesList[i].buffer) ||
+                oldDelegate.seriesList[i].color != seriesList[i].color,
+        ].any((changed) => changed);
   }
 }

@@ -1,19 +1,24 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:camera/camera.dart';
-import 'dart:math' as math;
 
 import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
+import '../models/device_configuration.dart';
 import '../models/device_status.dart';
 import '../models/protocol_configuration.dart';
 import '../models/monitor_slot.dart';
 import '../models/monitor_visualization.dart';
+import 'live_signal.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
-import 'dart:io';
 
 
 /// Keeps one monitor window for the whole run of the app.
@@ -82,15 +87,22 @@ class ResearchMonitorWindow extends StatefulWidget {
 }
 
 class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
-    with WindowListener {
+    with WindowListener, SingleTickerProviderStateMixin {
   
   // State variables
-  final PolarBleService _polarService = PolarBleService();
-  final VideoRecordingService _videoService = VideoRecordingService();
-  final List<double> _hrHistory = [];
-  final List<double> _rrHistory = [];
-  final List<double> _accHistory = [];
-  final List<double> _ecgHistory = [];
+  //
+  // One Polar service per live device of the session (Polar H10, Verity
+  // Sense) and one recorder per camera, keyed by the device ID of the
+  // session setup. Connecting them is optional: offline sensors are only
+  // listed, and a live device can be left unconnected.
+  final Map<String, _LiveDevice> _liveDevices = {};
+  final Map<String, _CameraDevice> _cameras = {};
+
+  /// Charts repaint on this clock, once per frame with new samples, instead
+  /// of rebuilding the window on every sample.
+  final LiveFrameClock _frameClock = LiveFrameClock();
+  late final Ticker _frameTicker;
+  bool _samplesPending = false;
 
   final List<MonitorSlot> _monitorSlots = [
     const MonitorSlot(slotId: 1),
@@ -105,7 +117,6 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   String _phaseName = 'idle';
   bool _sessionActive = false;
   bool _sessionPaused = false;
-  bool _cameraReady = false;
   bool _syncAvailable = false;
   Directory? _sessionExportDirectory;
   late ProtocolConfiguration _protocolConfiguration;
@@ -115,13 +126,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   bool _useLapMode = false;
   bool _enableTts = true;
 
-  // Valores de visualización en tiempo real
-  int _heartRate = 0;
-  PolarAccelerationSample? _lastAcc;
-  PolarEcgSample? _lastEcg;
-
   // Modo de acelerometría: 'VM' o 'XYZ'
   String _accMode = 'XYZ';
+
+  bool get _anyCameraRecording =>
+      _cameras.values.any((c) => c.service.isRecording);
+
 
   String _sourceId(
     String deviceId,
@@ -146,16 +156,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   VoidCallback? _deviceActionForDevice(String deviceId) {
-    switch (deviceId) {
-      case 'polar_h10':
-        return _showPolarConnectionDialog;
-      case 'camera':
-      return _showCameraConnectionDialog;
-
-      default:
-        return null;
+    if (_liveDevices.containsKey(deviceId)) {
+      return () => _showPolarConnectionDialog(deviceId);
     }
+    if (_cameras.containsKey(deviceId)) {
+      return () => _showCameraConnectionDialog(deviceId);
+    }
+    return null;
   }
+
 
   void _assignSourceToSlot(
     int slotId,
@@ -269,16 +278,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
   }
 
-  // Búferes individuales para los 3 ejes
-  final List<double> _accXHistory = [];
-  final List<double> _accYHistory = [];
-  final List<double> _accZHistory = [];
-
   @override
   void initState() {
     super.initState();
     
     _protocolConfiguration = widget.protocolConfiguration;
+    _syncDevices();
+
+    _frameTicker = createTicker((_) {
+      if (_samplesPending) {
+        _samplesPending = false;
+        _frameClock.tick();
+      }
+    })
+      ..start();
 
     MultiWindowManager.current.addListener(this);
 
@@ -287,63 +300,62 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       WindowMessages.researchMonitorReady,
     );
 
-    // Escuchar streams de Polar para refrescar el panel visual
-    _polarService.hrStream.listen((bpm) {
-      if (mounted) {
-        setState(() {
-          _heartRate = bpm;
-          _hrHistory.add(bpm.toDouble());
-          if (_hrHistory.length > 100) _hrHistory.removeAt(0);
-        });
-      }
-    });
-
-    _polarService.rrStream.listen((rrMs) {
-      if (mounted) {
-        setState(() {
-          _rrHistory.add(rrMs.toDouble());
-
-          if (_rrHistory.length > 100) {
-            _rrHistory.removeAt(0);
-          }
-        });
-      }
-    });
-
-    _polarService.accelerationUiStream.listen((acc) {
-      if (mounted) {
-        final vm = math.sqrt((acc.xMg * acc.xMg) + (acc.yMg * acc.yMg) + (acc.zMg * acc.zMg));
-        setState(() {
-          _lastAcc = acc;
-          _accHistory.add(vm);
-          if (_accHistory.length > 100) _accHistory.removeAt(0);
-
-          _accXHistory.add(acc.xMg.toDouble());
-          if (_accXHistory.length > 100) _accXHistory.removeAt(0);
-
-          _accYHistory.add(acc.yMg.toDouble());
-          if (_accYHistory.length > 100) _accYHistory.removeAt(0);
-
-          _accZHistory.add(acc.zMg.toDouble());
-          if (_accZHistory.length > 100) _accZHistory.removeAt(0);
-        });
-      }
-    });
-
-    _polarService.ecgUiStream.listen((ecg) {
-      if (mounted) {
-        setState(() {
-          _lastEcg = ecg;
-          _ecgHistory.add(ecg.microVolts.toDouble());
-          if (_ecgHistory.length > 100) _ecgHistory.removeAt(0);
-        });
-      }
-    });
-
     debugPrint('[MONITOR] Research Monitor inicializado con servicios locales.');
   }
 
-  Future<void> _showCameraConnectionDialog() async {
+  /// Creates the services of new live devices and cameras of
+  /// [_protocolConfiguration] and releases those no longer listed.
+  void _syncDevices() {
+    final live = {
+      for (final d in _protocolConfiguration.devices)
+        if (d.isLive && d.sensors.isNotEmpty) d.deviceId: d,
+    };
+    final cameras = {
+      for (final d in _protocolConfiguration.devices)
+        if (d.isCamera) d.deviceId: d,
+    };
+
+    for (final id in _liveDevices.keys.toList()) {
+      if (!live.containsKey(id)) _liveDevices.remove(id)!.dispose();
+    }
+    for (final id in _cameras.keys.toList()) {
+      if (!cameras.containsKey(id)) _cameras.remove(id)!.service.dispose();
+    }
+
+    live.forEach((id, configuration) {
+      final existing = _liveDevices[id];
+      if (existing != null) {
+        existing.configuration = configuration;
+        return;
+      }
+      _liveDevices[id] = _LiveDevice(
+        configuration,
+        onSamples: () => _samplesPending = true,
+      );
+    });
+    cameras.forEach((id, configuration) {
+      final existing = _cameras[id];
+      if (existing != null) {
+        existing.configuration = configuration;
+        return;
+      }
+      _cameras[id] = _CameraDevice(configuration);
+    });
+
+    // Monitors showing a device that left the session are emptied.
+    for (var i = 0; i < _monitorSlots.length; i++) {
+      final deviceId = _monitorSlots[i].deviceId;
+      if (deviceId != null &&
+          !_liveDevices.containsKey(deviceId) &&
+          !_cameras.containsKey(deviceId)) {
+        _monitorSlots[i] = _monitorSlots[i].copyWith(clearSource: true);
+      }
+    }
+  }
+
+  Future<void> _showCameraConnectionDialog(String deviceId) async {
+    final camera = _cameras[deviceId];
+    if (camera == null) return;
     try {
       debugPrint('[VIDEO] Buscando cámaras disponibles...');
       final cameras = await availableCameras();
@@ -351,9 +363,28 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
       if (cameras.isEmpty) {
         debugPrint('[VIDEO] No se encontraron cámaras.');
-        if (mounted) setState(() => _cameraReady = false);
+        if (mounted) {
+          setState(() => camera.ready = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No hay cámaras. Si usas el móvil, abre DroidCam en el '
+                'móvil y en el ordenador antes de buscar.',
+              ),
+            ),
+          );
+        }
         return;
       }
+
+      // Cameras already taken by another device of the session.
+      final taken = {
+        for (final other in _cameras.values)
+          if (other != camera && other.ready)
+            other.service.selectedCamera?.name,
+      };
+
+      var preset = camera.service.resolutionPreset;
 
       // Mostrar diálogo para que elijas qué cámara usar
       if (!mounted) return;
@@ -361,37 +392,85 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         context: context,
         barrierDismissible: false,
         builder: (BuildContext dialogContext) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            title: const Row(
-              children: [
-                Icon(Icons.videocam_rounded, color: Color(0xFF38BDF8)),
-                SizedBox(width: 10),
-                Text('Seleccionar Cámara', style: TextStyle(color: Colors.white)),
-              ],
-            ),
-            content: SizedBox(
-              width: 350,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: cameras.length,
-                itemBuilder: (context, index) {
-                  final camera = cameras[index];
-                  return ListTile(
-                    leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
-                    title: Text(
-                      camera.name,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              title: Row(
+                children: [
+                  const Icon(Icons.videocam_rounded, color: Color(0xFF38BDF8)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Cámara para ${camera.configuration.deviceId}',
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    subtitle: Text(
-                      'Lens: ${camera.lensDirection.name}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                    onTap: () => Navigator.of(dialogContext).pop(camera),
-                  );
-                },
+                  ),
+                ],
               ),
+              content: SizedBox(
+                width: 380,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: cameras.length,
+                        itemBuilder: (context, index) {
+                          final option = cameras[index];
+                          final busy = taken.contains(option.name);
+                          return ListTile(
+                            enabled: !busy,
+                            leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
+                            title: Text(
+                              option.name,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Text(
+                              busy ? 'En uso por otra cámara de la sesión' : 'Lens: ${option.lensDirection.name}',
+                              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                            ),
+                            onTap: () => Navigator.of(dialogContext).pop(option),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<ResolutionPreset>(
+                      initialValue: preset,
+                      dropdownColor: const Color(0xFF1E293B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Resolución',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: ResolutionPreset.high, child: Text('720p')),
+                        DropdownMenuItem(value: ResolutionPreset.veryHigh, child: Text('1080p')),
+                        DropdownMenuItem(value: ResolutionPreset.ultraHigh, child: Text('4K (si la cámara lo da)')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => preset = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'El vídeo graba también audio (las palmadas) del primer '
+                      'micrófono que da Windows; con DroidCam conviene dejar '
+                      'activado su micrófono virtual o desactivar los demás.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+              ],
             ),
           );
         },
@@ -406,27 +485,42 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return;
       }
 
-      final CameraDescription chosenCamera = selectedCamera;
+      debugPrint('[VIDEO] Inicializando cámara seleccionada: ${selectedCamera.name}');
 
-      debugPrint('[VIDEO] Inicializando cámara seleccionada: ${chosenCamera.name}');
-
-      // Invocamos tu método pasándole la cámara elegida
-      final success = await _videoService.initializeCamera(chosenCamera);
+      camera.service.resolutionPreset = preset;
+      final success = await camera.service.initializeCamera(selectedCamera);
       if (!mounted) return;
-      setState(() => _cameraReady = success);
+      setState(() => camera.ready = success);
+      if (success && camera.service.audioUnavailable) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo abrir el micrófono: la cámara grabará sin audio.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     } catch (e, stackTrace) {
       debugPrint('[VIDEO] Error inicializando cámara: $e\n$stackTrace');
-      if (mounted) setState(() => _cameraReady = false);
+      if (mounted) setState(() => camera.ready = false);
     }
   }
 
   @override
   void dispose() {
     MultiWindowManager.current.removeListener(this);
-    _polarService.dispose();
-    _videoService.dispose();
+    _frameTicker.dispose();
+    for (final device in _liveDevices.values) {
+      device.dispose();
+    }
+    for (final camera in _cameras.values) {
+      camera.service.dispose();
+    }
+    _frameClock.dispose();
     super.dispose();
   }
+
 
   Future<void> _requestSyncWindow() async {
     await MultiWindowManager.current.invokeMethodToWindow(
@@ -483,6 +577,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
           setState(() {
             _protocolConfiguration = configuration;
+            _syncDevices();
           });
 
           debugPrint(
@@ -515,23 +610,29 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
       case WindowMessages.releaseResources:
         try {
-          await _videoService.dispose();
-          await _polarService.disconnect();
+          for (final camera in _cameras.values) {
+            await camera.service.dispose();
+            camera.ready = false;
+          }
+          for (final device in _liveDevices.values) {
+            await device.service.disconnect();
+          }
         } catch (e) {
           debugPrint('[MONITOR] Error liberando cámara/Bluetooth: $e');
         }
-        if (mounted) setState(() => _cameraReady = false);
+        if (mounted) setState(() {});
         return true;
 
       case 'START_VIDEO_RECORDING':
-        if (!_cameraReady) {
+        final ready = _cameras.values.where((c) => c.ready).toList();
+        if (ready.isEmpty) {
           debugPrint(
             '[VIDEO] No se puede iniciar: cámara no preparada.',
           );
           return false;
         }
 
-        if (_videoService.isRecording) {
+        if (_anyCameraRecording) {
           debugPrint(
             '[VIDEO] No se puede iniciar: ya existe una grabación activa.',
           );
@@ -540,28 +641,37 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
         final summary = arguments?.toString() ?? _participantIds;
 
-        final success = await _videoService.startSessionRecording(
-          participantSummary: summary,
-        );
+        // All cameras start together; the result is true if any started.
+        final results = await Future.wait([
+          for (final camera in ready)
+            camera.service.startSessionRecording(
+              participantSummary: summary,
+            ),
+        ]);
+        final success = results.any((r) => r);
 
         if (mounted) {
           setState(() {});
         }
 
         debugPrint(
-          '[VIDEO] Resultado inicio grabación: $success',
+          '[VIDEO] Resultado inicio grabación: $results',
         );
 
         return success;
 
       case 'STOP_VIDEO_RECORDING':
-        if (_videoService.isRecording && arguments is Map) {
+        if (_anyCameraRecording && arguments is Map) {
           final summary = arguments['participantSummary']?.toString() ?? _participantIds;
           final totalActs = int.tryParse(arguments['totalActivities']?.toString() ?? '0') ?? 0;
-          await _videoService.stopSessionRecording(
-            participantSummary: summary,
-            totalActivities: totalActs,
-          );
+          await Future.wait([
+            for (final camera in _cameras.values)
+              if (camera.service.isRecording)
+                camera.service.stopSessionRecording(
+                  participantSummary: summary,
+                  totalActivities: totalActs,
+                ),
+          ]);
           if (mounted) setState(() {});
         }
         break;
@@ -593,11 +703,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       _phaseName = args['phaseName']?.toString() ?? 'idle';
     });
 
-    _polarService.updateProtocolContext(
-      participantId: _participantIds,
-      activityIndex: _activityIndex,
-      phaseName: _phaseName,
-    );
+    for (final device in _liveDevices.values) {
+      device.service.updateProtocolContext(
+        participantId: _participantIds,
+        activityIndex: _activityIndex,
+        phaseName: _phaseName,
+      );
+    }
   }
 
   void _handleProtocolContext(dynamic args) {
@@ -610,17 +722,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       _phaseName = args['phaseName']?.toString() ?? 'idle';
     });
 
-    if (_polarService.isConnected) {
+    for (final device in _liveDevices.values) {
+      final service = device.service;
+      if (!service.isConnected) continue;
+
       // Registrar muestra por segundo de HR sincronizada
       if (_sessionActive) {
-        _polarService.captureSample(
+        service.captureSample(
           participantId: _participantIds,
           activityIndex: _activityIndex,
           phaseName: _phaseName,
         );
       }
 
-      _polarService.updateProtocolContext(
+      service.updateProtocolContext(
         participantId: _sessionActive ? _participantIds : 'idle',
         activityIndex: _activityIndex,
         phaseName: _sessionActive ? _phaseName : 'idle',
@@ -640,65 +755,55 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     final generatedFiles = <String>[];
 
     // ========================================================================
-    // 1. HEART RATE
+    // 1-3. HR, ACC y ECG de cada dispositivo en directo
     // ========================================================================
+    //
+    // The file names carry the device ID of the session (`polar_h10`,
+    // `verity_arm`...), which SAVES uses to match each file with its sensor
+    // in the manifest.
 
-    if (_polarService.recordedSamples.isNotEmpty) {
-      final csvContent = _polarService.exportCsv();
+    for (final device in _liveDevices.values) {
+      final service = device.service;
+      final id = device.configuration.deviceId;
 
-      final filePath = await _createTemporaryCsvFile(
-        'polar_hr_session_$timestampStr.csv',
-        csvContent,
-      );
+      if (service.recordedSamples.isNotEmpty) {
+        final filePath = await _createTemporaryCsvFile(
+          'polar_hr_${id}_$timestampStr.csv',
+          service.exportCsv(),
+        );
+        generatedFiles.add(filePath);
+        debugPrint('[MONITOR] Preparado HR CSV: $filePath');
+      }
 
-      generatedFiles.add(filePath);
+      if (service.recordedAccelerationSamples.isNotEmpty) {
+        final filePath = await _createTemporaryCsvFile(
+          'polar_acc_${id}_$timestampStr.csv',
+          service.exportAccelerationCsv(),
+        );
+        generatedFiles.add(filePath);
+        debugPrint('[MONITOR] Preparado ACC CSV: $filePath');
+      }
 
-      debugPrint('[MONITOR] Preparado HR CSV: $filePath');
+      if (service.recordedEcgSamples.isNotEmpty) {
+        final filePath = await _createTemporaryCsvFile(
+          'polar_ecg_${id}_$timestampStr.csv',
+          service.exportEcgCsv(),
+        );
+        generatedFiles.add(filePath);
+        debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
+      }
     }
 
     // ========================================================================
-    // 2. ACCELEROMETRÍA
+    // 4. VIDEO SYNC CSV (una fila por vídeo, de todas las cámaras)
     // ========================================================================
 
-    if (_polarService.recordedAccelerationSamples.isNotEmpty) {
-      final csvContent =
-          _polarService.exportAccelerationCsv();
+    final videoLogs = [
+      for (final camera in _cameras.values) ...camera.service.recordedVideoLogs,
+    ];
 
-      final filePath = await _createTemporaryCsvFile(
-        'polar_acc_raw_200hz_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint('[MONITOR] Preparado ACC CSV: $filePath');
-    }
-
-    // ========================================================================
-    // 3. ECG
-    // ========================================================================
-
-    if (_polarService.recordedEcgSamples.isNotEmpty) {
-      final csvContent =
-          _polarService.exportEcgCsv();
-
-      final filePath = await _createTemporaryCsvFile(
-        'polar_ecg_raw_130hz_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
-    }
-
-    // ========================================================================
-    // 4. VIDEO SYNC CSV
-    // ========================================================================
-
-    if (_videoService.recordedVideoLogs.isNotEmpty) {
-      final csvContent =
-          _videoService.exportVideoSyncCsv();
+    if (videoLogs.isNotEmpty) {
+      final csvContent = VideoRecordingService.exportVideoSyncCsvFor(videoLogs);
 
       final filePath = await _createTemporaryCsvFile(
         'video_sync_session_$timestampStr.csv',
@@ -715,8 +820,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       // 5. VIDEO
       // ======================================================================
 
-      for (final videoLog
-          in _videoService.recordedVideoLogs) {
+      for (final videoLog in videoLogs) {
         if (await File(videoLog.filePath).exists()) {
           generatedFiles.add(videoLog.filePath);
 
@@ -729,6 +833,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     return generatedFiles;
   }
+
 
   // ===========================================================================
   // DIÁLOGO DE AJUSTES DE PROTOCOLO
@@ -920,13 +1025,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   // DIÁLOGO DE CONEXIÓN POLAR BLE
   // ===========================================================================
 
-  void _showPolarConnectionDialog() {
+  /// Words of the advertised name that identify each live device type.
+  static const _bleNameHints = {
+    'polar_h10': 'h10',
+    'verity_sense': 'sense',
+  };
+
+  void _showPolarConnectionDialog(String deviceId) {
+    final device = _liveDevices[deviceId];
+    if (device == null) return;
+    final service = device.service;
+    final configuration = device.configuration;
+    final title = configuration.placementLabel == null
+        ? configuration.deviceName
+        : '${configuration.deviceName} · ${configuration.placementLabel}';
 
     debugPrint(
-      '[POLAR UI] isConnected = ${_polarService.isConnected}',
+      '[POLAR UI] $deviceId isConnected = ${service.isConnected}',
     );
     
-    if (_polarService.isConnected) {
+    if (service.isConnected) {
       showDialog(
         context: context,
         builder: (dialogCtx) {
@@ -935,22 +1053,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
-            title: const Row(
+            title: Row(
               children: [
-                Icon(
+                const Icon(
                   Icons.bluetooth_connected_rounded,
                   color: Color(0xFF38BDF8),
                 ),
-                SizedBox(width: 10),
-                Text(
-                  'Polar H10',
-                  style: TextStyle(color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             ),
-            content: const Text(
-              'El Polar H10 está actualmente vinculado.',
-              style: TextStyle(color: Colors.white70),
+            content: Text(
+              'Vinculado a ${service.connectedDeviceName ?? service.connectedDeviceId}.',
+              style: const TextStyle(color: Colors.white70),
             ),
             actions: [
               TextButton(
@@ -961,7 +1081,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
               FilledButton.icon(
                 onPressed: () async {
-                  await _polarService.disconnect();
+                  await service.disconnect();
 
                   if (!dialogCtx.mounted) return;
 
@@ -972,8 +1092,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   setState(() {});
 
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Polar H10 desvinculado'),
+                    SnackBar(
+                      content: Text('$title desvinculado'),
                     ),
                   );
                 },
@@ -992,7 +1112,16 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       return;
     }
 
-    _polarService.startScan();
+    // Devices already linked to another sensor of the session.
+    final taken = {
+      for (final other in _liveDevices.values)
+        if (other != device && other.service.connectedDeviceId != null)
+          other.service.connectedDeviceId!,
+    };
+    final hint = _bleNameHints[configuration.type];
+    final serial = configuration.serial?.toLowerCase();
+
+    service.startScan();
 
     showDialog(
       context: context,
@@ -1002,20 +1131,35 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             return AlertDialog(
               backgroundColor: const Color(0xFF1E293B),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
-                  SizedBox(width: 10),
-                  Text('Conectar Sensor Polar H10', style: TextStyle(color: Colors.white)),
+                  const Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Conectar $title', style: const TextStyle(color: Colors.white)),
+                  ),
                 ],
               ),
               content: SizedBox(
-                width: 400,
-                height: 300,
+                width: 420,
+                height: 320,
                 child: StreamBuilder<List<BleDevice>>(
-                  stream: _polarService.scanStream,
+                  stream: service.scanStream,
                   builder: (context, snapshot) {
-                    final results = snapshot.data ?? [];
+                    // Devices of this type first; the serial (printed on
+                    // the sensor and part of its Bluetooth name) on top.
+                    int rank(BleDevice d) {
+                      final name = (d.name ?? '').toLowerCase();
+                      if (serial != null && serial.isNotEmpty && name.contains(serial)) return 0;
+                      if (hint != null && name.contains(hint)) return 1;
+                      if (name.contains('polar')) return 2;
+                      return 3;
+                    }
+
+                    final results = [
+                      for (final d in snapshot.data ?? const <BleDevice>[])
+                        if (!taken.contains(d.deviceId)) d,
+                    ]..sort((a, b) => rank(a).compareTo(rank(b)));
                     if (results.isEmpty) {
                       return const Center(
                         child: Column(
@@ -1032,45 +1176,55 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     return ListView.builder(
                       itemCount: results.length,
                       itemBuilder: (context, index) {
-                        final device = results[index];
-                        final name = device.name?.isNotEmpty == true
-                            ? device.name!
-                            : 'Dispositivo BLE (${device.deviceId})';
+                        final bleDevice = results[index];
+                        final r = rank(bleDevice);
+                        final name = bleDevice.name?.isNotEmpty == true
+                            ? bleDevice.name!
+                            : 'Dispositivo BLE (${bleDevice.deviceId})';
 
                         return ListTile(
-                          leading: const Icon(Icons.favorite, color: Colors.redAccent),
-                          title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text(device.deviceId, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                          leading: Icon(
+                            r == 0 ? Icons.verified_rounded : Icons.favorite,
+                            color: r <= 1 ? Colors.redAccent : Colors.white24,
+                          ),
+                          title: Text(
+                            name,
+                            style: TextStyle(
+                              color: r <= 1 ? Colors.white : Colors.white54,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                            r == 0 ? 'Coincide el número de serie' : bleDevice.deviceId,
+                            style: const TextStyle(color: Colors.white38, fontSize: 11),
+                          ),
                           trailing: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF38BDF8),
                               foregroundColor: Colors.black,
                             ),
                             onPressed: () async {
-                              await _polarService.stopScan();
-                              final connected = await _polarService.connectToDevice(device);
-                              if (connected) {
-                                try {
-                                  final polarConfiguration =
-                                      _protocolConfiguration.deviceById('polar_h10');
-
-                                  if (polarConfiguration != null) {
-                                    await _polarService.startHeartRate();
-                                    await _polarService.startAcceleration();
-                                    await _polarService.startEcg();
-                                  }
-                                } catch (e) {
-                                  debugPrint(
-                                    '[POLAR DEBUG] Error al iniciar sensores: $e',
-                                  );
-                                }
-                              }
+                              await service.stopScan();
+                              final connected = await service.connectToDevice(bleDevice);
+                              final failed = connected
+                                  ? await device.startConfiguredSignals()
+                                  : const <String>[];
                               if (dialogCtx.mounted) {
                                 Navigator.of(dialogCtx).pop();
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content: Text(connected ? 'Conectado a $name' : 'Fallo de conexión'),
-                                    backgroundColor: connected ? const Color(0xFF34D399) : Colors.redAccent,
+                                    content: Text(
+                                      !connected
+                                          ? 'Fallo de conexión'
+                                          : failed.isEmpty
+                                              ? 'Conectado a $name'
+                                              : 'Conectado a $name, sin ${failed.join(', ')}',
+                                    ),
+                                    backgroundColor: !connected
+                                        ? Colors.redAccent
+                                        : failed.isEmpty
+                                            ? const Color(0xFF34D399)
+                                            : Colors.orange,
                                   ),
                                 );
                                 setState(() {});
@@ -1087,7 +1241,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               actions: [
                 TextButton(
                   onPressed: () {
-                    _polarService.stopScan();
+                    service.stopScan();
                     Navigator.of(dialogCtx).pop();
                   },
                   child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
@@ -1100,110 +1254,121 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  static const _sensorLabels = {
+    'heart_rate': ('HR', Icons.favorite_rounded),
+    'rr': ('RR', Icons.timeline_rounded),
+    'acc': ('ACC', Icons.sensors_rounded),
+    'ecg': ('ECG', Icons.show_chart_rounded),
+  };
+
+  /// Every device of the session, in the order of the session setup.
   List<DeviceStatus> get _deviceStatuses {
     final statuses = <DeviceStatus>[];
 
     for (final device in _protocolConfiguration.devices) {
-      switch (device.deviceId) {
-        case 'camera':
-          statuses.add(
-            DeviceStatus(
-              id: device.deviceId,
-              name: device.deviceName,
-              icon: Icons.videocam_rounded,
-              connectionStatus: _cameraReady
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
-              sensors: [
-                if (device.hasSensor('video'))
-                  SensorStatus(
-                    id: 'video',
-                    name: 'Vídeo',
-                    icon: Icons.videocam_rounded,
-                    status: _videoService.isRecording
-                        ? SensorAcquisitionStatus.acquiring
-                        : _cameraReady
-                            ? SensorAcquisitionStatus.ready
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-              ],
-            ),
-          );
-          break;
+      final subtitle = [
+        if (device.placementLabel != null) device.placementLabel!,
+        if (device.serial != null) 'n.º ${device.serial}',
+      ].join(' · ');
 
-        case 'polar_h10':
-          statuses.add(
-            DeviceStatus(
-              id: device.deviceId,
-              name: device.deviceName,
-              icon: Icons.favorite_rounded,
-              connectionStatus: _polarService.isConnected
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
-              sensors: [
-                if (device.hasSensor('heart_rate'))
-                  SensorStatus(
-                    id: 'heart_rate',
-                    name: 'HR',
-                    icon: Icons.favorite_rounded,
-                    status: _polarService.isHeartRateStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-
-                if (device.hasSensor('rr'))
-                  SensorStatus(
-                    id: 'rr',
-                    name: 'RR',
-                    icon: Icons.timeline_rounded,
-                    status: _polarService.isRrStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-
-                if (device.hasSensor('acc'))
-                  SensorStatus(
-                    id: 'acc',
-                    name: 'ACC',
-                    icon: Icons.sensors_rounded,
-                    status: _polarService.isAccelerationStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                    detail: '200 Hz',
-                  ),
-                if (device.hasSensor('ecg'))
-                  SensorStatus(
-                    id: 'ecg',
-                    name: 'ECG',
-                    icon: Icons.show_chart_rounded,
-                    status: _polarService.isEcgStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                    detail: '130 Hz',
-                  ),
-              ],
-            ),
-          );
-          break;
-
-        default:
-          debugPrint(
-            '[MONITOR] Dispositivo no soportado: ${device.deviceId}',
-          );
-          break;
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        statuses.add(
+          DeviceStatus(
+            id: device.deviceId,
+            name: '${device.deviceName} · ${device.deviceId}',
+            subtitle: camera.ready
+                ? camera.service.selectedCamera?.name
+                : (subtitle.isEmpty ? null : subtitle),
+            icon: Icons.videocam_rounded,
+            connectionStatus: camera.ready
+                ? DeviceConnectionStatus.connected
+                : DeviceConnectionStatus.disconnected,
+            sensors: [
+              if (device.hasSensor('video'))
+                SensorStatus(
+                  id: 'video',
+                  name: camera.service.audioUnavailable ? 'Vídeo (sin audio)' : 'Vídeo + audio',
+                  icon: Icons.videocam_rounded,
+                  status: camera.service.isRecording
+                      ? SensorAcquisitionStatus.acquiring
+                      : camera.ready
+                          ? SensorAcquisitionStatus.ready
+                          : SensorAcquisitionStatus.unavailable,
+                  detail: camera.ready ? camera.service.resolutionLabel : null,
+                ),
+            ],
+          ),
+        );
+        continue;
       }
+
+      final live = _liveDevices[device.deviceId];
+      if (live != null) {
+        final service = live.service;
+        bool streaming(String sensor) => switch (sensor) {
+              'heart_rate' => service.isHeartRateStreaming,
+              'rr' => service.isRrStreaming,
+              'acc' => service.isAccelerationStreaming,
+              'ecg' => service.isEcgStreaming,
+              _ => false,
+            };
+        statuses.add(
+          DeviceStatus(
+            id: device.deviceId,
+            name: '${device.deviceName} · ${device.deviceId}',
+            subtitle: service.isConnected
+                ? [
+                    service.connectedDeviceName ?? service.connectedDeviceId,
+                    if (subtitle.isNotEmpty) subtitle,
+                  ].join(' · ')
+                : (subtitle.isEmpty ? null : subtitle),
+            icon: Icons.favorite_rounded,
+            connectionStatus: service.isConnected
+                ? DeviceConnectionStatus.connected
+                : DeviceConnectionStatus.disconnected,
+            sensors: [
+              for (final sensor in _sensorLabels.keys)
+                if (device.hasSensor(sensor))
+                  SensorStatus(
+                    id: sensor,
+                    name: _sensorLabels[sensor]!.$1,
+                    icon: _sensorLabels[sensor]!.$2,
+                    status: streaming(sensor)
+                        ? SensorAcquisitionStatus.acquiring
+                        : service.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                    detail: switch (sensor) {
+                      'acc' when service.isAccelerationStreaming =>
+                        '${service.accSampleRateHz} Hz',
+                      'ecg' => '${PolarBleService.ecgSampleRateHz} Hz',
+                      _ => null,
+                    },
+                  ),
+            ],
+          ),
+        );
+        continue;
+      }
+
+      // Offline sensors (and live ones without signals here): listed so the
+      // team sees the whole setup, but they record on their own.
+      statuses.add(
+        DeviceStatus(
+          id: device.deviceId,
+          name: '${device.deviceName} · ${device.deviceId}',
+          subtitle: subtitle.isEmpty ? null : subtitle,
+          icon: Icons.watch_rounded,
+          connectionStatus: DeviceConnectionStatus.disconnected,
+          note: 'Graba por su cuenta (sin conexión en directo)',
+        ),
+      );
     }
 
     return statuses;
   }
+
 
   // ===========================================================================
   // UI
@@ -1462,16 +1627,45 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildHeartRateMonitor(MonitorSlot slot) {
+  Widget _buildChart({
+    required MonitorSlot slot,
+    required String label,
+    required IconData icon,
+    required String unit,
+    required Duration window,
+    required List<ChartSeries> series,
+    required String Function() currentValue,
+    Widget? trailingAction,
+  }) {
     return SensorChartCard(
       title: 'MONITOR ${slot.slotId}',
-      subtitle: 'HR · ${slot.sensorId}',
+      subtitle: '$label · ${slot.deviceId}',
+      icon: icon,
+      currentValue: currentValue,
+      unit: unit,
+      window: window,
+      clock: _frameClock,
+      seriesList: series,
+      trailingAction: trailingAction,
+    );
+  }
+
+  static String _format(double? value, [int decimals = 0]) =>
+      value == null ? '--' : value.toStringAsFixed(decimals);
+
+  Widget _buildHeartRateMonitor(MonitorSlot slot) {
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'HR',
       icon: Icons.favorite_rounded,
-      currentValue: _heartRate > 0 ? '$_heartRate' : '--',
       unit: 'bpm',
-      seriesList: [
+      window: device.hr.window,
+      currentValue: () => _format(device.hr.lastValue),
+      series: [
         ChartSeries(
-          points: _hrHistory,
+          buffer: device.hr,
           color: Colors.redAccent,
           label: 'HR',
         ),
@@ -1480,17 +1674,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildRrMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'RR · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'RR',
       icon: Icons.timeline_rounded,
-      currentValue: _rrHistory.isNotEmpty
-          ? _rrHistory.last.toStringAsFixed(0)
-          : '--',
       unit: 'ms',
-      seriesList: [
+      window: device.rr.window,
+      currentValue: () => _format(device.rr.lastValue),
+      series: [
         ChartSeries(
-          points: _rrHistory,
+          buffer: device.rr,
           color: Colors.orangeAccent,
           label: 'RR',
         ),
@@ -1499,39 +1694,38 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildAccelerationMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'ACC · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'ACC',
       icon: Icons.sensors_rounded,
-      currentValue: _accMode == 'VM'
-          ? (_accHistory.isNotEmpty
-              ? _accHistory.last.toStringAsFixed(1)
-              : '--')
-          : (_lastAcc != null
-              ? _lastAcc!.zMg.toStringAsFixed(1)
-              : '--'),
       unit: 'mg',
-      seriesList: _accMode == 'VM'
+      window: device.accVm.window,
+      currentValue: () => _accMode == 'VM'
+          ? _format(device.accVm.lastValue, 1)
+          : _format(device.accZ.lastValue, 1),
+      series: _accMode == 'VM'
           ? [
               ChartSeries(
-                points: _accHistory,
+                buffer: device.accVm,
                 color: const Color(0xFF38BDF8),
                 label: 'VM',
               ),
             ]
           : [
               ChartSeries(
-                points: _accXHistory,
+                buffer: device.accX,
                 color: Colors.redAccent,
                 label: 'X',
               ),
               ChartSeries(
-                points: _accYHistory,
+                buffer: device.accY,
                 color: Colors.greenAccent,
                 label: 'Y',
               ),
               ChartSeries(
-                points: _accZHistory,
+                buffer: device.accZ,
                 color: const Color(0xFF38BDF8),
                 label: 'Z',
               ),
@@ -1555,17 +1749,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildEcgMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'ECG · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'ECG',
       icon: Icons.show_chart_rounded,
-      currentValue: _lastEcg != null
-          ? _lastEcg!.microVolts.toStringAsFixed(1)
-          : '--',
       unit: 'µV',
-      seriesList: [
+      window: device.ecg.window,
+      currentValue: () => _format(device.ecg.lastValue),
+      series: [
         ChartSeries(
-          points: _ecgHistory,
+          buffer: device.ecg,
           color: const Color(0xFFF43F5E),
           label: 'ECG',
         ),
@@ -1574,7 +1769,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildVideoMonitor(MonitorSlot slot) {
-    final controller = _videoService.controller;
+    final camera = _cameras[slot.deviceId];
+    final controller = camera?.service.controller;
 
     return Container(
       decoration: BoxDecoration(
@@ -1582,7 +1778,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
-      child: (_cameraReady &&
+      child: (camera != null &&
+              camera.ready &&
               controller != null &&
               controller.value.isInitialized)
           ? Stack(
@@ -1594,7 +1791,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     child: CameraPreview(controller),
                   ),
                 ),
-                if (_videoService.isRecording)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Text(
+                    slot.deviceId ?? '',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      shadows: [Shadow(blurRadius: 4)],
+                    ),
+                  ),
+                ),
+                if (camera.service.isRecording)
                   Positioned(
                     top: 10,
                     right: 10,
@@ -2163,7 +2373,27 @@ class _DeviceStatusCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            if (device.subtitle != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 2),
+                child: Text(
+                  device.subtitle!,
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ),
+            if (device.note != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 4),
+                child: Text(
+                  device.note!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.white38,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            if (device.sensors.isNotEmpty) const SizedBox(height: 10),
             ...device.sensors.map(
               (sensor) => Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -2268,4 +2498,92 @@ class _StatusDot extends StatelessWidget {
       ),
     );
   }
+}
+/// A live Polar device of the session and the last seconds of each signal.
+class _LiveDevice {
+  DeviceConfiguration configuration;
+  final PolarBleService service = PolarBleService();
+  final VoidCallback onSamples;
+
+  // Windows of the live charts. The ECG strip is short so each beat is
+  // wide enough to read; heart rate and RR show the trend of two minutes.
+  final SignalBuffer hr = SignalBuffer(window: const Duration(minutes: 2), maxRateHz: 4);
+  final SignalBuffer rr = SignalBuffer(window: const Duration(minutes: 2), maxRateHz: 5);
+  final SignalBuffer ecg = SignalBuffer(window: const Duration(seconds: 6), maxRateHz: 140);
+  final SignalBuffer accX = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accY = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accZ = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accVm = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+
+  _LiveDevice(this.configuration, {required this.onSamples}) {
+    _subscriptions.addAll([
+      service.hrStream.listen((bpm) {
+        if (bpm <= 0) return; // 0 = disconnected
+        hr.add(DateTime.now().toUtc(), bpm.toDouble());
+        onSamples();
+      }),
+      service.rrStream.listen((rrMs) {
+        rr.add(DateTime.now().toUtc(), rrMs.toDouble());
+        onSamples();
+      }),
+      // Every sample, with the sensor's own timestamps.
+      service.ecgStream.listen((sample) {
+        ecg.add(sample.timestamp, sample.microVolts.toDouble());
+        onSamples();
+      }),
+      service.accelerationStream.listen((sample) {
+        final t = sample.timestamp;
+        accX.add(t, sample.xMg);
+        accY.add(t, sample.yMg);
+        accZ.add(t, sample.zMg);
+        accVm.add(
+          t,
+          math.sqrt(sample.xMg * sample.xMg + sample.yMg * sample.yMg + sample.zMg * sample.zMg),
+        );
+        onSamples();
+      }),
+    ]);
+  }
+
+  /// Starts the signals of [configuration] one by one and returns those that
+  /// the device refused (e.g. ECG on a sensor without it).
+  Future<List<String>> startConfiguredSignals() async {
+    final failed = <String>[];
+    for (final (signal, start) in [
+      ('heart_rate', service.startHeartRate),
+      ('acc', service.startAcceleration),
+      ('ecg', service.startEcg),
+    ]) {
+      if (!configuration.hasSensor(signal)) continue;
+      try {
+        await start();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] ${configuration.deviceId}: $signal no iniciado: $e');
+        failed.add(signal == 'heart_rate' ? 'HR' : signal.toUpperCase());
+      }
+    }
+    for (final buffer in [hr, rr, ecg, accX, accY, accZ, accVm]) {
+      buffer.clear();
+    }
+    return failed;
+  }
+
+  void dispose() {
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    service.dispose();
+  }
+}
+
+/// A camera of the session.
+class _CameraDevice {
+  DeviceConfiguration configuration;
+  final VideoRecordingService service;
+  bool ready = false;
+
+  _CameraDevice(this.configuration)
+      : service = VideoRecordingService(cameraId: configuration.deviceId);
 }

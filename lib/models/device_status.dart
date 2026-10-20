@@ -53,6 +53,12 @@ class DeviceStatus {
   final IconData icon;
   final DeviceConnectionStatus connectionStatus;
 
+  /// Placement, serial or the connected device («Muñeca no dominante · n.º 1234»).
+  final String? subtitle;
+
+  /// Shown instead of the sensors (e.g. offline sensors).
+  final String? note;
+
   final List<SensorStatus> sensors;
 
   const DeviceStatus({
@@ -60,6 +66,8 @@ class DeviceStatus {
     required this.name,
     required this.icon,
     required this.connectionStatus,
+    this.subtitle,
+    this.note,
     this.sensors = const [],
   });
 }

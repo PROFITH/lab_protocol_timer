@@ -25,7 +25,7 @@ Source: *Protocolos RUN4HEALTH: recogida y sincronización v1* (Protocols 4-6) a
 - Resting first (300 s, resting HR) and the two fitness tests last follow the guide's recommendation.
 - **[revisar]** Activities 2-7: the guide leaves the list pending ("5-10 activities chosen from the 16 of WEARGAP"). These six are among those the WEARGAP proposal names; 4 min each is a default for a steady heart rate.
 - **[revisar]** 02344 (sit to stand, 18-24/min) is the closest code to a 30-s maximal test; 17220 (6.4-7.1 km/h) assumes runners walk fast. Check against the measured speed.
-- Sensors from the guide's table: Matrix (non-dominant wrist, free living), AX3 non-dominant wrist, AX3 dominant wrist, SENS (thigh, free living), AX3 thigh, Polar H10 (chest, live), Verity Sense (arm, free living), fixed camera. AX3 at 100 Hz and ±8 g as the guide's default. **[revisar]** Thigh AX3 marked as not staying in free living (guide default); the optional shoe AX3s are not in the list.
+- Sensors from the guide's table: Matrix (non-dominant wrist, free living), AX3 non-dominant wrist, AX3 dominant wrist, SENS (thigh, free living), AX3 thigh, Polar H10 (chest, live), Verity Sense (arm, live in the lab and free living), fixed camera. AX3 at 100 Hz and ±8 g as the guide's default. **[revisar]** Thigh AX3 marked as not staying in free living (guide default); the optional shoe AX3s are not in the list.
 
 ## WEARGAP day 0 (`weargap_day0_base`)
 
@@ -53,7 +53,7 @@ Source: proposal v15, *Day 0 (laboratory)*.
 - **[revisar]** The proposal names only these activities of the 16 ("e.g., typing, standing, slow walking with shopping bags, uphill walking, stairs, sweeping, dish-washing, cycling at two loads, jogging if able"); 6 are missing and are not invented here.
 - **[revisar]** 10 min per activity until IMUDS confirms how long the chamber needs to stabilise; loads (50 W, 90-100 W), slope (6-10 %) and walking speeds are defaults.
 - **[revisar]** The exercise test is a ramp to exhaustion with no fixed length: the timer cannot yet end an activity early, so 12 min is a placeholder, and it has no Compendium code.
-- Sensors: AX3 on both wrists, SensWear and AX3 on the non-dominant wrist, thigh AX3, AX6 on each shoe, Polar H10, three fixed cameras. SensWear, thigh AX3 and AX6 stay on for the free-living days. **[revisar]** SensWear and Verity Sense clocks are `unknown` in the manifest until their file formats are known.
+- Sensors: AX3 on both wrists, SensWear and AX3 on the non-dominant wrist, thigh AX3, AX6 on each shoe, Polar H10, three fixed cameras. SensWear, thigh AX3 and AX6 stay on for the free-living days. **[revisar]** The SensWear clock is `unknown` in the manifest until its file format is known; the Verity Sense is live (`native_plus_host_utc`).
 
 ## WEARGAP day 8 (`weargap_day8_base`)
 

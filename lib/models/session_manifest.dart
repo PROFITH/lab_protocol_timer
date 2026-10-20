@@ -31,7 +31,7 @@ Map<String, dynamic> buildSessionManifest({
 
   for (final device in protocolConfiguration.devices) {
     final liveSensors = device.sensors.difference({'video'});
-    if (liveSensors.isEmpty) continue;
+    if (!device.isLive || liveSensors.isEmpty) continue;
 
     sensors[device.deviceId] = {
       'present': true,
@@ -68,10 +68,13 @@ Map<String, dynamic> buildSessionManifest({
       continue;
     }
 
-    // A live device configured in the Research Monitor (Polar H10) keeps its
-    // entry; the session setup adds its serial and placement.
+    // A live device of the Research Monitor (Polar H10, Verity Sense) keeps
+    // its entry; the session setup adds its serial and placement. Sessions
+    // with a sensor list name the device by its sensor ID; the default
+    // configuration names it by type.
     final live = sensor.connection == 'live'
-        ? protocolConfiguration.deviceById(sensor.type)
+        ? protocolConfiguration.deviceById(sensor.sensorId) ??
+            protocolConfiguration.deviceById(sensor.type)
         : null;
     if (live != null && sensors.containsKey(live.deviceId)) {
       final entry = sensors[live.deviceId] as Map<String, dynamic>;

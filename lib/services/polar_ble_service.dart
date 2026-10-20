@@ -197,13 +197,7 @@ class PolarBleService {
   Stream<PolarEcgSample> get ecgStream =>
       _ecgStreamController.stream;
 
-  final _ecgUiStreamController =
-      StreamController<PolarEcgSample>.broadcast();
 
-  Stream<PolarEcgSample> get ecgUiStream =>
-      _ecgUiStreamController.stream;
-
-  int _lastEcgUiEmitMillis = 0;
 
   // ===========================================================================
   // ACC
@@ -215,13 +209,7 @@ class PolarBleService {
   Stream<PolarAccelerationSample> get accelerationStream =>
       _accStreamController.stream;
 
-  final _accUiStreamController =
-      StreamController<PolarAccelerationSample>.broadcast();
 
-  Stream<PolarAccelerationSample> get accelerationUiStream =>
-      _accUiStreamController.stream;
-
-  int _lastUiEmitMillis = 0;
 
   // ===========================================================================
   // PROTOCOL CONTEXT FOR ACC / ECG
@@ -322,45 +310,32 @@ class PolarBleService {
   // CONSTRUCTOR
   // ===========================================================================
 
-  PolarBleService() {
+  // Several services can run at once (Polar H10 and Verity Sense), so each
+  // one listens to the connection state of its own device instead of the
+  // global UniversalBle callbacks, which keep only the last one set.
+  StreamSubscription<bool>? _connectionSubscription;
 
-    UniversalBle.onValueChange = (
-      deviceId,
-      characteristicId,
-      value,
-      timestamp,
-    ) {
+  void _watchConnection(BleDevice device) {
+    _connectionSubscription?.cancel();
+    _connectionSubscription =
+        UniversalBle.connectionStream(device.deviceId).listen((isConnected) {
       debugPrint(
-        '[BLE GLOBAL] device=$deviceId '
-        'characteristic=$characteristicId '
-        'bytes=${value.length} '
-        'timestamp=$timestamp',
+        '[BLE CONNECTION] device=${device.deviceId} '
+        'isConnected=$isConnected',
       );
-    };
-
-    UniversalBle.onConnectionChange = (
-      deviceId,
-      isConnected,
-      error,
-    ) {
-      debugPrint(
-        '[BLE CONNECTION] '
-        'device=$deviceId '
-        'isConnected=$isConnected '
-        'error=$error '
-        'currentDevice=${_connectedDevice?.deviceId}',
-      );
-
-      if (!isConnected &&
-          deviceId == _connectedDevice?.deviceId) {
-        debugPrint(
-          '[BLE CONNECTION] → Ejecutando _handleUnexpectedDisconnect()',
-        );
-
+      if (!isConnected && device.deviceId == _connectedDevice?.deviceId) {
         _handleUnexpectedDisconnect();
       }
-    };
+    });
   }
+
+  /// Name advertised by the connected device (e.g. `Polar H10 ABCD1234`).
+  String? get connectedDeviceName => _connectedDevice?.name;
+
+  String? get connectedDeviceId => _connectedDevice?.deviceId;
+
+  /// ACC sampling rate in use (negotiated with the device when it started).
+  int get accSampleRateHz => _accSampleRateHz;
 
   // ===========================================================================
   // UNEXPECTED DISCONNECT
@@ -446,6 +421,7 @@ class PolarBleService {
       );
 
       _connectedDevice = device;
+      _watchConnection(device);
 
       final services =
           await device.discoverServices();
@@ -606,9 +582,11 @@ class PolarBleService {
     _pmdDataSubscription =
         _pmdData!.onValueReceived.listen(
       (value) {
-        debugPrint(
-          '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
-        );
+        if (debugPmdFrames) {
+          debugPrint(
+            '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
+          );
+        }
 
         _handlePmdData(value);
       },
@@ -754,39 +732,11 @@ class PolarBleService {
       return;
     }
 
-    // H10 ACC:
-    //
-    // measurement type = 0x02
-    // sample rate      = 200 Hz
-    // resolution       = 16 bit
-    // range            = 8 G
-    //
-    // Setting 0x00 = sample rate
-    // Setting 0x01 = resolution
-    // Setting 0x02 = range
-    //
-    // 200 Hz = C8 00
-    // 16 bit = 10 00
-    // 8 G    = 08 00
-
-    final command =
-        Uint8List.fromList([
-      0x02,
-      pmdTypeAcc,
-      0x00,
-      0x01,
-      0xC8,
-      0x00,
-      0x01,
-      0x01,
-      0x10,
-      0x00,
-      0x02,
-      0x01,
-      0x08,
-      0x00,
-    ]);
-
+    // The settings are asked to the device first (opcode 0x01), as the
+    // Polar SDK does: the H10 offers 25-200 Hz and ±2/4/8 G; the Verity Sense
+    // 52 Hz, ±8 G and 3 channels. Without an answer, the H10 settings are
+    // requested (200 Hz, 16 bit, ±8 G).
+    final command = await _accStartCommand();
     debugPrint(
       '[POLAR DEBUG] ACC START TX: '
       '${_hex(command)}',
@@ -1102,7 +1052,7 @@ class PolarBleService {
 
     try {
       final settings =
-          _parsePmdSettings(payload);
+          _parsePmdSettings(_pmdParameters(payload));
 
       final sampleRate =
           settings[pmdSettingSampleRate];
@@ -1140,6 +1090,105 @@ class PolarBleService {
         'from response: $e',
       );
     }
+  }
+
+  // ===========================================================================
+  // ACC SETTINGS NEGOTIATION
+  // ===========================================================================
+
+  /// Parameters of a PMD control-point response. The first payload byte
+  /// (after the error code) is the "more" flag, not a setting
+  /// (PmdControlPointResponse in the Polar BLE SDK).
+  static Uint8List _pmdParameters(Uint8List payload) =>
+      payload.length > 1 ? Uint8List.sublistView(payload, 1) : Uint8List(0);
+
+  /// Every value offered for each setting type.
+  static Map<int, List<int>> parsePmdSettingOptions(Uint8List data) {
+    final result = <int, List<int>>{};
+    var offset = 0;
+    while (offset + 2 <= data.length) {
+      final settingType = data[offset];
+      final count = data[offset + 1];
+      offset += 2;
+      final fieldSize = _pmdSettingFieldSize(settingType);
+      if (fieldSize <= 0) break;
+      for (var i = 0; i < count; i++) {
+        if (offset + fieldSize > data.length) {
+          throw StateError('Truncated PMD setting type=$settingType');
+        }
+        var value = 0;
+        for (var b = 0; b < fieldSize; b++) {
+          value |= data[offset + b] << (8 * b);
+        }
+        result.putIfAbsent(settingType, () => []).add(value);
+        offset += fieldSize;
+      }
+    }
+    return result;
+  }
+
+  /// Start command for ACC from the offered settings: [preferredRateHz] if
+  /// offered (else the highest rate), the highest resolution, ±8 G if
+  /// offered (else the highest range) and the most channels.
+  static Uint8List accStartCommandFor(
+    Map<int, List<int>> options, {
+    int preferredRateHz = defaultAccSampleRateHz,
+    int preferredRangeG = 8,
+  }) {
+    int pick(List<int> values, int? preferred) =>
+        preferred != null && values.contains(preferred)
+            ? preferred
+            : values.reduce((a, b) => a > b ? a : b);
+
+    final bytes = <int>[pmdOpStartMeasurement, pmdTypeAcc];
+    void add(int type, int value) {
+      final size = _pmdSettingFieldSize(type);
+      bytes..add(type)..add(1);
+      for (var b = 0; b < size; b++) {
+        bytes.add((value >> (8 * b)) & 0xFF);
+      }
+    }
+
+    for (final (type, preferred) in [
+      (pmdSettingSampleRate, preferredRateHz),
+      (pmdSettingResolution, null),
+      (pmdSettingRange, preferredRangeG),
+      (pmdSettingChannels, null),
+    ]) {
+      final values = options[type];
+      if (values != null && values.isNotEmpty) {
+        add(type, pick(values, preferred));
+      }
+    }
+    return Uint8List.fromList(bytes);
+  }
+
+  static final Uint8List _h10AccStartCommand = Uint8List.fromList([
+    0x02, pmdTypeAcc, //
+    0x00, 0x01, 0xC8, 0x00, // 200 Hz
+    0x01, 0x01, 0x10, 0x00, // 16 bit
+    0x02, 0x01, 0x08, 0x00, // 8 G
+  ]);
+
+  Future<Uint8List> _accStartCommand() async {
+    try {
+      final response = await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpGetMeasurementSettings, pmdTypeAcc]),
+        expectedOpcode: pmdOpGetMeasurementSettings,
+        expectedMeasurementType: pmdTypeAcc,
+      );
+      if (response.isSuccess) {
+        final options =
+            parsePmdSettingOptions(_pmdParameters(response.payload));
+        debugPrint('[POLAR DEBUG] ACC settings offered: $options');
+        if (options[pmdSettingSampleRate]?.isNotEmpty == true) {
+          return accStartCommandFor(options);
+        }
+      }
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] ACC settings not available: $e');
+    }
+    return _h10AccStartCommand;
   }
 
   // ===========================================================================
@@ -1422,22 +1471,6 @@ class PolarBleService {
         );
       }
 
-      final nowMs =
-          DateTime.now()
-              .millisecondsSinceEpoch;
-
-      if (nowMs -
-              _lastEcgUiEmitMillis >=
-          100) {
-        _lastEcgUiEmitMillis =
-            nowMs;
-
-        if (!_ecgUiStreamController
-            .isClosed) {
-          _ecgUiStreamController
-              .add(sample);
-        }
-      }
 
       offset +=
           bytesPerSample;
@@ -2413,23 +2446,6 @@ class PolarBleService {
       );
     }
 
-    final nowMs =
-        DateTime.now()
-            .millisecondsSinceEpoch;
-
-    if (nowMs -
-            _lastUiEmitMillis >=
-        100) {
-      _lastUiEmitMillis =
-          nowMs;
-
-      if (!_accUiStreamController
-          .isClosed) {
-        _accUiStreamController.add(
-          sample,
-        );
-      }
-    }
   }
 
   // ===========================================================================
@@ -3031,12 +3047,11 @@ class PolarBleService {
 
   Future<void> dispose() async {
     await disconnect();
+    await _connectionSubscription?.cancel();
 
     await _hrStreamController.close();
     await _ecgStreamController.close();
-    await _ecgUiStreamController.close();
     await _accStreamController.close();
-    await _accUiStreamController.close();
     await _scanStreamController.close();
   }
 

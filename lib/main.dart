@@ -546,7 +546,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
     if (!mounted) return;
 
-    await _openResearchMonitorWindow();
+    await _openResearchMonitorWindow(battery);
 
     if (!mounted) return;
 
@@ -781,11 +781,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     );
   }
 
-  Future<void> _openResearchMonitorWindow() async {
+  Future<void> _openResearchMonitorWindow(ActivityBattery? battery) async {
+    final configuration = protocolConfigurationFor(battery);
     try {
       if (await ResearchMonitorBridge.instance.hasLiveMonitorWindow()) {
         ResearchMonitorBridge.instance.setProtocolConfiguration(
-          defaultProtocolConfiguration,
+          configuration,
         );
         await ResearchMonitorBridge.instance.reuseMonitorWindow();
         return;
@@ -810,10 +811,10 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
       ResearchMonitorBridge.instance.setMonitorWindow(window);
       ResearchMonitorBridge.instance.setProtocolConfiguration(
-        defaultProtocolConfiguration,
+        configuration,
       );
       ResearchMonitorBridge.instance.sendProtocolConfiguration(
-        defaultProtocolConfiguration,
+        configuration,
       );
 
       debugPrint(
@@ -1114,7 +1115,7 @@ class TimerPageState extends State<TimerPage>
       activities: _completedActivities,
       syncWindows: _syncWindows,
       generatedFiles: generatedFiles,
-      protocolConfiguration: defaultProtocolConfiguration,
+      protocolConfiguration: protocolConfigurationFor(widget.battery),
       battery: widget.battery,
     );
   }
