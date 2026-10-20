@@ -163,7 +163,7 @@ const sensorPlacements = <SensorPlacement>[
   SensorPlacement(
       key: 'thigh', label: 'Muslo', short: 'thigh', redcapCode: '3'),
   SensorPlacement(
-      key: 'ankle', label: 'Tobillo', short: 'ankle', redcapCode: '9'),
+      key: 'ankle', label: 'Tobillo', short: 'ankle', redcapCode: '11'),
   SensorPlacement(
       key: 'shoe', label: 'Calzado', short: 'shoe', redcapCode: '6'),
   SensorPlacement(
@@ -310,12 +310,18 @@ class SessionSensor {
   }
 
   /// Code of the location in REDCap `sl_location` (wrists: 1 non-dominant,
-  /// 2 dominant).
+  /// 2 dominant, 10 without dominance). Dominance and side go to
+  /// `sl_dominance` and `sl_side`.
   String? get redcapLocationCode {
     final p = sensorPlacementByKey(placement);
     if (p == null) return null;
-    if (p.key == 'wrist')
-      return dominance == SensorDominance.dominant ? '2' : '1';
+    if (p.key == 'wrist') {
+      return switch (dominance) {
+        SensorDominance.dominant => '2',
+        SensorDominance.nonDominant => '1',
+        _ => '10',
+      };
+    }
     return p.redcapCode;
   }
 

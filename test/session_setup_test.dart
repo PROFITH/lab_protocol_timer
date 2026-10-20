@@ -202,12 +202,14 @@ void main() {
           placement: 'chest',
           serial: 'A1B2C3',
         ),
-        const SessionSensor(sensorId: 'cam_room', type: 'camera', placement: 'room'),
+        const SessionSensor(
+            sensorId: 'cam_room', type: 'camera', placement: 'room'),
       ],
     );
 
     test('offline sensors carry type, placement, serial and settings', () {
-      final ax3 = manifest(battery)['sensors']['ax3_wnd'] as Map<String, dynamic>;
+      final ax3 =
+          manifest(battery)['sensors']['ax3_wnd'] as Map<String, dynamic>;
       expect(ax3, {
         'present': true,
         'timestamp_domain': 'device_clock_local',
@@ -291,41 +293,69 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => SessionSensor.fromJson({'sensor_id': 's', 'type': 'ax3', 'side': 'up'}),
+        () => SessionSensor.fromJson(
+            {'sensor_id': 's', 'type': 'ax3', 'side': 'up'}),
         throwsFormatException,
       );
     });
 
     test('suggests IDs from type, placement, dominance and side', () {
-      expect(SessionSensor.suggestId('ax3', 'wrist', dominance: 'dominant'), 'ax3_wd');
-      expect(SessionSensor.suggestId('ax3', 'wrist', dominance: 'non_dominant', side: 'right'), 'ax3_wnd_r');
+      expect(SessionSensor.suggestId('ax3', 'wrist', dominance: 'dominant'),
+          'ax3_wd');
+      expect(
+          SessionSensor.suggestId('ax3', 'wrist',
+              dominance: 'non_dominant', side: 'right'),
+          'ax3_wnd_r');
       expect(SessionSensor.suggestId('ax3', 'wrist'), 'ax3_wrist');
-      expect(SessionSensor.suggestId('ax6', 'shoe', side: 'left'), 'ax6_shoe_l');
-      expect(SessionSensor.suggestId('actigraph_gt3x', 'hip', side: 'right'), 'gt3x_hip_r');
-      expect(SessionSensor.suggestId('geneactiv', 'thigh', dominance: 'dominant'), 'geneactiv_thigh_d');
+      expect(
+          SessionSensor.suggestId('ax6', 'shoe', side: 'left'), 'ax6_shoe_l');
+      expect(SessionSensor.suggestId('actigraph_gt3x', 'hip', side: 'right'),
+          'gt3x_hip_r');
+      expect(
+          SessionSensor.suggestId('geneactiv', 'thigh', dominance: 'dominant'),
+          'geneactiv_thigh_d');
       expect(SessionSensor.suggestId('polar_h10', 'chest'), 'polar_h10_chest');
       expect(
-        SessionSensor.suggestId('camera', 'room', taken: ['cam_room', 'cam_room_2']),
+        SessionSensor.suggestId('camera', 'room',
+            taken: ['cam_room', 'cam_room_2']),
         'cam_room_3',
       );
     });
 
-    test('dominance and side are optional everywhere and old placement keys still load', () {
-      final h10 = SessionSensor.fromJson({'sensor_id': 'h', 'type': 'polar_h10', 'placement': 'chest'});
-      expect([h10.dominance, h10.side, h10.placementLabel], [null, null, 'Pecho']);
+    test(
+        'dominance and side are optional everywhere and old placement keys still load',
+        () {
+      final h10 = SessionSensor.fromJson(
+          {'sensor_id': 'h', 'type': 'polar_h10', 'placement': 'chest'});
+      expect(
+          [h10.dominance, h10.side, h10.placementLabel], [null, null, 'Pecho']);
 
-      final old = SessionSensor.fromJson({'sensor_id': 'a', 'type': 'ax3', 'placement': 'wrist_dominant'});
-      expect([old.placement, old.dominance, old.side], ['wrist', 'dominant', null]);
-      final shoe = SessionSensor.fromJson({'sensor_id': 'b', 'type': 'ax6', 'placement': 'shoe_right'});
-      expect([shoe.placement, shoe.side, shoe.placementLabel], ['shoe', 'right', 'Calzado, derecha']);
+      final old = SessionSensor.fromJson(
+          {'sensor_id': 'a', 'type': 'ax3', 'placement': 'wrist_dominant'});
+      expect([old.placement, old.dominance, old.side],
+          ['wrist', 'dominant', null]);
+      final shoe = SessionSensor.fromJson(
+          {'sensor_id': 'b', 'type': 'ax6', 'placement': 'shoe_right'});
+      expect([shoe.placement, shoe.side, shoe.placementLabel],
+          ['shoe', 'right', 'Calzado, derecha']);
       expect(old.redcapLocationCode, '2');
       expect(shoe.redcapLocationCode, '6');
+      expect(
+          const SessionSensor(sensorId: 'w', type: 'ax3', placement: 'wrist')
+              .redcapLocationCode,
+          '10');
 
       final roundTrip = SessionSensor.fromJson(
-        const SessionSensor(sensorId: 'g', type: 'geneactiv', placement: 'ankle', dominance: 'dominant', side: 'left')
+        const SessionSensor(
+                sensorId: 'g',
+                type: 'geneactiv',
+                placement: 'ankle',
+                dominance: 'dominant',
+                side: 'left')
             .toJson(),
       );
-      expect([roundTrip.type, roundTrip.dominance, roundTrip.side], ['geneactiv', 'dominant', 'left']);
+      expect([roundTrip.type, roundTrip.dominance, roundTrip.side],
+          ['geneactiv', 'dominant', 'left']);
       expect(sensorTypeByKey('actigraph_gt3x').label, 'ActiGraph GT3X');
       expect(sensorTypeByKey('geneactiv').label, 'GENEActiv');
     });
@@ -337,7 +367,8 @@ void main() {
       ParticipantEntry(participantId: '3', redcapEventName: _day0),
     ];
 
-    ActivityLog log(int index, {String kind = 'activity', int? labIndex, double? met}) =>
+    ActivityLog log(int index,
+            {String kind = 'activity', int? labIndex, double? met}) =>
         ActivityLog(
           activityIndex: index,
           activityStartTime: start.add(Duration(minutes: 10 * index)),
@@ -366,8 +397,10 @@ void main() {
 
       expect(records, hasLength(3));
       expect(records.first['ws_calibration'], '1');
-      expect(records.first['ws_calib_start'],
-          LabRedCapService.formatRedcapDateTime(activities.first.activityStartTime));
+      expect(
+          records.first['ws_calib_start'],
+          LabRedCapService.formatRedcapDateTime(
+              activities.first.activityStartTime));
       expect(records[1]['la_order'], '1');
       expect(records[1]['la_mets'], '1.0');
       expect(records[2]['la_mets'], '7.5');
@@ -385,8 +418,10 @@ void main() {
         totalStations: 2,
       ).single;
 
-      expect(record['act_1_start_time'],
-          LabRedCapService.formatRedcapDateTime(activities[1].activityStartTime));
+      expect(
+          record['act_1_start_time'],
+          LabRedCapService.formatRedcapDateTime(
+              activities[1].activityStartTime));
       expect(record.containsKey('act_3_start_time'), isFalse);
     });
 
