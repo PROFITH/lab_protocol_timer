@@ -1139,10 +1139,14 @@ class PolarBleService {
     // PMD CONTROL POINT INDICATIONS
     // -------------------------------------------------------------------------
 
-    if (!_pmdControlPoint!
-        .indications.isSupported) {
+    // Indications (H10) or notifications, whichever the device offers, as
+    // Web Bluetooth's startNotifications() does.
+    final controlUsesIndications =
+        _pmdControlPoint!.indications.isSupported;
+    if (!controlUsesIndications &&
+        !_pmdControlPoint!.notifications.isSupported) {
       throw Exception(
-        'PMD Control Point no soporta indications',
+        'PMD Control Point no admite indications ni notifications',
       );
     }
 
@@ -1172,9 +1176,11 @@ class PolarBleService {
 
     await _gattRetry(
       'PMD Control',
-      () => _pmdControlPoint!
-          .indications
-          .subscribe(timeout: const Duration(seconds: 15)),
+      () => controlUsesIndications
+          ? _pmdControlPoint!.indications
+              .subscribe(timeout: const Duration(seconds: 15))
+          : _pmdControlPoint!.notifications
+              .subscribe(timeout: const Duration(seconds: 15)),
     );
 
     debugPrint(
@@ -1272,11 +1278,7 @@ class PolarBleService {
     ]);
 
     final response =
-        await _sendPmdCommandAndWaitForResponse(
-      command,
-      expectedOpcode: pmdOpStartMeasurement,
-      expectedMeasurementType: pmdTypeEcg,
-    );
+        await _startMeasurement(command, pmdTypeEcg);
 
     if (!response.isSuccess) {
       throw Exception(
@@ -1319,11 +1321,7 @@ class PolarBleService {
     );
 
     final response =
-        await _sendPmdCommandAndWaitForResponse(
-      command,
-      expectedOpcode: pmdOpStartMeasurement,
-      expectedMeasurementType: pmdTypeAcc,
-    );
+        await _startMeasurement(command, pmdTypeAcc);
 
     debugPrint(
       '[POLAR DEBUG] ACC START RESPONSE PAYLOAD: '
@@ -1462,6 +1460,7 @@ class PolarBleService {
     final completer =
         Completer<_PmdControlResponse>();
 
+    _pendingPmdParameters.clear();
     _pendingPmdResponse = completer;
 
     try {
@@ -1558,9 +1557,66 @@ class PolarBleService {
       );
     }
 
+    // A long answer (e.g. the settings of a Verity Sense) can come in several
+    // parts: while the "more" byte is set, keep the parameters and wait for
+    // the next one (as the Polar SDK and the web app do).
+    if (response.errorCode == 0 && response.payload.isNotEmpty) {
+      _pendingPmdParameters.addAll(_pmdParameters(response.payload));
+      if (response.payload[0] != 0) return;
+      final parameters = Uint8List.fromList(_pendingPmdParameters);
+      _pendingPmdParameters.clear();
+      _completePendingPmdResponse(
+        response: _PmdControlResponse(
+          raw: response.raw,
+          opcode: response.opcode,
+          measurementType: response.measurementType,
+          errorCode: 0,
+          payload: Uint8List.fromList([0, ...parameters]),
+        ),
+      );
+      return;
+    }
+    _pendingPmdParameters.clear();
+
     _completePendingPmdResponse(
       response: response,
     );
+  }
+
+  final List<int> _pendingPmdParameters = [];
+
+  /// Error code of a PMD start rejected because the measurement was already
+  /// running (e.g. left on by another app).
+  static const int pmdErrorAlreadyInState = 6;
+
+  /// Sends a start command; if the sensor says the measurement is already
+  /// running, stops it and starts it again with these settings.
+  Future<_PmdControlResponse> _startMeasurement(
+    Uint8List command,
+    int measurementType,
+  ) async {
+    var response = await _sendPmdCommandAndWaitForResponse(
+      command,
+      expectedOpcode: pmdOpStartMeasurement,
+      expectedMeasurementType: measurementType,
+    );
+    if (response.errorCode == pmdErrorAlreadyInState) {
+      debugPrint(
+        '[POLAR DEBUG] Medida 0x${measurementType.toRadixString(16)} ya '
+        'activa: se para y se vuelve a iniciar.',
+      );
+      await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpStopMeasurement, measurementType]),
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: measurementType,
+      );
+      response = await _sendPmdCommandAndWaitForResponse(
+        command,
+        expectedOpcode: pmdOpStartMeasurement,
+        expectedMeasurementType: measurementType,
+      );
+    }
+    return response;
   }
 
   _PmdControlResponse?
