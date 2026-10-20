@@ -59,6 +59,9 @@ class DeviceStatus {
   /// Shown instead of the sensors (e.g. offline sensors).
   final String? note;
 
+  /// Connection step in progress or last error («Reintentando en 4 s...»).
+  final String? statusMessage;
+
   final List<SensorStatus> sensors;
 
   const DeviceStatus({
@@ -68,6 +71,7 @@ class DeviceStatus {
     required this.connectionStatus,
     this.subtitle,
     this.note,
+    this.statusMessage,
     this.sensors = const [],
   });
 }

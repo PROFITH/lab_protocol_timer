@@ -165,6 +165,115 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     return null;
   }
 
+  /// "Reintentar conexión" of each device: shown for a Polar that was
+  /// connected and dropped (or is waiting to reconnect), and for a camera
+  /// that failed.
+  VoidCallback? _retryActionForDevice(String deviceId) {
+    final live = _liveDevices[deviceId];
+    if (live != null) {
+      final service = live.service;
+      final state = service.linkStatus.value.state;
+      if (!service.hasLastDevice) return null;
+      if (service.isConnected && state != PolarLinkState.reconnecting) {
+        return null;
+      }
+      if (state == PolarLinkState.connecting ||
+          state == PolarLinkState.pairing ||
+          state == PolarLinkState.configuring) {
+        return null;
+      }
+      return () => _retryPolar(deviceId);
+    }
+
+    final camera = _cameras[deviceId];
+    if (camera != null) {
+      if (camera.ready || camera.recovering) return null;
+      if (camera.service.lastCamera == null) return null;
+      return () => _retryCamera(deviceId);
+    }
+
+    return null;
+  }
+
+  Future<void> _retryPolar(String deviceId) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return;
+
+    final ok = await device.service.retryConnection(
+      configuration: device.configuration,
+    );
+
+    if (!mounted) return;
+    setState(() {});
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(device.service.linkStatus.value.message),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  /// A camera error (USB unplugged, MediaFoundation failure...) is retried
+  /// on its own; if it was recording, a new video segment starts.
+  void _onCameraError(String deviceId) {
+    final camera = _cameras[deviceId];
+    if (camera == null || !mounted) return;
+
+    final error = camera.service.cameraError.value;
+    setState(() {
+      if (error != null) camera.ready = false;
+    });
+
+    if (error != null && !camera.recovering) {
+      _retryCamera(deviceId, automatic: true);
+    }
+  }
+
+  Future<void> _retryCamera(String deviceId, {bool automatic = false}) async {
+    final camera = _cameras[deviceId];
+    if (camera == null || camera.recovering) return;
+    if (camera.service.lastCamera == null) {
+      if (!automatic) await _showCameraConnectionDialog(deviceId);
+      return;
+    }
+
+    setState(() => camera.recovering = true);
+
+    final wasRecording = camera.service.isRecording;
+    var ok = false;
+    for (var attempt = 1; attempt <= 3 && mounted; attempt++) {
+      ok = await camera.service.recoverCamera(
+        participantSummary: _participantIds,
+        activityIndex: _activityIndex,
+        restartRecording: wasRecording,
+      );
+      if (ok) break;
+      await Future.delayed(Duration(seconds: 2 * attempt));
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      camera.recovering = false;
+      camera.ready = ok;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? '${camera.configuration.deviceName} recuperada'
+              : 'No se pudo recuperar ${camera.configuration.deviceName}: '
+                  '${camera.service.lastStartError ?? camera.service.cameraError.value ?? 'error desconocido'}',
+        ),
+        backgroundColor: ok ? const Color(0xFF34D399) : Colors.redAccent,
+      ),
+    );
+  }
+
 
   void _assignSourceToSlot(
     int slotId,
@@ -331,6 +440,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       _liveDevices[id] = _LiveDevice(
         configuration,
         onSamples: () => _samplesPending = true,
+        onStatusChanged: () {
+          if (mounted) setState(() {});
+        },
       );
     });
     cameras.forEach((id, configuration) {
@@ -339,7 +451,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         existing.configuration = configuration;
         return;
       }
-      _cameras[id] = _CameraDevice(configuration);
+      final camera = _CameraDevice(configuration);
+      camera.service.cameraError.addListener(() => _onCameraError(id));
+      _cameras[id] = camera;
     });
 
     // Monitors showing a device that left the session are emptied.
@@ -624,19 +738,21 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return true;
 
       case 'START_VIDEO_RECORDING':
+        // Devuelve {'ok': bool, 'reason': String?} para que la ventana
+        // principal muestre la causa concreta del fallo.
         final ready = _cameras.values.where((c) => c.ready).toList();
         if (ready.isEmpty) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: cámara no preparada.',
-          );
-          return false;
+          const reason =
+              'La cámara no está preparada. Selecciónala o pulsa '
+              '"Reintentar" en el panel de dispositivos.';
+          debugPrint('[VIDEO] No se puede iniciar: $reason');
+          return {'ok': false, 'reason': reason};
         }
 
         if (_anyCameraRecording) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: ya existe una grabación activa.',
-          );
-          return false;
+          const reason = 'Ya existe una grabación activa.';
+          debugPrint('[VIDEO] No se puede iniciar: $reason');
+          return {'ok': false, 'reason': reason};
         }
 
         final summary = arguments?.toString() ?? _participantIds;
@@ -654,11 +770,21 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           setState(() {});
         }
 
+        final failures = [
+          for (var i = 0; i < ready.length; i++)
+            if (!results[i])
+              '${ready[i].configuration.deviceName}: '
+                  '${ready[i].service.lastStartError ?? 'error desconocido'}',
+        ];
+
         debugPrint(
-          '[VIDEO] Resultado inicio grabación: $results',
+          '[VIDEO] Resultado inicio grabación: $results $failures',
         );
 
-        return success;
+        return {
+          'ok': success,
+          'reason': failures.isEmpty ? null : failures.join('\n'),
+        };
 
       case 'STOP_VIDEO_RECORDING':
         if (_anyCameraRecording && arguments is Map) {
@@ -791,6 +917,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         );
         generatedFiles.add(filePath);
         debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
+      }
+
+      // Disconnections, data gaps and reconnections, to locate the gaps.
+      if (service.connectionEvents.isNotEmpty) {
+        final filePath = await _createTemporaryCsvFile(
+          'polar_connection_events_${id}_$timestampStr.csv',
+          service.exportConnectionEventsCsv(),
+        );
+        generatedFiles.add(filePath);
       }
     }
 
@@ -1123,8 +1258,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     service.startScan();
 
+    var connecting = false;
+
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
@@ -1143,7 +1281,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               content: SizedBox(
                 width: 420,
                 height: 320,
-                child: StreamBuilder<List<BleDevice>>(
+                child: connecting
+                    ? _buildPolarConnectingView(service)
+                    : StreamBuilder<List<BleDevice>>(
                   stream: service.scanStream,
                   builder: (context, snapshot) {
                     // Devices of this type first; the serial (printed on
@@ -1204,6 +1344,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                               foregroundColor: Colors.black,
                             ),
                             onPressed: () async {
+                              setDialogState(() => connecting = true);
                               await service.stopScan();
                               final connected = await service.connectToDevice(bleDevice);
                               final failed = connected
@@ -1211,11 +1352,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                                   : const <String>[];
                               if (dialogCtx.mounted) {
                                 Navigator.of(dialogCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
+                              }
+                              if (mounted) {
+                                ScaffoldMessenger.of(this.context).showSnackBar(
                                   SnackBar(
                                     content: Text(
                                       !connected
-                                          ? 'Fallo de conexión'
+                                          ? service.linkStatus.value.message
                                           : failed.isEmpty
                                               ? 'Conectado a $name'
                                               : 'Conectado a $name, sin ${failed.join(', ')}',
@@ -1239,19 +1382,81 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () {
-                    service.stopScan();
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
-                ),
+                if (connecting)
+                  TextButton(
+                    onPressed: () async {
+                      Navigator.of(dialogCtx).pop();
+                      await service.cancelConnection();
+                    },
+                    child: const Text('Cancelar conexión', style: TextStyle(color: Colors.white54)),
+                  )
+                else
+                  TextButton(
+                    onPressed: () {
+                      service.stopScan();
+                      Navigator.of(dialogCtx).pop();
+                    },
+                    child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+                  ),
               ],
             );
           },
         );
       },
     );
+  }
+
+  Widget _buildPolarConnectingView(PolarBleService service) {
+    return ValueListenableBuilder<PolarLinkStatus>(
+      valueListenable: service.linkStatus,
+      builder: (context, status, _) {
+        final isError = status.state == PolarLinkState.error;
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isError)
+                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40)
+              else
+                const CircularProgressIndicator(color: Color(0xFF38BDF8)),
+              const SizedBox(height: 16),
+              Text(
+                status.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (status.state == PolarLinkState.pairing) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Si Windows pide permiso para emparejar, pulsa "Permitir". '
+                  'Si no aparece nada en un minuto, cancela y vuelve a intentarlo.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static DeviceConnectionStatus _polarConnectionStatus(PolarBleService service) {
+    switch (service.linkStatus.value.state) {
+      case PolarLinkState.connected:
+        return DeviceConnectionStatus.connected;
+      case PolarLinkState.connecting:
+      case PolarLinkState.pairing:
+      case PolarLinkState.configuring:
+      case PolarLinkState.reconnecting:
+        return DeviceConnectionStatus.connecting;
+      case PolarLinkState.error:
+        return DeviceConnectionStatus.error;
+      case PolarLinkState.disconnected:
+        return service.isConnected
+            ? DeviceConnectionStatus.connected
+            : DeviceConnectionStatus.disconnected;
+    }
   }
 
   static const _sensorLabels = {
@@ -1281,9 +1486,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 ? camera.service.selectedCamera?.name
                 : (subtitle.isEmpty ? null : subtitle),
             icon: Icons.videocam_rounded,
-            connectionStatus: camera.ready
-                ? DeviceConnectionStatus.connected
-                : DeviceConnectionStatus.disconnected,
+            connectionStatus: camera.recovering
+                ? DeviceConnectionStatus.connecting
+                : camera.ready
+                    ? DeviceConnectionStatus.connected
+                    : camera.service.cameraError.value != null
+                        ? DeviceConnectionStatus.error
+                        : DeviceConnectionStatus.disconnected,
+            statusMessage: camera.recovering
+                ? 'Recuperando cámara...'
+                : camera.ready
+                    ? null
+                    : camera.service.cameraError.value,
             sensors: [
               if (device.hasSensor('video'))
                 SensorStatus(
@@ -1324,9 +1538,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   ].join(' · ')
                 : (subtitle.isEmpty ? null : subtitle),
             icon: Icons.favorite_rounded,
-            connectionStatus: service.isConnected
-                ? DeviceConnectionStatus.connected
-                : DeviceConnectionStatus.disconnected,
+            connectionStatus: _polarConnectionStatus(service),
+            statusMessage: switch (service.linkStatus.value.state) {
+              PolarLinkState.connected || PolarLinkState.disconnected => null,
+              _ => service.linkStatus.value.message,
+            },
             sensors: [
               for (final sensor in _sensorLabels.keys)
                 if (device.hasSensor(sensor))
@@ -1917,6 +2133,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             onDeviceAction: _deviceActionForDevice(
               _deviceStatuses[index].id,
             ),
+            onRetry: _retryActionForDevice(
+              _deviceStatuses[index].id,
+            ),
           );
         },
       ),
@@ -2333,11 +2552,13 @@ class _DeviceStatusCard extends StatelessWidget {
   final DeviceStatus device;
   final void Function(String deviceId, String sensorId) onSensorTap;
   final VoidCallback? onDeviceAction;
+  final VoidCallback? onRetry;
 
   const _DeviceStatusCard({
     required this.device,
     required this.onSensorTap,
     this.onDeviceAction,
+    this.onRetry,
   });
 
   @override
@@ -2358,6 +2579,14 @@ class _DeviceStatusCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+                if (onRetry != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Reintentar conexión',
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    onPressed: onRetry,
+                  ),
+                ],
                 if (onDeviceAction != null) ...[
                   const SizedBox(width: 8),
                   IconButton(
@@ -2379,6 +2608,20 @@ class _DeviceStatusCard extends StatelessWidget {
                 child: Text(
                   device.subtitle!,
                   style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ),
+            if (device.statusMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 2),
+                child: Text(
+                  device.statusMessage!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: device.connectionStatus ==
+                            DeviceConnectionStatus.error
+                        ? Colors.redAccent
+                        : Colors.orangeAccent,
+                  ),
                 ),
               ),
             if (device.note != null)
@@ -2504,6 +2747,7 @@ class _LiveDevice {
   DeviceConfiguration configuration;
   final PolarBleService service = PolarBleService();
   final VoidCallback onSamples;
+  final VoidCallback onStatusChanged;
 
   // Windows of the live charts. The ECG strip is short so each beat is
   // wide enough to read; heart rate and RR show the trend of two minutes.
@@ -2517,7 +2761,12 @@ class _LiveDevice {
 
   final List<StreamSubscription<dynamic>> _subscriptions = [];
 
-  _LiveDevice(this.configuration, {required this.onSamples}) {
+  _LiveDevice(
+    this.configuration, {
+    required this.onSamples,
+    required this.onStatusChanged,
+  }) {
+    service.linkStatus.addListener(onStatusChanged);
     _subscriptions.addAll([
       service.hrStream.listen((bpm) {
         if (bpm <= 0) return; // 0 = disconnected
@@ -2571,6 +2820,7 @@ class _LiveDevice {
   }
 
   void dispose() {
+    service.linkStatus.removeListener(onStatusChanged);
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
@@ -2583,6 +2833,9 @@ class _CameraDevice {
   DeviceConfiguration configuration;
   final VideoRecordingService service;
   bool ready = false;
+
+  /// True while the camera is being reopened after an error or a retry.
+  bool recovering = false;
 
   _CameraDevice(this.configuration)
       : service = VideoRecordingService(cameraId: configuration.deviceId);

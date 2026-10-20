@@ -1,10 +1,61 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import '../models/polar_hr_sample.dart';
 import '../models/device_configuration.dart';
+
+/// Estado del enlace BLE con el sensor Polar, pensado para mostrarse en la UI.
+enum PolarLinkState {
+  disconnected,
+  connecting,
+  pairing,
+  configuring,
+  connected,
+  reconnecting,
+  error,
+}
+
+class PolarLinkStatus {
+  final PolarLinkState state;
+  final String message;
+
+  /// Número de intento durante una reconexión (0 si no aplica).
+  final int attempt;
+
+  const PolarLinkStatus(
+    this.state,
+    this.message, {
+    this.attempt = 0,
+  });
+
+  bool get isBusy =>
+      state == PolarLinkState.connecting ||
+      state == PolarLinkState.pairing ||
+      state == PolarLinkState.configuring ||
+      state == PolarLinkState.reconnecting;
+}
+
+/// Evento de conexión registrado para poder localizar huecos en los datos.
+class PolarConnectionEvent {
+  final DateTime timestamp;
+  final String event;
+  final String detail;
+
+  PolarConnectionEvent(
+    this.event, [
+    this.detail = '',
+  ]) : timestamp = DateTime.now().toUtc();
+
+  static const String csvHeader = 'timestamp_utc,event,detail';
+
+  String toCsvRow() {
+    final escapedDetail = detail.replaceAll('"', "'");
+    return '${timestamp.toIso8601String()},$event,"$escapedDetail"';
+  }
+}
 
 class PolarBleService {
   // ===========================================================================
@@ -245,6 +296,97 @@ class PolarBleService {
       _connectedDevice != null;
 
   // ===========================================================================
+  // LINK STATUS, RECONNECTION AND WATCHDOG
+  // ===========================================================================
+
+  final ValueNotifier<PolarLinkStatus> linkStatus = ValueNotifier(
+    const PolarLinkStatus(PolarLinkState.disconnected, 'Desconectado'),
+  );
+
+  final List<PolarConnectionEvent> connectionEvents = [];
+
+  /// Reintenta automáticamente cuando se pierde la conexión o dejan de
+  /// llegar datos.
+  bool autoReconnectEnabled = true;
+
+  /// Sin datos durante este tiempo con un flujo activo se considera pérdida
+  /// de recepción y se fuerza la reconexión.
+  static const Duration dataLossTimeout = Duration(seconds: 6);
+
+  static const List<Duration> _reconnectBackoff = [
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+  ];
+
+  BleDevice? _lastDevice;
+  String _lastDeviceName = 'Polar';
+
+  /// Sensores que estaban activos y deben reanudarse tras reconectar.
+  final Set<String> _sensorsToRestore = {};
+
+  bool _userRequestedDisconnect = false;
+  bool _reconnectLoopRunning = false;
+  int _connectGeneration = 0;
+
+  Timer? _watchdogTimer;
+  DateTime? _lastHrDataAt;
+  DateTime? _lastPmdDataAt;
+
+  /// Tipos de medida PMD que anuncia el sensor (ECG, ACC, PPG...).
+  /// Vacío si no se pudo leer; en ese caso se intenta todo lo configurado.
+  Set<int> _supportedPmdTypes = {};
+
+  bool get hasLastDevice => _lastDevice != null;
+  String get lastDeviceName => _lastDeviceName;
+
+  bool get supportsEcg =>
+      _supportedPmdTypes.isEmpty ||
+      _supportedPmdTypes.contains(pmdTypeEcg);
+
+  bool get supportsAcc =>
+      _supportedPmdTypes.isEmpty ||
+      _supportedPmdTypes.contains(pmdTypeAcc);
+
+  void _setStatus(
+    PolarLinkState state,
+    String message, {
+    int attempt = 0,
+  }) {
+    debugPrint('[POLAR LINK] ${state.name}: $message');
+    linkStatus.value = PolarLinkStatus(state, message, attempt: attempt);
+  }
+
+  void _logEvent(String event, [String detail = '']) {
+    connectionEvents.add(PolarConnectionEvent(event, detail));
+  }
+
+  String exportConnectionEventsCsv() {
+    final buffer = StringBuffer()..writeln(PolarConnectionEvent.csvHeader);
+    for (final event in connectionEvents) {
+      buffer.writeln(event.toCsvRow());
+    }
+    return buffer.toString();
+  }
+
+  static String _displayName(BleDevice device) {
+    final name = device.name;
+    return name != null && name.isNotEmpty ? name : device.deviceId;
+  }
+
+  /// Verity Sense se anuncia como "Polar Sense XXXXXXXX".
+  static bool _isVeritySense(BleDevice device) {
+    final name = (device.name ?? '').toLowerCase();
+    return name.contains('sense') || name.contains('verity');
+  }
+
+  static bool get _isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+
+  // ===========================================================================
   // STATE
   // ===========================================================================
 
@@ -323,7 +465,10 @@ class PolarBleService {
         '[BLE CONNECTION] device=${device.deviceId} '
         'isConnected=$isConnected',
       );
-      if (!isConnected && device.deviceId == _connectedDevice?.deviceId) {
+      if (!isConnected &&
+          !_establishing &&
+          !_tearingDown &&
+          device.deviceId == _connectedDevice?.deviceId) {
         _handleUnexpectedDisconnect();
       }
     });
@@ -342,6 +487,8 @@ class PolarBleService {
   // ===========================================================================
 
   void _handleUnexpectedDisconnect() {
+    final wasStreaming = _rememberActiveSensors();
+
     _connectedDevice = null;
 
     _hrCharacteristic = null;
@@ -369,6 +516,243 @@ class PolarBleService {
     if (!_hrStreamController.isClosed) {
       _hrStreamController.add(0);
     }
+
+    _logEvent('disconnected_unexpectedly', _lastDeviceName);
+    _scheduleReconnect(
+      reason: 'Conexión perdida',
+      restoreSensors: wasStreaming,
+    );
+  }
+
+  /// Guarda qué sensores estaban activos. Devuelve true si había alguno.
+  bool _rememberActiveSensors() {
+    if (_hrStreaming) _sensorsToRestore.add('heart_rate');
+    if (_accStreaming) _sensorsToRestore.add('acc');
+    if (_ecgStreaming) _sensorsToRestore.add('ecg');
+    return _sensorsToRestore.isNotEmpty;
+  }
+
+  // ===========================================================================
+  // DATA-LOSS WATCHDOG
+  // ===========================================================================
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _checkDataFlow(),
+    );
+  }
+
+  void _stopWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+  }
+
+  void _checkDataFlow() {
+    if (_connectedDevice == null || linkStatus.value.isBusy) {
+      return;
+    }
+
+    final now = DateTime.now();
+    DateTime? lastData;
+    String stream;
+
+    Duration timeout;
+
+    if (_accStreaming || _ecgStreaming) {
+      lastData = _lastPmdDataAt;
+      stream = 'PMD (ACC/ECG)';
+      timeout = dataLossTimeout;
+    } else if (_hrStreaming) {
+      // HR puede pausarse si la banda pierde contacto con la piel, así que
+      // se da más margen antes de considerarlo una pérdida de conexión.
+      lastData = _lastHrDataAt;
+      stream = 'HR';
+      timeout = dataLossTimeout * 2.5;
+    } else {
+      return;
+    }
+
+    if (lastData == null || now.difference(lastData) < timeout) {
+      return;
+    }
+
+    debugPrint(
+      '[POLAR LINK] Sin datos de $stream desde '
+      '${now.difference(lastData).inSeconds} s; forzando reconexión.',
+    );
+
+    _logEvent(
+      'data_loss',
+      'Sin datos de $stream durante ${now.difference(lastData).inSeconds} s',
+    );
+
+    _rememberActiveSensors();
+    _stopWatchdog();
+
+    unawaited(() async {
+      await _teardownConnection();
+      _scheduleReconnect(
+        reason: 'Sin datos del sensor',
+        restoreSensors: true,
+      );
+    }());
+  }
+
+  // ===========================================================================
+  // RECONNECTION
+  // ===========================================================================
+
+  void _scheduleReconnect({
+    required String reason,
+    required bool restoreSensors,
+  }) {
+    if (_userRequestedDisconnect ||
+        !autoReconnectEnabled ||
+        _lastDevice == null) {
+      _setStatus(PolarLinkState.disconnected, reason);
+      return;
+    }
+
+    if (!restoreSensors) {
+      _sensorsToRestore.clear();
+    }
+
+    unawaited(_runReconnectLoop(reason));
+  }
+
+  /// Reintento manual desde la UI. Reanuda los sensores que estuvieran
+  /// activos o, si no había ninguno, los indicados en [configuration].
+  Future<bool> retryConnection({
+    DeviceConfiguration? configuration,
+  }) async {
+    final device = _lastDevice;
+    if (device == null) {
+      return false;
+    }
+
+    if (_sensorsToRestore.isEmpty && configuration != null) {
+      _sensorsToRestore.addAll(configuration.sensors);
+    }
+
+    _userRequestedDisconnect = false;
+    _logEvent('manual_retry', _lastDeviceName);
+
+    _rememberActiveSensors();
+    await _teardownConnection();
+
+    final ok = await _connectAndRestore(device, attempt: 1);
+
+    // Si ya hay un bucle automático en marcha, sigue él; si no, se arranca.
+    if (!ok && autoReconnectEnabled) {
+      unawaited(_runReconnectLoop('Reintento fallido'));
+    }
+
+    return ok;
+  }
+
+  Future<void> _runReconnectLoop(String reason) async {
+    if (_reconnectLoopRunning) {
+      return;
+    }
+
+    _reconnectLoopRunning = true;
+    final generation = ++_connectGeneration;
+
+    try {
+      var attempt = 0;
+
+      while (!_userRequestedDisconnect &&
+          autoReconnectEnabled &&
+          generation == _connectGeneration &&
+          _connectedDevice == null) {
+        final device = _lastDevice;
+        if (device == null) break;
+
+        final wait = _reconnectBackoff[
+            math.min(attempt, _reconnectBackoff.length - 1)];
+        attempt++;
+
+        _setStatus(
+          PolarLinkState.reconnecting,
+          '$reason. Reintentando en ${wait.inSeconds} s '
+          '(intento $attempt)...',
+          attempt: attempt,
+        );
+
+        await Future.delayed(wait);
+
+        if (_userRequestedDisconnect ||
+            generation != _connectGeneration ||
+            _connectedDevice != null) {
+          break;
+        }
+
+        _logEvent('reconnect_attempt', 'intento $attempt');
+
+        final ok = await _connectAndRestore(device, attempt: attempt);
+        if (ok) break;
+      }
+    } finally {
+      _reconnectLoopRunning = false;
+    }
+  }
+
+  bool _attemptInProgress = false;
+
+  Future<bool> _connectAndRestore(
+    BleDevice device, {
+    required int attempt,
+  }) async {
+    if (_attemptInProgress) {
+      return false;
+    }
+
+    _attemptInProgress = true;
+    try {
+      return await _connectAndRestoreInner(device, attempt: attempt);
+    } finally {
+      _attemptInProgress = false;
+    }
+  }
+
+  Future<bool> _connectAndRestoreInner(
+    BleDevice device, {
+    required int attempt,
+  }) async {
+    final ok = await _establishConnection(device, attempt: attempt);
+    if (!ok) {
+      return false;
+    }
+
+    final sensors = Set<String>.from(_sensorsToRestore);
+    if (sensors.isNotEmpty) {
+      _setStatus(
+        PolarLinkState.configuring,
+        'Reanudando sensores (${sensors.join(', ')})...',
+        attempt: attempt,
+      );
+
+      await startConfiguredSensors(
+        DeviceConfiguration(
+          deviceId: 'polar',
+          deviceName: _lastDeviceName,
+          sensors: sensors,
+        ),
+      );
+    }
+
+    // La conexión puede haberse vuelto a caer mientras se reanudaban.
+    if (_connectedDevice == null) {
+      return false;
+    }
+
+    _sensorsToRestore.clear();
+    _logEvent('reconnected', _lastDeviceName);
+    _setStatus(PolarLinkState.connected, 'Conectado a $_lastDeviceName');
+    _startWatchdog();
+    return true;
   }
 
   // ===========================================================================
@@ -406,113 +790,284 @@ class PolarBleService {
   // CONNECT
   // ===========================================================================
 
+  /// Conexión iniciada por el usuario desde el diálogo de búsqueda.
   Future<bool> connectToDevice(
     BleDevice device,
   ) async {
-    try {
-      if (_connectedDevice != null) {
-        await disconnect();
-      }
+    _userRequestedDisconnect = false;
+    _connectGeneration++;
+    _sensorsToRestore.clear();
+    _stopWatchdog();
 
+    if (_connectedDevice != null) {
+      await _teardownConnection();
+    }
+
+    _lastDevice = device;
+    _lastDeviceName = _displayName(device);
+    _logEvent('connect_requested', _lastDeviceName);
+
+    final ok = await _establishConnection(device);
+
+    if (ok) {
+      _logEvent('connected', _lastDeviceName);
+      _setStatus(PolarLinkState.connected, 'Conectado a $_lastDeviceName');
+      _startWatchdog();
+    }
+
+    return ok;
+  }
+
+  /// Cancela una conexión en curso (por ejemplo, si se queda esperando al
+  /// emparejamiento de Windows).
+  Future<void> cancelConnection() async {
+    _connectGeneration++;
+    _userRequestedDisconnect = true;
+    _logEvent('connect_cancelled', _lastDeviceName);
+    await _teardownConnection();
+    final device = _lastDevice;
+    if (device != null) {
+      try {
+        await device.disconnect(timeout: const Duration(seconds: 5));
+      } catch (_) {}
+    }
+    _setStatus(PolarLinkState.disconnected, 'Conexión cancelada');
+  }
+
+  bool _establishing = false;
+
+  Future<bool> _establishConnection(
+    BleDevice device, {
+    int attempt = 0,
+  }) async {
+    final generation = _connectGeneration;
+    final name = _displayName(device);
+    var triedPairing = false;
+    var linkWasUp = false;
+
+    _establishing = true;
+
+    try {
       await stopScan();
 
-      await device.connect(
-        timeout: const Duration(seconds: 30),
-      );
+      for (var pass = 0; pass < 2; pass++) {
+        try {
+          _setStatus(
+            attempt > 0
+                ? PolarLinkState.reconnecting
+                : PolarLinkState.connecting,
+            'Conectando con $name...',
+            attempt: attempt,
+          );
 
-      _connectedDevice = device;
-      _watchConnection(device);
-
-      final services =
-          await device.discoverServices();
-
-      for (final service in services) {
-        for (final characteristic
-            in service.characteristics) {
-          final uuid =
-              characteristic.uuid.toLowerCase();
-
-          if (uuid == psftp51Uuid) {
-            _psftp51 = characteristic;
-          } else if (uuid == psftp52Uuid) {
-            _psftp52 = characteristic;
-          } else if (uuid == psftp53Uuid) {
-            _psftp53 = characteristic;
+          if (!await device.isConnected) {
+            await device.connect(
+              timeout: const Duration(seconds: 20),
+            );
           }
+
+          linkWasUp = true;
+
+          // Verity Sense pide emparejamiento en Windows. Si se deja que
+          // Windows lo dispare al acceder a una característica protegida,
+          // la conexión GATT se corta tras pulsar "Permitir" y la app se
+          // queda esperando. Lo hacemos explícito antes de configurar.
+          if (_isWindows && (_isVeritySense(device) || pass > 0)) {
+            triedPairing = true;
+            await _ensurePaired(device, name);
+          }
+
+          _checkNotCancelled(generation);
+
+          _setStatus(
+            PolarLinkState.configuring,
+            'Configurando $name...',
+            attempt: attempt,
+          );
+
+          await _configureConnectedDevice(device);
+          _checkNotCancelled(generation);
+
+          return true;
+        } catch (e, stack) {
+          debugPrint('[POLAR DEBUG] Error conectando (pasada $pass): $e');
+          debugPrint('[POLAR DEBUG] $stack');
+
+          await _teardownConnection();
+          try {
+            await device.disconnect(timeout: const Duration(seconds: 5));
+          } catch (_) {}
+
+          if (e is _ConnectCancelled) {
+            return false;
+          }
+
+          // Segunda pasada solo en Windows, si llegó a conectar (el fallo fue
+          // al configurar, típico de falta de emparejamiento) y si aún no
+          // se ha intentado emparejar.
+          if (pass == 0 && _isWindows && linkWasUp && !triedPairing) {
+            _logEvent('connect_retry_with_pairing', '$e');
+            continue;
+          }
+
+          _logEvent('connect_failed', '$e');
+          _setStatus(
+            PolarLinkState.error,
+            'No se pudo conectar con $name: ${_shortError(e)}',
+            attempt: attempt,
+          );
+          return false;
         }
       }
 
-      debugPrint(
-        '[PSFTP] FB005C51: '
-        '${_psftp51 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      debugPrint(
-        '[PSFTP] FB005C52: '
-        '${_psftp52 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      debugPrint(
-        '[PSFTP] FB005C53: '
-        '${_psftp53 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      if (_psftp51 != null) {
-        debugPrint(
-          '[PSFTP] 51 properties: '
-          '${_psftp51!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      if (_psftp52 != null) {
-        debugPrint(
-          '[PSFTP] 52 properties: '
-          '${_psftp52!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      if (_psftp53 != null) {
-        debugPrint(
-          '[PSFTP] 53 properties: '
-          '${_psftp53!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      final state =
-          await device.connectionState;
-
-      if (state !=
-          BleConnectionState.connected) {
-        throw Exception(
-          'Dispositivo no conectado: $state',
-        );
-      }
-
-      // -----------------------------------------------------------------------
-      // HR
-      // -----------------------------------------------------------------------
-
-      await _prepareHeartRate(device);
-
-      // -----------------------------------------------------------------------
-      // PMD
-      // -----------------------------------------------------------------------
-
-      await _setupPmd(device);
-
-      return true;
-    } catch (e, stack) {
-      debugPrint(
-        '[POLAR DEBUG] Error conectando: $e',
-      );
-
-      debugPrint(
-        '[POLAR DEBUG] $stack',
-      );
-
-      await disconnect();
-
       return false;
+    } finally {
+      _establishing = false;
+    }
+  }
+
+  void _checkNotCancelled(int generation) {
+    if (generation != _connectGeneration) {
+      throw const _ConnectCancelled();
+    }
+  }
+
+  static String _shortError(Object e) {
+    final text = e.toString();
+    return text.length > 160 ? '${text.substring(0, 160)}...' : text;
+  }
+
+  Future<void> _ensurePaired(BleDevice device, String name) async {
+    bool? paired;
+    try {
+      paired = await device.isPaired(
+        timeout: const Duration(seconds: 5),
+      );
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] isPaired falló: $e');
+    }
+
+    if (paired == true) {
+      return;
+    }
+
+    _setStatus(
+      PolarLinkState.pairing,
+      'Emparejando $name. Acepta el aviso de Windows si aparece...',
+    );
+    _logEvent('pairing_started', name);
+
+    try {
+      await device.pair(
+        timeout: const Duration(seconds: 60),
+      );
+      _logEvent('pairing_done', name);
+    } catch (e) {
+      // No es necesariamente fatal: algunos sensores funcionan sin
+      // emparejar. Si la configuración falla después, se informa allí.
+      debugPrint('[POLAR DEBUG] Emparejamiento falló: $e');
+      _logEvent('pairing_failed', '$e');
+    }
+
+    // Windows suele cerrar la conexión GATT al terminar el emparejamiento.
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    if (!await device.isConnected) {
+      await device.connect(
+        timeout: const Duration(seconds: 20),
+      );
+    }
+  }
+
+  Future<void> _configureConnectedDevice(BleDevice device) async {
+    _connectedDevice = device;
+    _watchConnection(device);
+
+    final services = await device.discoverServices(
+      timeout: const Duration(seconds: 15),
+    );
+
+    for (final service in services) {
+      for (final characteristic in service.characteristics) {
+        final uuid = characteristic.uuid.toLowerCase();
+
+        if (uuid == psftp51Uuid) {
+          _psftp51 = characteristic;
+        } else if (uuid == psftp52Uuid) {
+          _psftp52 = characteristic;
+        } else if (uuid == psftp53Uuid) {
+          _psftp53 = characteristic;
+        }
+      }
+    }
+
+    debugPrint(
+      '[PSFTP] FB005C51: '
+      '${_psftp51 != null ? "ENCONTRADA" : "NO ENCONTRADA"}, '
+      'FB005C52: '
+      '${_psftp52 != null ? "ENCONTRADA" : "NO ENCONTRADA"}, '
+      'FB005C53: '
+      '${_psftp53 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
+    );
+
+    final state = await device.connectionState;
+
+    if (state != BleConnectionState.connected) {
+      throw Exception(
+        'Dispositivo no conectado: $state',
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // HR
+    // -------------------------------------------------------------------------
+
+    await _prepareHeartRate(device);
+
+    // -------------------------------------------------------------------------
+    // PMD
+    // -------------------------------------------------------------------------
+
+    await _setupPmd(device);
+
+    await _readPmdFeatures();
+  }
+
+  // ===========================================================================
+  // PMD FEATURES
+  // ===========================================================================
+
+  /// Lee el Control Point PMD: el primer byte es 0x0F y los siguientes son
+  /// una máscara de bits con los tipos de medida soportados.
+  Future<void> _readPmdFeatures() async {
+    _supportedPmdTypes = {};
+
+    final controlPoint = _pmdControlPoint;
+    if (controlPoint == null) return;
+
+    try {
+      final data = await controlPoint.read(
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (data.length >= 2 && data[0] == 0x0F) {
+        final features = <int>{};
+        for (var byteIndex = 1; byteIndex < data.length; byteIndex++) {
+          for (var bit = 0; bit < 8; bit++) {
+            if ((data[byteIndex] >> bit) & 0x01 == 1) {
+              features.add((byteIndex - 1) * 8 + bit);
+            }
+          }
+        }
+        _supportedPmdTypes = features;
+      }
+
+      debugPrint(
+        '[POLAR DEBUG] PMD features: ${_hex(data)} -> '
+        'tipos $_supportedPmdTypes',
+      );
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] No se pudieron leer las PMD features: $e');
     }
   }
 
@@ -527,7 +1082,7 @@ class PolarBleService {
         await device.getCharacteristic(
       hrMeasurementUuid,
       service: hrServiceUuid,
-      preferCached: false,
+      timeout: const Duration(seconds: 15),
     );
 
     _hrCharacteristic =
@@ -556,14 +1111,14 @@ class PolarBleService {
         await device.getCharacteristic(
       pmdControlPointUuid,
       service: pmdServiceUuid,
-      preferCached: false,
+      timeout: const Duration(seconds: 15),
     );
 
     _pmdData =
         await device.getCharacteristic(
       pmdDataUuid,
       service: pmdServiceUuid,
-      preferCached: false,
+      timeout: const Duration(seconds: 15),
     );
 
     // -------------------------------------------------------------------------
@@ -603,7 +1158,7 @@ class PolarBleService {
 
     await _pmdData!
         .notifications
-        .subscribe();
+        .subscribe(timeout: const Duration(seconds: 15));
 
     debugPrint(
       '[POLAR DEBUG] PMD Data SUSCRITO',
@@ -646,7 +1201,7 @@ class PolarBleService {
 
     await _pmdControlPoint!
         .indications
-        .subscribe();
+        .subscribe(timeout: const Duration(seconds: 15));
 
     debugPrint(
       '[POLAR DEBUG] PMD Control indications SUSCRITAS',
@@ -710,6 +1265,7 @@ class PolarBleService {
       );
     }
 
+    _lastPmdDataAt = DateTime.now();
     _ecgStreaming = true;
 
     debugPrint(
@@ -771,6 +1327,7 @@ class PolarBleService {
 
     _resetPmdTimingState();
 
+    _lastPmdDataAt = DateTime.now();
     _accStreaming = true;
 
     debugPrint(
@@ -1316,6 +1873,8 @@ class PolarBleService {
         '${_hex(data)}',
       );
     }
+
+    _lastPmdDataAt = DateTime.now();
 
     // PMD measurement type occupies the lower 6 bits.
     final measurementType =
@@ -2477,6 +3036,7 @@ class PolarBleService {
           '[POLAR DEBUG] HR CALLBACK RECIBIDO: ${value.length} bytes',
         );
 
+        _lastHrDataAt = DateTime.now();
         _parseHeartRateData(value);
 
         // Confirmamos que HR ya está recibiendo datos reales.
@@ -2492,8 +3052,11 @@ class PolarBleService {
       );
     }
 
-    await characteristic.notifications.subscribe();
+    await characteristic.notifications.subscribe(
+      timeout: const Duration(seconds: 15),
+    );
 
+    _lastHrDataAt = DateTime.now();
     _hrStreaming = true;
     _rrStreaming = true;
 
@@ -2754,7 +3317,33 @@ class PolarBleService {
   // DISCONNECT
   // ===========================================================================
 
+  /// Desconexión pedida por el usuario: no se reintenta automáticamente.
   Future<void> disconnect() async {
+    _userRequestedDisconnect = true;
+    _connectGeneration++;
+    _sensorsToRestore.clear();
+    _stopWatchdog();
+
+    if (_connectedDevice != null) {
+      _logEvent('disconnected_by_user', _lastDeviceName);
+    }
+
+    await _teardownConnection();
+    _setStatus(PolarLinkState.disconnected, 'Desconectado');
+  }
+
+  bool _tearingDown = false;
+
+  Future<void> _teardownConnection() async {
+    _tearingDown = true;
+    try {
+      await _teardownConnectionInner();
+    } finally {
+      _tearingDown = false;
+    }
+  }
+
+  Future<void> _teardownConnectionInner() async {
     final device =
         _connectedDevice;
 
@@ -2845,7 +3434,7 @@ class PolarBleService {
       await device.disconnect(
         timeout:
             const Duration(
-          seconds: 30,
+          seconds: 10,
         ),
       );
     } catch (e) {
@@ -2912,6 +3501,9 @@ class PolarBleService {
   // ===========================================================================
 
   void _resetConnectionState() {
+    _lastHrDataAt = null;
+    _lastPmdDataAt = null;
+
     _completePendingPmdResponse(
       error: StateError(
         'PMD connection closed',
@@ -3047,6 +3639,7 @@ class PolarBleService {
 
   Future<void> dispose() async {
     await disconnect();
+    linkStatus.dispose();
     await _connectionSubscription?.cancel();
 
     await _hrStreamController.close();
@@ -3059,21 +3652,52 @@ class PolarBleService {
   // START CONFIGURED SENSORS
   // ===========================================================================
 
-  Future<void> startConfiguredSensors(
+  /// Inicia los sensores configurados que el dispositivo soporta. Un fallo
+  /// en uno no impide arrancar los demás. Devuelve los errores por sensor.
+  Future<Map<String, String>> startConfiguredSensors(
     DeviceConfiguration configuration,
   ) async {
+    final errors = <String, String>{};
+
+    Future<void> run(String sensor, Future<void> Function() start) async {
+      try {
+        await start();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Error iniciando $sensor: $e');
+        errors[sensor] = _shortError(e);
+        _logEvent('sensor_start_failed', '$sensor: $e');
+      }
+    }
+
     if (configuration.hasSensor('heart_rate')) {
-      await startHeartRate();
+      await run('heart_rate', startHeartRate);
     }
 
     if (configuration.hasSensor('acc')) {
-      await startAcceleration();
+      if (supportsAcc) {
+        await run('acc', startAcceleration);
+      } else {
+        errors['acc'] = 'No soportado por $_lastDeviceName';
+      }
     }
 
     if (configuration.hasSensor('ecg')) {
-      await startEcg();
+      if (supportsEcg) {
+        await run('ecg', startEcg);
+      } else {
+        errors['ecg'] = 'No soportado por $_lastDeviceName';
+      }
     }
+
+    return errors;
   }
+}
+
+class _ConnectCancelled implements Exception {
+  const _ConnectCancelled();
+
+  @override
+  String toString() => 'Conexión cancelada';
 }
 
 // =============================================================================

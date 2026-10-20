@@ -138,6 +138,25 @@ class VideoRecordingService {
   bool _isRecording = false;
   static const double minimumFreeSpaceGB = 10.0;
 
+  /// Motivo concreto del último fallo al iniciar la grabación, para
+  /// mostrarlo en la UI en lugar de un mensaje genérico.
+  String? lastStartError;
+
+  /// Último error reportado por la cámara (desconexión USB, fallo de
+  /// MediaFoundation...). null si la cámara funciona.
+  final ValueNotifier<String?> cameraError = ValueNotifier(null);
+
+  /// Última cámara usada, para poder reintentar la conexión.
+  CameraDescription? _lastCamera;
+  CameraDescription? get lastCamera => _lastCamera;
+
+  /// Carpeta donde se comprobó el espacio libre la última vez.
+  String? lastCheckedPath;
+
+  /// Se activa si la cámara abre con audio pero no consigue grabar con él;
+  /// a partir de ahí se abre directamente sin audio.
+  bool _recordWithoutAudio = false;
+
   DateTime? _currentRecordingStartTime;
   final List<VideoLogEntry> recordedVideoLogs = [];
 
@@ -158,6 +177,8 @@ class VideoRecordingService {
       debugPrint(
         '[VIDEO] Application documents path: ${directory.path}',
       );
+
+      lastCheckedPath = directory.path;
 
       final freeSpaceMB =
           await DiskSpace.getFreeDiskSpaceForPath(directory.path);
@@ -246,8 +267,12 @@ class VideoRecordingService {
         '${camera.name}',
       );
 
+      _lastCamera = camera;
+      cameraError.value = null;
+
       // Liberar el controlador anterior, si existe.
       if (_controller != null) {
+        _controller!.removeListener(_onControllerValueChanged);
         debugPrint('[VIDEO] Liberando controlador anterior...');
 
         try {
@@ -270,10 +295,11 @@ class VideoRecordingService {
       // palmadas de sincronización). On Windows the audio comes from the
       // first capture device; if it cannot be opened, the camera is opened
       // again without audio.
-      audioUnavailable = false;
+      audioUnavailable = _recordWithoutAudio;
       try {
-        await _openController(camera, enableAudio: true);
+        await _openController(camera, enableAudio: !_recordWithoutAudio);
       } on CameraException catch (e) {
+        if (_recordWithoutAudio) rethrow;
         debugPrint(
           '[VIDEO] No se pudo abrir con audio (${e.code}); '
           'reintentando sin audio.',
@@ -308,6 +334,8 @@ class VideoRecordingService {
       // Solo guardar la selección después de inicializar correctamente.
       _selectedCamera = camera;
       _isInitialized = true;
+
+      _controller!.addListener(_onControllerValueChanged);
 
       debugPrint(
         '[VIDEO] Cámara inicializada correctamente: '
@@ -377,6 +405,136 @@ class VideoRecordingService {
     await _controller!.initialize();
   }
 
+  void _onControllerValueChanged() {
+    final value = _controller?.value;
+    if (value == null) return;
+
+    if (value.hasError) {
+      final description = value.errorDescription ?? 'Error de cámara';
+      if (cameraError.value != description) {
+        debugPrint('[VIDEO] Error reportado por la cámara: $description');
+        cameraError.value = description;
+      }
+    }
+  }
+
+  /// Cierra y vuelve a abrir el controlador de la cámara actual con otros
+  /// ajustes (sin audio o a menor resolución).
+  Future<void> _reopenController({required bool enableAudio}) async {
+    final camera = _selectedCamera;
+    if (camera == null) {
+      throw StateError('No hay cámara seleccionada');
+    }
+
+    _controller?.removeListener(_onControllerValueChanged);
+    try {
+      await _controller?.dispose();
+    } catch (_) {}
+    _controller = null;
+    _isInitialized = false;
+
+    await Future.delayed(const Duration(milliseconds: 300));
+
+    await _openController(camera, enableAudio: enableAudio);
+    audioUnavailable = !enableAudio;
+    _isInitialized = true;
+    _controller!.addListener(_onControllerValueChanged);
+  }
+
+  /// Inicia la grabación. Si Windows no consigue grabar con audio o a la
+  /// resolución pedida (la vista previa puede funcionar y la grabación no),
+  /// lo reintenta sin audio y después a 720p.
+  Future<void> _startRecordingWithFallback() async {
+    final attempts = <String>[];
+
+    try {
+      await _controller!.startVideoRecording();
+      return;
+    } on CameraException catch (e) {
+      attempts.add(
+        '$resolutionLabel${audioUnavailable ? '' : ' + audio'}: '
+        '${e.code} ${e.description ?? ''}'.trim(),
+      );
+      debugPrint('[VIDEO] Falló la grabación (${attempts.last}).');
+    }
+
+    if (!audioUnavailable) {
+      try {
+        await _reopenController(enableAudio: false);
+        await _controller!.startVideoRecording();
+        _recordWithoutAudio = true;
+        debugPrint('[VIDEO] Grabando sin audio.');
+        return;
+      } on CameraException catch (e) {
+        attempts.add('$resolutionLabel sin audio: ${e.code} ${e.description ?? ''}'.trim());
+        debugPrint('[VIDEO] Falló la grabación (${attempts.last}).');
+      }
+    }
+
+    if (resolutionPreset == ResolutionPreset.veryHigh ||
+        resolutionPreset == ResolutionPreset.ultraHigh) {
+      final previous = resolutionPreset;
+      resolutionPreset = ResolutionPreset.high;
+      try {
+        await _reopenController(enableAudio: false);
+        await _controller!.startVideoRecording();
+        _recordWithoutAudio = true;
+        debugPrint('[VIDEO] Grabando a 720p sin audio.');
+        return;
+      } on CameraException catch (e) {
+        resolutionPreset = previous;
+        attempts.add('720p sin audio: ${e.code} ${e.description ?? ''}'.trim());
+        debugPrint('[VIDEO] Falló la grabación (${attempts.last}).');
+      }
+    }
+
+    throw _RecordingStartFailed(attempts);
+  }
+
+  /// Vuelve a inicializar la última cámara usada. Si estaba grabando,
+  /// intenta guardar lo grabado y empieza un nuevo segmento, que queda
+  /// registrado como otra entrada del log de vídeo.
+  Future<bool> recoverCamera({
+    String participantSummary = '',
+    int activityIndex = 0,
+    bool? restartRecording,
+  }) async {
+    final camera = _lastCamera;
+    if (camera == null) {
+      lastStartError = 'No hay ninguna cámara seleccionada.';
+      return false;
+    }
+
+    final wasRecording = _isRecording;
+    final shouldRecord = restartRecording ?? wasRecording;
+
+    if (wasRecording) {
+      try {
+        await stopSessionRecording(
+          participantSummary: participantSummary,
+          totalActivities: activityIndex,
+        );
+      } catch (e) {
+        debugPrint('[VIDEO] No se pudo cerrar el segmento anterior: $e');
+      }
+      _isRecording = false;
+    }
+
+    final ok = await initializeCamera(camera);
+    if (!ok) {
+      lastStartError ??= 'No se pudo abrir la cámara ${camera.name}.';
+      return false;
+    }
+
+    if (shouldRecord) {
+      return startSessionRecording(
+        participantSummary: participantSummary,
+      );
+    }
+
+    return true;
+  }
+
   // ===========================================================================
   // CONTROL DE GRABACIÓN DE SESIÓN CONTINUA
   // ===========================================================================
@@ -384,7 +542,16 @@ class VideoRecordingService {
   Future<bool> startSessionRecording({
     required String participantSummary,
   }) async {
-    if (!_isInitialized || _controller == null || _isRecording) {
+    lastStartError = null;
+
+    if (!_isInitialized || _controller == null) {
+      lastStartError =
+          'La cámara no está inicializada. Vuelve a seleccionarla.';
+      return false;
+    }
+
+    if (_isRecording) {
+      lastStartError = 'Ya hay una grabación en curso.';
       return false;
     }
 
@@ -394,11 +561,12 @@ class VideoRecordingService {
 
       if (freeSpaceGB != null &&
           freeSpaceGB < minimumFreeSpaceGB) {
-        debugPrint(
-          '[VIDEO] Espacio insuficiente para iniciar la grabación: '
-          '${freeSpaceGB.toStringAsFixed(2)} GB disponibles '
-          '(mínimo ${minimumFreeSpaceGB.toStringAsFixed(1)} GB).',
-        );
+        lastStartError =
+            'Espacio insuficiente en ${lastCheckedPath ?? 'la carpeta de '
+            'documentos'}: ${freeSpaceGB.toStringAsFixed(1)} GB libres '
+            '(mínimo ${minimumFreeSpaceGB.toStringAsFixed(0)} GB).';
+
+        debugPrint('[VIDEO] $lastStartError');
 
         return false;
       }
@@ -407,7 +575,7 @@ class VideoRecordingService {
       debugPrint('[VIDEO] Iniciando pipeline de grabación...');
 
       // El await completa una vez que Windows MediaFoundation inicia la captura
-      await _controller!.startVideoRecording();
+      await _startRecordingWithFallback();
 
       // Timestamp del host registrado inmediatamente después de iniciar la grabación.
       // No garantiza correspondencia exacta con el primer fotograma del vídeo.
@@ -420,12 +588,22 @@ class VideoRecordingService {
       );
 
       return true;
+    } on _RecordingStartFailed catch (e) {
+      lastStartError =
+          'La cámara no consiguió grabar. Intentos: ${e.attempts.join('; ')}.';
+      debugPrint('[VIDEO] $lastStartError');
+      _isRecording = false;
+      return false;
     } on CameraException catch (e) {
       debugPrint('[VIDEO] CameraException: ${e.code} - ${e.description}');
+      lastStartError =
+          'La cámara rechazó iniciar la grabación '
+          '(${e.code}: ${e.description ?? 'sin descripción'}).';
       _isRecording = false;
       return false;
     } catch (e, stackTrace) {
       debugPrint('[VIDEO] Error iniciando grabación: $e\n$stackTrace');
+      lastStartError = 'Error iniciando la grabación: $e';
       _isRecording = false;
       return false;
     }
@@ -510,4 +688,13 @@ class VideoRecordingService {
     _controller = null;
     _isInitialized = false;
   }
+}
+
+class _RecordingStartFailed implements Exception {
+  final List<String> attempts;
+
+  const _RecordingStartFailed(this.attempts);
+
+  @override
+  String toString() => 'Recording start failed: ${attempts.join('; ')}';
 }
