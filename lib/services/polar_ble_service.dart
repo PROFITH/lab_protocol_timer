@@ -844,6 +844,7 @@ class PolarBleService {
     final name = _displayName(device);
     var triedPairing = false;
     var linkWasUp = false;
+    var pairedOk = false;
 
     _establishing = true;
 
@@ -874,7 +875,7 @@ class PolarBleService {
           // queda esperando. Lo hacemos explícito antes de configurar.
           if (_isWindows && (_isVeritySense(device) || pass > 0)) {
             triedPairing = true;
-            await _ensurePaired(device, name);
+            pairedOk = await _ensurePaired(device, name, generation);
           }
 
           _checkNotCancelled(generation);
@@ -905,7 +906,13 @@ class PolarBleService {
           // Segunda pasada solo en Windows, si llegó a conectar (el fallo fue
           // al configurar, típico de falta de emparejamiento) y si aún no
           // se ha intentado emparejar.
-          if (pass == 0 && _isWindows && linkWasUp && !triedPairing) {
+          // Segunda pasada también si el sensor pidió autenticación: el
+          // emparejamiento puede haber terminado mientras configurábamos.
+          final authError = _isAuthenticationError(e);
+          if (pass == 0 &&
+              _isWindows &&
+              linkWasUp &&
+              (!triedPairing || authError)) {
             _logEvent('connect_retry_with_pairing', '$e');
             continue;
           }
@@ -913,7 +920,11 @@ class PolarBleService {
           _logEvent('connect_failed', '$e');
           _setStatus(
             PolarLinkState.error,
-            'No se pudo conectar con $name: ${_shortError(e)}',
+            authError && !pairedOk
+                ? 'Windows no completó el emparejamiento con $name. '
+                    'Emparéjalo en Configuración > Bluetooth y dispositivos > '
+                    'Agregar dispositivo y vuelve a pulsar Conectar.'
+                : 'No se pudo conectar con $name: ${_shortError(e)}',
             attempt: attempt,
           );
           return false;
@@ -932,51 +943,91 @@ class PolarBleService {
     }
   }
 
+  static bool _isAuthenticationError(Object e) {
+    final text = e.toString().toLowerCase();
+    return text.contains('autentic') ||
+        text.contains('authenticat') ||
+        text.contains('insufficient') ||
+        text.contains('cifrado') ||
+        text.contains('encrypt');
+  }
+
   static String _shortError(Object e) {
     final text = e.toString();
     return text.length > 160 ? '${text.substring(0, 160)}...' : text;
   }
 
-  Future<void> _ensurePaired(BleDevice device, String name) async {
-    bool? paired;
+  Future<bool?> _isPairedSafe(BleDevice device) async {
     try {
-      paired = await device.isPaired(
+      return await device.isPaired(
         timeout: const Duration(seconds: 5),
       );
     } catch (e) {
       debugPrint('[POLAR DEBUG] isPaired falló: $e');
+      return null;
     }
+  }
 
-    if (paired == true) {
-      return;
+  /// Empareja el sensor si hace falta. Devuelve true si Windows lo da por
+  /// emparejado. Si el emparejamiento no confirma enseguida, espera a que el
+  /// usuario lo acepte (o lo empareje desde Configuración) antes de seguir,
+  /// porque sin él las suscripciones fallan por falta de autenticación.
+  Future<bool> _ensurePaired(
+    BleDevice device,
+    String name,
+    int generation,
+  ) async {
+    if (await _isPairedSafe(device) == true) {
+      return true;
     }
 
     _setStatus(
       PolarLinkState.pairing,
-      'Emparejando $name. Acepta el aviso de Windows si aparece...',
+      'Emparejando $name. Si Windows muestra un aviso, acéptalo...',
     );
     _logEvent('pairing_started', name);
 
+    var paired = false;
     try {
       await device.pair(
-        timeout: const Duration(seconds: 60),
+        timeout: const Duration(seconds: 30),
       );
-      _logEvent('pairing_done', name);
+      paired = true;
     } catch (e) {
-      // No es necesariamente fatal: algunos sensores funcionan sin
-      // emparejar. Si la configuración falla después, se informa allí.
       debugPrint('[POLAR DEBUG] Emparejamiento falló: $e');
       _logEvent('pairing_failed', '$e');
     }
 
+    if (!paired) {
+      _setStatus(
+        PolarLinkState.pairing,
+        'Esperando el emparejamiento de $name. Si no termina, emparéjalo en '
+        'Configuración > Bluetooth y dispositivos > Agregar dispositivo.',
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 45));
+      while (DateTime.now().isBefore(deadline)) {
+        _checkNotCancelled(generation);
+        if (await _isPairedSafe(device) == true) {
+          paired = true;
+          break;
+        }
+        await Future.delayed(const Duration(seconds: 1));
+      }
+    }
+
+    _logEvent(paired ? 'pairing_done' : 'pairing_not_confirmed', name);
+
     // Windows suele cerrar la conexión GATT al terminar el emparejamiento.
     await Future.delayed(const Duration(milliseconds: 500));
+    _checkNotCancelled(generation);
 
     if (!await device.isConnected) {
       await device.connect(
         timeout: const Duration(seconds: 20),
       );
     }
+
+    return paired;
   }
 
   Future<void> _configureConnectedDevice(BleDevice device) async {

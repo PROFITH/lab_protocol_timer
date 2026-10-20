@@ -776,10 +776,9 @@ packages:
   universal_ble:
     dependency: "direct main"
     description:
-      name: universal_ble
-      sha256: "14ecc6abed48e2fd1d707524e4a274302093b885f8b27ff207ec89ac23a1b8af"
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/universal_ble"
+      relative: true
+    source: path
     version: "2.2.0"
   uuid:
     dependency: transitive
