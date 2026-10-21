@@ -534,7 +534,11 @@ class _Controls extends StatelessWidget {
       );
     } else {
       primary = _BigButton(
-        label: closing ? 'GUARDANDO' : 'PAUSA',
+        label: switch (s.status) {
+          'saved' => 'GUARDADA',
+          'cancelled' => 'CANCELADA',
+          _ => closing ? 'GUARDANDO' : 'PAUSA',
+        },
         shortcut: 'F5',
         icon: Icons.pause_rounded,
         color: _amber,
@@ -562,9 +566,11 @@ class _Controls extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Tooltip(
-          message: s.syncAvailable
-              ? 'Cuenta atrás de 3 s y ${s.syncKind == 'jump' ? 'salto' : 'palmada'} del participante'
-              : (s.syncReason ?? 'No disponible'),
+          message: closing
+              ? 'Disponible con la sesión en marcha'
+              : s.syncAvailable
+                  ? 'Cuenta atrás de 3 s y ${s.syncKind == 'jump' ? 'salto' : 'palmada'} del participante'
+                  : (s.syncReason ?? 'No disponible'),
           child: _BigButton(
             label: s.syncKind == 'jump' ? 'SALTO' : 'PALMADA',
             shortcut: 'F7',
@@ -1574,9 +1580,9 @@ Future<void> showSessionSummaryDialog(
                 line(
                   Icons.checklist_rounded,
                   notDone + skipped > 0 ? _amber : _green,
-                  'Actividades: $done completas'
-                      '${partial > 0 ? ', $partial parciales' : ''}'
-                      '${skipped > 0 ? ', $skipped saltadas' : ''}'
+                  'Actividades: $done ${done == 1 ? 'completa' : 'completas'}'
+                      '${partial > 0 ? ', $partial ${partial == 1 ? 'parcial' : 'parciales'}' : ''}'
+                      '${skipped > 0 ? ', $skipped ${skipped == 1 ? 'saltada' : 'saltadas'}' : ''}'
                       '${notDone > 0 ? ', $notDone sin hacer' : ''}',
                 ),
                 line(Icons.sync_rounded, syncs > 0 ? _green : _amber, '$syncs ventanas de sincronización'),
