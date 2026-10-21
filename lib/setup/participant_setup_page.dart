@@ -35,6 +35,9 @@ class SetupPrefs {
   static const operator = 'lpt_operator';
   static const activeSession = 'lpt_active_session_dir';
 
+  /// Clap or jump, as last chosen on this computer.
+  static const syncKind = 'lpt_sync_kind';
+
   /// Session-recovery keys of the old timer (before the session folder).
   static const legacy = [
     'saved_participants_list',
@@ -106,6 +109,18 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   /// Protocol and sensors of the session (null: numbered activities).
   ActivityBattery? _battery;
+
+  /// Sync cue chosen on this computer; null keeps the protocol's own. It is
+  /// not part of the protocol, so it stays from one participant to the next.
+  SyncKind? _syncKind;
+
+  /// The protocol as the session will run it, with the chosen sync cue.
+  ActivityBattery? get _sessionBattery {
+    final battery = _battery;
+    final kind = _syncKind;
+    if (battery == null || kind == null) return battery;
+    return battery.copyWith(sync: battery.sync.copyWith(kind: kind));
+  }
   List<ActivityBattery> _builtInProtocols = [];
   List<ActivityBattery> _customProtocols = [];
   Map<String, RememberedSetup> _rememberedSetups = {};
@@ -132,10 +147,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   Future<void> _loadPrefs() async {
     String? root;
     String? operator;
+    String? syncKind;
     try {
       final prefs = await SharedPreferences.getInstance();
       root = prefs.getString(SetupPrefs.dataRoot);
       operator = prefs.getString(SetupPrefs.operator);
+      syncKind = prefs.getString(SetupPrefs.syncKind);
       for (final key in SetupPrefs.legacy) {
         await prefs.remove(key);
       }
@@ -147,6 +164,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     setState(() {
       _dataRoot = root;
       if (operator != null && _operatorController.text.isEmpty) _operatorController.text = operator;
+      if (syncKind != null && _syncKind == null) _syncKind = SyncKind.parse(syncKind);
     });
     if (widget.checkUnfinished) await _checkUnfinishedSessions();
   }
@@ -287,6 +305,16 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               _battery?.sensors ?? const [],
             );
     });
+  }
+
+  Future<void> _chooseSyncKind(SyncKind kind) async {
+    setState(() => _syncKind = kind);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(SetupPrefs.syncKind, kind.name);
+    } catch (e) {
+      debugPrint('[SETUP] No se pudo guardar la sincronización: $e');
+    }
   }
 
   Future<void> _editProtocol() async {
@@ -545,7 +573,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final activity =
         int.tryParse(_activityController.text.trim()) ?? 1;
 
-    final battery = _battery;
+    final battery = _sessionBattery;
     if (battery != null) {
       final missing = battery.sensors
           .where((s) => s.connection != 'video' && !s.hasSerial)
@@ -577,12 +605,13 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         if (proceed != true) return;
       }
 
-      // The closing visit of these participants starts from this setup.
+      // The closing visit of these participants starts from this setup
+      // (the sync cue is this computer's choice, not part of it).
       await ProtocolLibrary.remember(
         entries.map(
           (e) => (participantId: e.participantId, eventName: e.redcapEventName),
         ),
-        battery,
+        _battery ?? battery,
       );
     }
 
@@ -805,7 +834,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                       const SizedBox(height: 20),
                       SessionSetupCard(
                         protocols: _allProtocols,
-                        battery: _battery,
+                        battery: _sessionBattery,
                         modified: _batteryModified,
                         note: _setupNote,
                         loading: _loadingProtocols,
@@ -819,9 +848,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                                 (p) => p.protocolId == _battery?.protocolId)
                             ? _deleteCustomProtocol
                             : null,
-                        onSyncKind: (kind) => setState(() => _battery =
-                            _battery?.copyWith(
-                                sync: _battery!.sync.copyWith(kind: kind))),
+                        onSyncKind: _chooseSyncKind,
                       ),
 
                       const SizedBox(height: 20),
