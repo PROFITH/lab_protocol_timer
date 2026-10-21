@@ -1,9 +1,28 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' show Size;
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:disk_space_2/disk_space_2.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Video quality. Windows encodes H.264 at a constant rate, so the file size
+/// is almost exactly the bitrate times the duration; the bitrate follows the
+/// size the camera really gives (a laptop camera asked for 1080p gives 720p).
+enum VideoQuality {
+  high('Alta', 0.18),
+  normal('Normal', 0.09),
+  compact('Ahorro de espacio', 0.045);
+
+  const VideoQuality(this.label, this.bitsPerPixel);
+
+  final String label;
+
+  /// Bits per pixel and frame, at 30 frames/s.
+  final double bitsPerPixel;
+}
 
 class VideoLogEntry {
   final String filePath;
@@ -120,6 +139,82 @@ class VideoRecordingService {
 
   /// 1080p by default (the old 480p lost detail in a whole-room view).
   ResolutionPreset resolutionPreset = ResolutionPreset.veryHigh;
+
+  /// Normal by default: 2.5 Mbit/s at 720p (about 1.1 GB per hour) and
+  /// 5.6 Mbit/s at 1080p, enough to count steps and repetitions. The old
+  /// fixed 12 Mbit/s filled 1 GB in 13 minutes at 720p.
+  VideoQuality quality = VideoQuality.normal;
+
+  /// Bitrate of the open camera (0 until one is open).
+  int get videoBitrate => _videoBitrate;
+  int _videoBitrate = 0;
+
+  /// Frame size the camera gave, per camera and preset, so that the next
+  /// opening asks for the right bitrate straight away.
+  static final Map<String, Size> _capturedSizes = {};
+
+  static const _resolutionKey = 'lpt_video_resolution';
+  static const _qualityKey = 'lpt_video_quality';
+
+  /// Resolution and quality chosen last time on this computer.
+  Future<void> loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final resolution = prefs.getString(_resolutionKey);
+      final quality = prefs.getString(_qualityKey);
+      resolutionPreset = ResolutionPreset.values.firstWhere((p) => p.name == resolution, orElse: () => resolutionPreset);
+      this.quality = VideoQuality.values.firstWhere((q) => q.name == quality, orElse: () => this.quality);
+    } catch (e) {
+      debugPrint('[VIDEO] No se pudieron leer los ajustes de vídeo: $e');
+    }
+  }
+
+  Future<void> saveSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_resolutionKey, resolutionPreset.name);
+      await prefs.setString(_qualityKey, quality.name);
+    } catch (e) {
+      debugPrint('[VIDEO] No se pudieron guardar los ajustes de vídeo: $e');
+    }
+  }
+
+  /// Nominal frame size of [preset] (the maximum height camera_windows
+  /// accepts), used until the camera says its real size.
+  static Size nominalSize(ResolutionPreset preset) => switch (preset) {
+        ResolutionPreset.low => const Size(320, 240),
+        ResolutionPreset.medium => const Size(640, 480),
+        ResolutionPreset.high => const Size(1280, 720),
+        ResolutionPreset.veryHigh => const Size(1920, 1080),
+        ResolutionPreset.ultraHigh || ResolutionPreset.max => const Size(3840, 2160),
+      };
+
+  /// Video bitrate for frames of [size] at [quality], rounded to 0.1 Mbit/s
+  /// and never below 0.5 Mbit/s.
+  static int bitrateFor(Size size, VideoQuality quality) {
+    final raw = size.width * size.height * 30 * quality.bitsPerPixel;
+    return math.max((raw / 100000).round() * 100000, 500000);
+  }
+
+  /// GB per hour, as Windows counts them (1024³ bytes), with up to
+  /// 192 kbit/s of audio.
+  static double gigabytesPerHour(int videoBitrate, {bool withAudio = true}) =>
+      (videoBitrate + (withAudio ? 192000 : 0)) * 3600 / 8 / (1024 * 1024 * 1024);
+
+  /// "2,5 Mbit/s", "0,6 Mbit/s".
+  static String formatBitrate(int bitrate) => '${(bitrate / 1e6).toStringAsFixed(1).replaceAll('.', ',')} Mbit/s';
+
+  /// "≈1,1 GB por hora".
+  static String formatPerHour(int bitrate, {bool withAudio = true}) {
+    final gb = gigabytesPerHour(bitrate, withAudio: withAudio);
+    return '≈${gb.toStringAsFixed(gb < 10 ? 1 : 0).replaceAll('.', ',')} GB por hora';
+  }
+
+  /// "Normal · 2,5 Mbit/s · ≈1,1 GB por hora" for the open camera.
+  String get qualityLabel => _videoBitrate == 0
+      ? quality.label
+      : '${quality.label} · ${formatBitrate(_videoBitrate)} · '
+          '${formatPerHour(_videoBitrate, withAudio: !audioUnavailable)}';
 
   /// True when the microphone could not be opened and the camera records
   /// video only.
@@ -396,22 +491,50 @@ class VideoRecordingService {
     CameraDescription camera, {
     required bool enableAudio,
   }) async {
+    final key = '${camera.name}|${resolutionPreset.name}';
+    await _createController(
+      camera,
+      enableAudio: enableAudio,
+      bitrate: bitrateFor(_capturedSizes[key] ?? nominalSize(resolutionPreset), quality),
+    );
+
+    // The camera may give less than the preset (720p for 1080p): open it
+    // again with the bitrate of the size it really gives.
+    final size = _controller!.value.previewSize;
+    if (size == null || size.isEmpty) return;
+    _capturedSizes[key] = size;
+    final bitrate = bitrateFor(size, quality);
+    if (bitrate != _videoBitrate) {
+      debugPrint('[VIDEO] La cámara da ${size.width.round()}×${size.height.round()}: '
+          'se abre de nuevo a ${formatBitrate(bitrate)}.');
+      try {
+        await _controller!.dispose();
+      } catch (_) {}
+      _controller = null;
+      await Future.delayed(const Duration(milliseconds: 300));
+      await _createController(camera, enableAudio: enableAudio, bitrate: bitrate);
+    }
+  }
+
+  Future<void> _createController(
+    CameraDescription camera, {
+    required bool enableAudio,
+    required int bitrate,
+  }) async {
     _controller = CameraController(
       camera,
       resolutionPreset,
       enableAudio: enableAudio,
-      // 1080p of a whole room needs more than the old 5 Mbps.
-      videoBitrate: switch (resolutionPreset) {
-        ResolutionPreset.ultraHigh => 35 * 1000 * 1000,
-        ResolutionPreset.veryHigh => 12 * 1000 * 1000,
-        _ => 6 * 1000 * 1000,
-      },
-      audioBitrate: enableAudio ? 128 * 1000 : null,
+      videoBitrate: bitrate,
+      // No audio bitrate: camera_windows writes it as bytes per second, and
+      // the AAC encoder only accepts 12000-24000, so 128000 can make Windows
+      // refuse to record with audio. Without it the encoder keeps its own.
     );
+    _videoBitrate = bitrate;
 
     debugPrint(
       '[VIDEO] CameraController creado '
-      '(${resolutionPreset.name}, audio: $enableAudio).',
+      '(${resolutionPreset.name}, ${formatBitrate(bitrate)}, audio: $enableAudio).',
     );
 
     // Inicializar cámara.

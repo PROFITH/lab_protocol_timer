@@ -19,9 +19,27 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
     start command is built from them; without an answer the H10 command is
     sent.
 - **Cameras**: one recorder per camera of the session. The gear button picks
-  the Windows camera and the resolution (720p, 1080p by default, 4K). Video
-  is recorded with audio from the first microphone Windows lists; if it
-  cannot be opened the camera records without audio and says so.
+  the Windows camera, the resolution (720p, 1080p by default, 4K) and the
+  quality; both are remembered on that computer. Video is recorded with
+  audio from the first microphone Windows lists; if it cannot be opened the
+  camera records without audio and says so.
+  - Windows encodes H.264 at a constant rate, so a file weighs the bitrate
+    times its duration. The bitrate follows the size the camera really gives
+    (a laptop camera asked for 1080p gives 720p): 0.09 bits per pixel and
+    frame at 30 frames/s for Normal, twice that for Alta and half for Ahorro
+    de espacio.
+
+    | Quality | 720p | 1080p |
+    |---|---|---|
+    | Alta | 5.0 Mbit/s, ≈2.2 GB/h | 11.2 Mbit/s, ≈4.8 GB/h |
+    | Normal (default) | 2.5 Mbit/s, ≈1.1 GB/h | 5.6 Mbit/s, ≈2.4 GB/h |
+    | Ahorro de espacio | 1.2 Mbit/s, ≈0.6 GB/h | 2.8 Mbit/s, ≈1.3 GB/h |
+
+    Before, every 1080p camera got 12 Mbit/s, also when it gave 720p (1 GB
+    in 13 minutes). The start check shows each camera's bitrate and how many
+    hours of video fit on the disk.
+  - The audio bitrate is left to the AAC encoder: camera_windows writes it as
+    bytes per second, and the encoder only accepts 12000-24000.
 - **Offline sensors** (Axivity, ActiGraph, GENEActiv, Matrix, SENS,
   SensWear): listed only; they record on their own clock.
 

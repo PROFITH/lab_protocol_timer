@@ -520,7 +520,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             other.service.selectedCamera?.name,
       };
 
+      await camera.service.loadSettings();
       var preset = camera.service.resolutionPreset;
+      var quality = camera.service.quality;
 
       // Mostrar diálogo para que elijas qué cámara usar
       if (!mounted) return;
@@ -592,6 +594,36 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       },
                     ),
                     const SizedBox(height: 8),
+                    DropdownButtonFormField<VideoQuality>(
+                      key: ValueKey('video_quality_${preset.name}'),
+                      initialValue: quality,
+                      dropdownColor: const Color(0xFF1E293B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Calidad',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                      items: [
+                        for (final option in VideoQuality.values)
+                          DropdownMenuItem(
+                            value: option,
+                            child: Text(
+                              '${option.label} · ${VideoRecordingService.formatPerHour(VideoRecordingService.bitrateFor(VideoRecordingService.nominalSize(preset), option))}',
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => quality = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Normal basta para contar pasos y repeticiones. El peso es '
+                      'por cámara y, si la cámara da menos resolución de la '
+                      'elegida, menor.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                    const SizedBox(height: 8),
                     const Text(
                       'El vídeo graba también audio (las palmadas) del primer '
                       'micrófono que da Windows; con DroidCam conviene dejar '
@@ -624,6 +656,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       debugPrint('[VIDEO] Inicializando cámara seleccionada: ${selectedCamera.name}');
 
       camera.service.resolutionPreset = preset;
+      camera.service.quality = quality;
+      unawaited(camera.service.saveSettings());
       final success = await camera.service.initializeCamera(selectedCamera);
       if (!mounted) return;
       setState(() => camera.ready = success);
@@ -757,7 +791,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           name,
           camera.ready,
           camera.ready
-              ? 'Preparada · ${camera.service.resolutionLabel}${camera.service.audioUnavailable ? ' · sin audio' : ' · con audio'}'
+              ? 'Preparada · ${camera.service.resolutionLabel} · ${camera.service.qualityLabel}'
+                  '${camera.service.audioUnavailable ? ' · sin audio' : ' · con audio'}'
               : 'No preparada: púlsala en la barra de dispositivos para elegir la cámara',
           isCamera: true,
         ));
@@ -808,10 +843,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     final service = _cameras.values.isEmpty ? null : _cameras.values.first.service;
     final free = service == null ? null : await service.getFreeDiskSpaceGB(root);
     if (free != null) {
+      // GB per hour of all the cameras that will record.
+      final perHour = _cameras.values.where((c) => c.ready).fold<double>(
+            0,
+            (sum, c) => sum +
+                VideoRecordingService.gigabytesPerHour(c.service.videoBitrate,
+                    withAudio: !c.service.audioUnavailable),
+          );
       items.add(PreflightItem(
         'Espacio en disco',
         free >= VideoRecordingService.minimumFreeSpaceGB,
         '${free.toStringAsFixed(1)} GB libres${root == null ? '' : ' en la carpeta de datos'}'
+            '${perHour > 0 ? ' (caben unas ${(free / perHour).floor()} h de vídeo)' : ''}'
             '${free >= VideoRecordingService.minimumFreeSpaceGB ? '' : ' (mínimo ${VideoRecordingService.minimumFreeSpaceGB.toStringAsFixed(0)} GB para grabar vídeo)'}',
       ));
     }
@@ -1567,7 +1610,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       : camera.ready
                           ? SensorAcquisitionStatus.ready
                           : SensorAcquisitionStatus.unavailable,
-                  detail: camera.ready ? camera.service.resolutionLabel : null,
+                  detail: camera.ready
+                      ? '${camera.service.resolutionLabel} · ${VideoRecordingService.formatBitrate(camera.service.videoBitrate)}'
+                      : null,
                 ),
             ],
           ),
