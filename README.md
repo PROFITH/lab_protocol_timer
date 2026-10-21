@@ -52,12 +52,15 @@ Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) 
 
 ## REDCap Configuration
 
-Set your REDCap endpoint and API credentials in `lib/services/lab_redcap_service.dart`:
+The API token is never written in the code: pass it when building (the URL defaults to `https://redcap.ugr.es/api/`).
 
-```dart
-static const String _redcapUrl = '[https://your-redcap-instance.org/api/](https://your-redcap-instance.org/api/)';
-static const String _apiToken = 'YOUR_REDCAP_API_TOKEN';
+```sh
+flutter build windows --release --dart-define=REDCAP_TOKEN=<project token>
+# another REDCap: --dart-define=REDCAP_URL=https://your-redcap-instance.org/api/
+build\windows\x64\runner\Release\lab_protocol_timer.exe
 ```
+
+At the end of a session the app sends three imports, so one that fails does not stop the others: the protocol summary (`protocol_feasibility`, fields below), the session (`wearable_session`) with one instance of the repeating instrument `lab_activity` per attempt, and the fitness-test fields of `physical_fitness`. `lab_activity` must be enabled as a repeating instrument in the visit events. If an import fails, the console shows why and **Reintentar REDCap** sends it again.
 
 ### Required REDCap Data Dictionary Fields
 
