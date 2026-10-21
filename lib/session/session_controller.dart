@@ -992,6 +992,7 @@ class SessionController extends ChangeNotifier {
         generatedFiles: [..._videoFiles, ...files],
         protocolConfiguration: protocolConfigurationFor(battery),
         battery: battery,
+        redcapInstances: LabRedCapService.labActivityInstances(engine.logs),
       ),
       'status': status,
       if (operator != null) 'operator': operator,

@@ -213,6 +213,46 @@ void main() {
     expect(fitness.containsKey('distanciatotal_6mwt'), isFalse);
   });
 
+  test('each attempt in the manifest names its lab_activity instance in REDCap', () async {
+    final clock = FakeSessionClock();
+    final imported = <List<Map<String, dynamic>>>[];
+    final c = controller(clock, FakeMonitor(), imported);
+    await c.command('start', {'video': false});
+    // Activity 2 is cut and repeated; activity 4 is skipped before it starts.
+    await run(c, clock, 3600,
+        until: () =>
+            c.engine.activityIndex == 2 &&
+            c.engine.phase == SessionPhase.main &&
+            c.engine.phaseElapsed > const Duration(seconds: 10));
+    expect((await c.command('repeat')).ok, isTrue);
+    await run(c, clock, 3600,
+        until: () => c.engine.activityIndex == 4 && c.engine.phase == SessionPhase.prep);
+    expect((await c.command('skip')).ok, isTrue);
+    await run(c, clock, 3600, until: () => c.engine.protocolComplete);
+    await c.finish();
+    final dir = c.store!.path;
+    c.dispose();
+
+    final records = {
+      for (final r in imported[2]) int.parse(r['redcap_repeat_instance'] as String): r,
+    };
+    final manifest = jsonDecode(File('$dir/${SessionStore.manifestFile}').readAsStringSync());
+    final activities = (manifest['activities'] as List).cast<Map<String, dynamic>>();
+    expect(activities.where((a) => a['activity_index'] == 2).length, 2);
+    expect(activities.where((a) => a['activity_index'] == 4), isEmpty);
+    for (final a in activities) {
+      final record = records[a['redcap_instance']];
+      expect(record, isNotNull, reason: 'activity ${a['activity_index']}');
+      expect(record!['la_name'], a['activity_name']);
+      expect(record['la_start'],
+          LabRedCapService.formatRedcapDateTime(DateTime.parse(a['activity_start_time_utc'] as String)));
+    }
+    // The skipped activity has its instance in REDCap, but no time span.
+    final skipped = records.values.where((r) => r['la_completed'] == '3').toList();
+    expect(skipped.map((r) => r['la_name']), [battery.activityAt(4)!.name]);
+    expect(activities.map((a) => a['redcap_instance']), isNot(contains(int.parse(skipped.single['la_order']))));
+  });
+
   test('after a crash the session resumes in the same folder and keeps the cut attempt',
       () async {
     final clock = FakeSessionClock();

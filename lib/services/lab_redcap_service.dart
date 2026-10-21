@@ -318,10 +318,8 @@ class LabRedCapService {
     final calibration = activities
         .where((a) => a.isCalibration && !a.isSkipped)
         .firstOrNull;
-    final labActivities = [
-      ...activities.where((a) => !a.isCalibration),
-      ...notDone.where((a) => !a.isCalibration),
-    ];
+    final instances = labActivityInstances([...activities, ...notDone]);
+    final labActivities = instances.keys.toList();
     final resting = activities
         .where((a) => a.restingHrBpm != null && !a.isSkipped)
         .lastOrNull;
@@ -354,8 +352,7 @@ class LabRedCapService {
         },
       });
 
-      for (var i = 0; i < labActivities.length; i++) {
-        final act = labActivities[i];
+      for (final act in labActivities) {
         final timed = !act.isSkipped;
         final incident = [
           if (act.incident != null && act.incident!.trim().isNotEmpty)
@@ -366,8 +363,8 @@ class LabRedCapService {
           'record_id': participant.participantId,
           'redcap_event_name': participant.redcapEventName,
           'redcap_repeat_instrument': 'lab_activity',
-          'redcap_repeat_instance': (i + 1).toString(),
-          'la_order': (i + 1).toString(),
+          'redcap_repeat_instance': instances[act].toString(),
+          'la_order': instances[act].toString(),
           'la_session_id': sessionId,
           if (act.compendiumCode != null) 'la_code': act.compendiumCode,
           'la_name': act.activityName ?? 'Actividad ${act.activityIndex}',
@@ -384,6 +381,19 @@ class LabRedCapService {
       }
     }
     return records;
+  }
+
+  /// Instance of `lab_activity` of each attempt of [logs]: one per attempt
+  /// that is not a calibration segment, numbered in the order of the
+  /// session. The manifest records it (`redcap_instance`), so SAVES can send
+  /// what it counts on the video to the same instance.
+  static Map<ActivityLog, int> labActivityInstances(Iterable<ActivityLog> logs) {
+    final instances = Map<ActivityLog, int>.identity();
+    for (final log in logs) {
+      if (log.isCalibration) continue;
+      instances[log] = instances.length + 1;
+    }
+    return instances;
   }
 
   /// Why an attempt is not complete, for `la_incident`.

@@ -15,7 +15,8 @@ const _videoExtensions = ['.mp4', '.mov', '.avi'];
 /// `video`, not under `sensors`); the sensors set up for the session, their
 /// serials and placements, and the activity metadata come from [battery].
 /// Fields beyond the SAVES 1.1 list (`device_type`, `serial`...) are optional
-/// additions, which keep the schema version.
+/// additions, which keep the schema version. Each activity carries the
+/// instance of `lab_activity` it was sent to in REDCap ([redcapInstances]).
 Map<String, dynamic> buildSessionManifest({
   required String sessionId,
   required DateTime sessionStartTime,
@@ -26,6 +27,7 @@ Map<String, dynamic> buildSessionManifest({
   required List<String> generatedFiles,
   required ProtocolConfiguration protocolConfiguration,
   ActivityBattery? battery,
+  Map<ActivityLog, int> redcapInstances = const {},
 }) {
   final sensors = <String, dynamic>{};
 
@@ -106,7 +108,13 @@ Map<String, dynamic> buildSessionManifest({
           'protocol_version': battery.protocolVersion,
       },
     'participants': participants.map((p) => p.toJson()).toList(),
-    'activities': activities.map((a) => a.toJson()).toList(),
+    'activities': [
+      for (final a in activities)
+        {
+          ...a.toJson(),
+          if (redcapInstances[a] != null) 'redcap_instance': redcapInstances[a],
+        },
+    ],
     'sync_windows': syncWindows.map((w) => w.toJson()).toList(),
     'video': {
       'files': generatedFiles
