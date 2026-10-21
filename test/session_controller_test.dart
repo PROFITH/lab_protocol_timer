@@ -388,6 +388,41 @@ void main() {
     expect(Directory(dir).listSync().any((f) => f.path.contains('redcap_records_enviados_')), isTrue);
   });
 
+  test('without a REDCap token the session is only saved in its folder, ready to send later', () async {
+    final clock = FakeSessionClock();
+    final monitor = FakeMonitor();
+    var calls = 0;
+    final c = SessionController(
+      participants: participants,
+      battery: battery,
+      dataRoot: root.path,
+      clock: clock,
+      monitor: monitor,
+      redcapConfigured: false,
+      importRecords: (records) async {
+        calls++;
+        return null;
+      },
+    );
+    expect(c.info()['redcap_configured'], isFalse);
+    await c.command('start', {'video': false});
+    await run(c, clock, 400);
+    final summary = await c.finish();
+    expect(calls, 0, reason: 'nothing goes to REDCap');
+    expect(summary!.redcapSkipped, isTrue);
+    expect(summary.redcapError, isNull, reason: 'it is not an error');
+    final saved = monitor.sent.lastWhere((m) => m.$1 == WindowMessages.sessionSaved).$2 as Map;
+    expect(saved['redcap_skipped'], isTrue);
+    expect(saved.containsKey('redcap_error'), isFalse);
+    final dir = c.store!.path;
+    final records = jsonDecode(File('$dir/redcap_records.json').readAsStringSync()) as List;
+    expect(records.any((r) => (r as Map).containsKey('ws_session_id')), isTrue);
+    final events = File('$dir/${SessionStore.eventsFile}').readAsStringSync();
+    expect(events, contains('redcap_skipped'));
+    expect(events, isNot(contains('redcap_failed')));
+    c.dispose();
+  });
+
   test('a session saved without REDCap is sent later from its folder', () async {
     final clock = FakeSessionClock();
     final c = SessionController(

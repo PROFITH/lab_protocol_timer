@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/activity_battery.dart';
+import 'redcap_connection.dart';
 
 class ParticipantEntry {
   final String participantId;
@@ -226,21 +227,12 @@ class ActivityLog {
 }
 
 class LabRedCapService {
-  static const String _redcapUrl = String.fromEnvironment(
-    'REDCAP_URL',
-    defaultValue: 'https://redcap.ugr.es/api/',
-  );
-
-  static const String _apiToken = String.fromEnvironment(
-    'REDCAP_TOKEN',
-    defaultValue: '',
-  );
-
   /// Activities with start/end fields in the REDCap instrument
   /// (`act_1_start_time` ... `act_10_end_time`).
   static const int maxRedcapActivities = 10;
 
-  static const bool isConfigured = _apiToken != '';
+  /// A token is set (in the app or in the build); see [RedcapConnection].
+  static bool get isConfigured => RedcapConnection.isConfigured;
 
   /// REDCap `datetime_seconds_ymd` value in the computer's local time.
   static String formatRedcapDateTime(DateTime time) {
@@ -577,19 +569,30 @@ class LabRedCapService {
   static String _formatMet(double met) =>
       met == met.roundToDouble() ? met.toStringAsFixed(1) : met.toString();
 
+  /// [records] as the project takes them: without `redcap_event_name` in a
+  /// project without events (or when a record has none).
+  static List<Map<String, dynamic>> forProject(List<Map<String, dynamic>> records, {required bool withoutEvents}) => [
+        for (final r in records)
+          if (r.containsKey('redcap_event_name') &&
+              (withoutEvents || (r['redcap_event_name']?.toString() ?? '').isEmpty))
+            (Map.of(r)..remove('redcap_event_name'))
+          else
+            r,
+      ];
+
   /// Sends [records] to REDCap. Returns null on success or the error message.
   static Future<String?> importRecords(List<Map<String, dynamic>> records) async {
     if (!isConfigured) {
-      return 'Falta el token de REDCap (compila con --dart-define=REDCAP_TOKEN=...)';
+      return 'No hay token de REDCap: ponlo en «Conexión con REDCap» de la pantalla de inicio.';
     }
 
     final Map<String, String> body = {
-      'token': _apiToken,
+      'token': RedcapConnection.token,
       'content': 'record',
       'format': 'json',
       'type': 'flat',
       'overwriteBehavior': 'normal',
-      'data': jsonEncode(records),
+      'data': jsonEncode(forProject(records, withoutEvents: RedcapConnection.withoutEvents)),
       'returnContent': 'count',
       'returnFormat': 'json',
     };
@@ -597,7 +600,7 @@ class LabRedCapService {
     try {
       final response = await http
           .post(
-            Uri.parse(_redcapUrl),
+            Uri.parse(RedcapConnection.url),
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: body,
           )

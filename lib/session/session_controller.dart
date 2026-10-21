@@ -283,8 +283,9 @@ class SessionController extends ChangeNotifier {
     MonitorLink? monitor,
     this.importRecords = LabRedCapService.importRecords,
     this.onActiveSessionChanged,
-    this.redcapConfigured = LabRedCapService.isConfigured,
+    bool? redcapConfigured,
   })  : participants = List.unmodifiable(participants),
+        _redcapConfigured = redcapConfigured,
         clock = clock ?? SystemSessionClock(),
         audio = audio ?? SilentAudio(),
         monitor = monitor ?? NoMonitor() {
@@ -309,7 +310,7 @@ class SessionController extends ChangeNotifier {
     Future<String?> Function(List<Map<String, dynamic>>) importRecords =
         LabRedCapService.importRecords,
     void Function(String? directory)? onActiveSessionChanged,
-    bool redcapConfigured = LabRedCapService.isConfigured,
+    bool? redcapConfigured,
   }) {
     final state = saved.state;
     final controller = SessionController(
@@ -367,7 +368,11 @@ class SessionController extends ChangeNotifier {
   final SessionAudio audio;
   final MonitorLink monitor;
   final Future<String?> Function(List<Map<String, dynamic>>) importRecords;
-  final bool redcapConfigured;
+
+  /// REDCap has a token ([RedcapConnection], unless a test says otherwise).
+  /// Without one the session is only saved in its folder.
+  bool get redcapConfigured => _redcapConfigured ?? LabRedCapService.isConfigured;
+  final bool? _redcapConfigured;
 
   /// Called with the session folder when a session starts, and with null
   /// when it ends, so the app can offer to resume it after a crash.
@@ -1093,7 +1098,11 @@ class SessionController extends ChangeNotifier {
     await s.close();
     onActiveSessionChanged?.call(null);
 
-    summary = _summary(redcapError: redcapError, files: await _folderFiles(s.directory));
+    summary = _summary(
+      redcapError: redcapError,
+      redcapSkipped: !redcapConfigured,
+      files: await _folderFiles(s.directory),
+    );
     _changed();
     await monitor.send(WindowMessages.sessionSaved, summary!.toJson());
     return summary;
@@ -1183,18 +1192,22 @@ class SessionController extends ChangeNotifier {
     final s = store;
     if (s == null) return null;
     final imports = redcapImports();
-    final errors = <String>[];
     if (!redcapConfigured) {
-      errors.add('Falta el token de REDCap (compila con --dart-define=REDCAP_TOKEN=...)');
-    } else {
-      const names = LabRedCapService.sessionImportNames;
-      for (var i = 0; i < imports.length; i++) {
-        if (imports[i].isEmpty) continue;
-        final error = await importRecords(imports[i]);
-        if (error == null) continue;
-        errors.add('${i < names.length ? names[i] : 'Envío ${i + 1}'}: '
-            '${LabRedCapService.explainImportError(error, imports[i])}');
-      }
+      // Without REDCap the session stays in its folder only, with the records
+      // ready to be sent later from the start screen.
+      s.writeJson(SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
+      s.logEvent('redcap_skipped', detail: 'Sin token de REDCap en este ordenador');
+      await s.drain();
+      return null;
+    }
+    final errors = <String>[];
+    const names = LabRedCapService.sessionImportNames;
+    for (var i = 0; i < imports.length; i++) {
+      if (imports[i].isEmpty) continue;
+      final error = await importRecords(imports[i]);
+      if (error == null) continue;
+      errors.add('${i < names.length ? names[i] : 'Envío ${i + 1}'}: '
+          '${LabRedCapService.explainImportError(error, imports[i])}');
     }
     final error = errors.isEmpty ? null : errors.join('\n');
     s.logEvent(error == null ? 'redcap_sent' : 'redcap_failed', detail: error);
@@ -1216,7 +1229,7 @@ class SessionController extends ChangeNotifier {
     store = reopened;
     final error = await _sendRedcap();
     await reopened.close();
-    summary = _summary(redcapError: error, files: summary!.files);
+    summary = _summary(redcapError: error, redcapSkipped: !redcapConfigured, files: summary!.files);
     _changed();
     await monitor.send(WindowMessages.sessionSaved, summary!.toJson());
   }

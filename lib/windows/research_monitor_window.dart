@@ -798,10 +798,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     final configured = _session.redcapConfigured;
     items.add(PreflightItem(
       'REDCap',
-      configured,
+      true,
       configured
           ? 'Se envía al finalizar (y se puede reintentar)'
-          : 'Sin token en esta compilación: los registros quedan en redcap_records.json',
+          : 'Sin conexión con REDCap: la sesión se guarda solo en su carpeta y se puede enviar después',
+      info: !configured,
     ));
     final root = _session.info['data_root']?.toString();
     final service = _cameras.values.isEmpty ? null : _cameras.values.first.service;

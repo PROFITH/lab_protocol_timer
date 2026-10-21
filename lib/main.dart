@@ -5,6 +5,7 @@ import 'package:multi_window_manager/multi_window_manager.dart';
 
 import 'config/default_protocol_configuration.dart';
 import 'models/activity_battery.dart';
+import 'services/redcap_connection.dart';
 import 'session/session_controller.dart';
 import 'session/timer_page.dart';
 import 'setup/participant_setup_page.dart';
@@ -65,6 +66,11 @@ Future<void> main(List<String> args) async {
   }
 
   debugPrint('[MAIN] Iniciando Participant Timer...');
+
+  await RedcapConnection.load();
+  // The project's visits are asked in the background; without network the
+  // ones saved last time are used.
+  unawaited(RedcapConnection.refreshProject());
 
   runApp(const LabTimerApp());
 }

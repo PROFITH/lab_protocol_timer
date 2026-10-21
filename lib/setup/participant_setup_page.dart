@@ -11,10 +11,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/protocol_library.dart';
+import '../services/redcap_connection.dart';
 import '../services/redcap_resend.dart';
 import '../session/session_controller.dart';
 import '../session/session_store.dart';
 import 'protocol_editor_page.dart';
+import 'redcap_settings_dialog.dart';
 import 'session_setup_card.dart';
 
 class ParticipantFieldGroup {
@@ -132,10 +134,17 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   String? _rememberedFor;
   String? _setupNote;
 
-  static const Map<String, String> _eventOptions = {
+  static const Map<String, String> _defaultEvents = {
     'da_0__visita_inici_arm_1': 'Visita Inicial (Día 0)',
     'da_8__visita_final_arm_1': 'Visita Final (Día 8)',
   };
+
+  /// Visits to choose from: the events of the REDCap project when they are
+  /// known, otherwise those of RUN4HEALTH.
+  Map<String, String> get _eventOptions {
+    final events = RedcapConnection.events;
+    return events.isEmpty ? _defaultEvents : events;
+  }
 
   @override
   void initState() {
@@ -144,7 +153,21 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     _addParticipantField(); // Default - 1 participant
     _loadProtocols();
     _loadPrefs();
+    RedcapConnection.changes.addListener(_onRedcapChanged);
   }
+
+  /// Another REDCap project, or its events: every participant keeps a visit
+  /// of the list.
+  void _onRedcapChanged() {
+    if (!mounted) return;
+    final options = _eventOptions;
+    setState(() {});
+    for (final p in _participants) {
+      if (!options.containsKey(p.eventName)) _onMomentChanged(p, options.keys.first);
+    }
+  }
+
+  Future<void> _openRedcapSettings() => showRedcapSettingsDialog(context);
 
   Future<void> _loadPrefs() async {
     String? root;
@@ -337,10 +360,14 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     setState(() => _battery = edited);
   }
 
-  /// Sends to REDCap a saved session whose records did not get there (the
-  /// app was closed, there was no network or the REDCap project needed a
-  /// change).
+  /// Sends to REDCap a saved session whose records did not get there (no
+  /// token on this computer, the app was closed, there was no network or
+  /// the REDCap project needed a change).
   Future<void> _sendSavedSession() async {
+    if (!RedcapConnection.isConfigured) {
+      await _openRedcapSettings();
+      if (!mounted || !RedcapConnection.isConfigured) return;
+    }
     final chosen = await getDirectoryPath(
       confirmButtonText: 'Enviar esta sesión',
       initialDirectory: _dataRoot,
@@ -398,13 +425,13 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     });
   }
 
-  void _addParticipantField([String initialId = '', String initialEvent = 'da_0__visita_inici_arm_1']) {
+  void _addParticipantField([String initialId = '', String? initialEvent]) {
     setState(() {
       _participants.add(
         ParticipantFieldGroup(
           controller: TextEditingController(text: initialId)
             ..addListener(_applyRememberedSetup),
-          eventName: initialEvent,
+          eventName: initialEvent ?? _eventOptions.keys.first,
         ),
       );
     });
@@ -421,6 +448,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   @override
   void dispose() {
+    RedcapConnection.changes.removeListener(_onRedcapChanged);
     for (final p in _participants) {
       p.controller.dispose();
     }
@@ -687,6 +715,53 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     }
   }
 
+  /// Where the sessions go besides their folder: REDCap, if there is a token.
+  Widget _redcapCard() {
+    final configured = RedcapConnection.isConfigured;
+    final title = RedcapConnection.project?.title ?? '';
+    final status = !configured
+        ? 'Sin conexión: cada sesión se guarda solo en su carpeta y se puede enviar después.'
+        : '${title.isEmpty ? 'Token ${RedcapConnection.masked(RedcapConnection.token)}' : 'Proyecto «$title»'}'
+            '${RedcapConnection.tokenBuiltIn ? ' (token de esta versión de la app)' : ''} · ${RedcapConnection.url}';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            configured ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
+            color: configured ? const Color(0xFF38BDF8) : Colors.white38,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'REDCAP (OPCIONAL)',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: _openRedcapSettings,
+            child: Text(configured ? 'Cambiar' : 'Conectar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -802,6 +877,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                                 ),
                                 const SizedBox(height: 10),
                                 DropdownButtonFormField<String>(
+                                  // Built again when the visits of the project change.
+                                  key: ValueKey('visit-${identityHashCode(item)}-${_eventOptions.keys.join('|')}'),
                                   initialValue: item.eventName,
                                   dropdownColor: const Color(0xFF1E293B),
                                   style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
@@ -934,6 +1011,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 14),
+                      _redcapCard(),
 
                       const SizedBox(height: 28),
                       SizedBox(

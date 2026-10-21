@@ -5,8 +5,8 @@ import 'lab_redcap_service.dart';
 
 /// Records of a saved session that did not reach REDCap.
 ///
-/// When sending fails, the session folder keeps what would have been sent in
-/// `redcap_records.json`. It can be sent again later from the start screen,
+/// When sending fails, or there is no REDCap token on the computer, the
+/// session folder keeps what would have been sent in `redcap_records.json`. It can be sent again later from the start screen,
 /// also after the app was closed; once REDCap accepts it, the file is
 /// renamed `redcap_records_enviados_<fecha>.json`, so a pending file always
 /// means data still missing in REDCap.
@@ -45,13 +45,14 @@ class SavedSessionRedcap {
   /// them all, or what went wrong, for the evaluator.
   static Future<String?> send(
     Directory folder, {
-    Future<String?> Function(List<Map<String, dynamic>>) importRecords = LabRedCapService.importRecords,
+    Future<String?> Function(List<Map<String, dynamic>>)? importRecords,
     DateTime? now,
   }) async {
     final file = pending(folder);
     if (!await file.exists()) {
-      return 'En esta carpeta no hay nada pendiente de enviar ($pendingFile). Ese archivo solo se '
-          'guarda cuando el envío a REDCap falla; elige la carpeta de la visita, por ejemplo R4H_001${Platform.pathSeparator}D0.';
+      return 'En esta carpeta no hay nada pendiente de enviar ($pendingFile). Ese archivo se guarda cuando '
+          'una sesión no llega a REDCap (sin conexión o con un error); elige la carpeta de la visita, por '
+          'ejemplo R4H_001${Platform.pathSeparator}D0.';
     }
     final List<Map<String, dynamic>> records;
     try {
@@ -61,10 +62,14 @@ class SavedSessionRedcap {
     } catch (e) {
       return 'No se pudo leer $pendingFile: $e';
     }
+    if (importRecords == null && !LabRedCapService.isConfigured) {
+      return 'No hay token de REDCap en este ordenador: ponlo en «Conexión con REDCap» y vuelve a enviar la sesión.';
+    }
+    final sendBatch = importRecords ?? LabRedCapService.importRecords;
     final imports = importsFromRecords(records);
     final errors = <String>[];
     for (var i = 0; i < imports.length; i++) {
-      final error = await importRecords(imports[i]);
+      final error = await sendBatch(imports[i]);
       if (error == null) continue;
       errors.add('Envío ${i + 1} de ${imports.length}: '
           '${LabRedCapService.explainImportError(error, imports[i], retry: '«Enviar a REDCap una sesión guardada»')}');

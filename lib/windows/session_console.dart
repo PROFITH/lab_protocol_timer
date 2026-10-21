@@ -43,7 +43,8 @@ class DeviceChip {
 
 /// Something checked before starting the session.
 class PreflightItem {
-  const PreflightItem(this.label, this.ok, this.detail, {this.isCamera = false, this.manual = false});
+  const PreflightItem(this.label, this.ok, this.detail,
+      {this.isCamera = false, this.manual = false, this.info = false});
 
   final String label;
   final bool ok;
@@ -54,6 +55,9 @@ class PreflightItem {
 
   /// Only the evaluator can check it (a sensor that records on its own).
   final bool manual;
+
+  /// Neither good nor bad, only worth knowing (no REDCap on this computer).
+  final bool info;
 }
 
 /// Asks the evaluator to confirm an action.
@@ -1467,14 +1471,18 @@ Future<bool?> showPreflightDialog(
                     Icon(
                       item.manual
                           ? Icons.back_hand_outlined
-                          : item.ok
-                              ? Icons.check_circle_rounded
-                              : Icons.warning_amber_rounded,
+                          : item.info
+                              ? Icons.info_outline_rounded
+                              : item.ok
+                                  ? Icons.check_circle_rounded
+                                  : Icons.warning_amber_rounded,
                       color: item.manual
                           ? _accent
-                          : item.ok
-                              ? _green
-                              : _amber,
+                          : item.info
+                              ? Colors.white60
+                              : item.ok
+                                  ? _green
+                                  : _amber,
                       size: 20,
                     ),
                     const SizedBox(width: 10),
@@ -1602,9 +1610,10 @@ Future<void> showSessionSummaryDialog(
                 if (storeError != null) line(Icons.error_rounded, _red, 'Error al escribir: $storeError'),
                 const SizedBox(height: 6),
                 if (redcapSkipped)
-                  line(Icons.cloud_off_rounded, _amber,
-                      'REDCap no está configurado: los registros quedan en redcap_records.json. '
-                      'Se envían después con «Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
+                  line(Icons.cloud_off_rounded, Colors.white70,
+                      'Sin conexión con REDCap: la sesión se ha guardado solo en su carpeta (los registros, en '
+                      'redcap_records.json). Para enviarla, pon el token en «Conexión con REDCap» y usa '
+                      '«Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else if (redcapError != null)
                   line(Icons.cloud_off_rounded, _red,
                       'REDCap: $redcapError\nLos registros quedan en redcap_records.json. Si cierras la app sin '

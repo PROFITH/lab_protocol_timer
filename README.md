@@ -52,13 +52,19 @@ Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) 
 
 ## REDCap Configuration
 
-The API token is never written in the code: pass it when building (the URL defaults to `https://redcap.ugr.es/api/`).
+REDCap is optional. On the start screen, **REDCap (opcional) → Conectar** asks for the API address (default `https://redcap.ugr.es/api/`) and the project's API token, tries them (**Probar conexión** shows the project title and its events) and keeps them on this computer. The same build works with any REDCap project: the visit list shows the events of the project the token belongs to (RUN4HEALTH's Day 0 and Day 8 until REDCap has answered once), and in a project without events the records go without `redcap_event_name`. **Quitar token** removes it.
+
+Without a token, nothing is sent: each session is saved only in its folder, with the records in `redcap_records.json`, and **Enviar a REDCap una sesión guardada…** sends them once a token is set.
+
+The token is never written in the code. A build can still bring one, used while none is set in the app:
 
 ```sh
 flutter build windows --release --dart-define=REDCAP_TOKEN=<project token>
 # another REDCap: --dart-define=REDCAP_URL=https://your-redcap-instance.org/api/
 build\windows\x64\runner\Release\lab_protocol_timer.exe
 ```
+
+Another project needs the same instruments and fields (below); if one is missing, REDCap refuses that import and the console says which.
 
 At the end of a session the app sends three imports, so one that fails does not stop the others: the protocol summary (`protocol_feasibility`, fields below), the session (`wearable_session`) with one instance of the repeating instrument `lab_activity` per attempt, and the fitness-test fields of `physical_fitness`. `lab_activity` must be enabled as a repeating instrument in the visit events. If an import fails, the console shows why and **Reintentar REDCap** sends it again.
 
