@@ -110,6 +110,14 @@ class VideoRecordingService {
 
   VideoRecordingService({this.cameraId = ''});
 
+  /// Folder and file stamp of the running session: every segment, also one
+  /// closed when the camera recovers from an error, is kept there.
+  String? sessionDirectory;
+  String? sessionFileStamp;
+
+  /// Called with each saved segment (to write its row of the video log).
+  void Function(VideoLogEntry entry)? onSegmentSaved;
+
   /// 1080p by default (the old 480p lost detail in a whole-room view).
   ResolutionPreset resolutionPreset = ResolutionPreset.veryHigh;
 
@@ -170,12 +178,17 @@ class VideoRecordingService {
   // DETECCIÓN DE ESPACIO EN DISCO DISPONIBLE
   // ===========================================================================
 
-  Future<double?> getFreeDiskSpaceGB() async {
+  /// Free space where the videos go: [path] (the data folder), else the
+  /// session folder, else Documents.
+  Future<double?> getFreeDiskSpaceGB([String? path]) async {
     try {
-      final directory = await getApplicationDocumentsDirectory();
+      final target = path ?? sessionDirectory;
+      final directory = target != null && Directory(target).existsSync()
+          ? Directory(target)
+          : await getApplicationDocumentsDirectory();
 
       debugPrint(
-        '[VIDEO] Application documents path: ${directory.path}',
+        '[VIDEO] Comprobando espacio en: ${directory.path}',
       );
 
       lastCheckedPath = directory.path;
@@ -609,9 +622,17 @@ class VideoRecordingService {
     }
   }
 
+  /// Stops the recording and keeps the video.
+  ///
+  /// With [destinationDirectory] (the session folder) the video goes there
+  /// as `video_<camera>_<fileStamp>.mp4`; a second segment of the same
+  /// session (resumed after a restart) gets `_2`, `_3`... Otherwise it goes
+  /// to Documents/LabProtocolVideos as before.
   Future<VideoLogEntry?> stopSessionRecording({
     required String participantSummary,
     required int totalActivities,
+    String? destinationDirectory,
+    String? fileStamp,
   }) async {
     if (!_isInitialized || _controller == null || !_isRecording) {
       return null;
@@ -622,20 +643,31 @@ class VideoRecordingService {
       final endTime = DateTime.now().toUtc();
       _isRecording = false;
 
-      final appDir = await getApplicationDocumentsDirectory();
-      final videosDir = Directory('${appDir.path}/LabProtocolVideos');
-      if (!await videosDir.exists()) {
-        await videosDir.create(recursive: true);
+      final timeStr = endTime.toIso8601String().replaceAll(':', '-').split('.').first;
+      final String destinationPath;
+      final folder = destinationDirectory ?? sessionDirectory;
+      if (folder != null) {
+        final camera = cameraId.isEmpty ? 'camera' : cameraId;
+        final stamp = fileStamp ?? sessionFileStamp ?? timeStr;
+        final base = '$folder${Platform.pathSeparator}video_${camera}_$stamp';
+        var candidate = '$base.mp4';
+        for (var n = 2; await File(candidate).exists(); n++) {
+          candidate = '${base}_$n.mp4';
+        }
+        destinationPath = candidate;
+      } else {
+        final appDir = await getApplicationDocumentsDirectory();
+        final videosDir = Directory('${appDir.path}/LabProtocolVideos');
+        if (!await videosDir.exists()) {
+          await videosDir.create(recursive: true);
+        }
+        final cleanParticipant = participantSummary.replaceAll(';', '_').replaceAll(' ', '');
+        final cameraPart = cameraId.isEmpty ? '' : '_$cameraId';
+        destinationPath =
+            '${videosDir.path}/video_session_$cleanParticipant${cameraPart}_$timeStr.mp4';
       }
 
-      final timeStr = endTime.toIso8601String().replaceAll(':', '-').split('.').first;
-      final cleanParticipant = participantSummary.replaceAll(';', '_').replaceAll(' ', '');
-      final cameraPart = cameraId.isEmpty ? '' : '_$cameraId';
-      final destinationPath =
-          '${videosDir.path}/video_session_$cleanParticipant${cameraPart}_$timeStr.mp4';
-
-      final savedFile = await File(xFile.path).copy(destinationPath);
-      await File(xFile.path).delete();
+      final savedFile = await _moveFile(File(xFile.path), destinationPath);
 
       final logEntry = VideoLogEntry(
         filePath: savedFile.path,
@@ -648,6 +680,7 @@ class VideoRecordingService {
 
       recordedVideoLogs.add(logEntry);
       _currentRecordingStartTime = null;
+      onSegmentSaved?.call(logEntry);
 
       debugPrint('[VIDEO] Sesión continua guardada en: ${savedFile.path}');
       return logEntry;
@@ -655,6 +688,24 @@ class VideoRecordingService {
       debugPrint('[VIDEO] Error al detener grabación continua: $e');
       _isRecording = false;
       return null;
+    }
+  }
+
+  /// Renames the file (instant on the same drive) or copies it to another
+  /// drive; the temporary file is removed only once the copy is complete.
+  static Future<File> _moveFile(File source, String destination) async {
+    try {
+      return await source.rename(destination);
+    } on FileSystemException {
+      final copy = await source.copy(destination);
+      if (await copy.length() == await source.length()) {
+        try {
+          await source.delete();
+        } catch (e) {
+          debugPrint('[VIDEO] No se pudo borrar el temporal ${source.path}: $e');
+        }
+      }
+      return copy;
     }
   }
 

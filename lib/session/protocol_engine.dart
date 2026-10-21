@@ -409,9 +409,11 @@ class ProtocolEngine {
     if (plannedPhaseSeconds < minStaticForAutoCue) return false;
     return switch (sync.auto) {
       AutoSync.everyStatic => true,
+      // The first static phase of this session (whatever activity it
+      // starts at) and the end of the last activity.
       AutoSync.firstLast => (phase == SessionPhase.prep &&
-              activityIndex == firstIndex &&
-              attempt == 1) ||
+              !logs.any((l) => !l.isSkipped) &&
+              !syncWindows.any((w) => w.eventType == 'auto_sync')) ||
           (phase == SessionPhase.post &&
               lastIndex != null &&
               activityIndex == lastIndex),

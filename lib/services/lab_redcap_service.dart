@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../models/activity_battery.dart';
+
 class ParticipantEntry {
   final String participantId;
   final String redcapEventName;
@@ -238,7 +240,7 @@ class LabRedCapService {
   /// (`act_1_start_time` ... `act_10_end_time`).
   static const int maxRedcapActivities = 10;
 
-  static bool get isConfigured => _apiToken.isNotEmpty;
+  static const bool isConfigured = _apiToken != '';
 
   /// REDCap `datetime_seconds_ymd` value in the computer's local time.
   static String formatRedcapDateTime(DateTime time) {
@@ -292,22 +294,37 @@ class LabRedCapService {
   }
 
   /// Per-activity detail for the repeating `lab_activity` instrument (one
-  /// instance per activity, so the 10-activity limit does not apply) plus the
+  /// instance per attempt, so the 10-activity limit does not apply) plus the
   /// session link in `wearable_session`.
   ///
   /// Calibration box segments are not activities: the first one fills
   /// `ws_calibration`, `ws_calib_start` and `ws_calib_end`, and the rest stay
-  /// in the session manifest.
+  /// in the session manifest. Skipped attempts and the activities of the
+  /// protocol that were never reached ([notDone]) are sent as "No
+  /// realizada" without times. Calculated fields (`la_duration_s`,
+  /// `ws_bmi`...) are never sent: REDCap rejects the whole import.
   static List<Map<String, dynamic>> buildLabActivityRecords({
     required List<ParticipantEntry> participants,
     required String sessionId,
     String? protocolId,
     required List<ActivityLog> activities,
+    List<ActivityLog> notDone = const [],
+    DateTime? sessionStartTime,
+    int? cameras,
+    String? operator,
+    String? notes,
   }) {
     final records = <Map<String, dynamic>>[];
-    final calibration =
-        activities.where((a) => a.isCalibration).firstOrNull;
-    final labActivities = activities.where((a) => !a.isCalibration).toList();
+    final calibration = activities
+        .where((a) => a.isCalibration && !a.isSkipped)
+        .firstOrNull;
+    final labActivities = [
+      ...activities.where((a) => !a.isCalibration),
+      ...notDone.where((a) => !a.isCalibration),
+    ];
+    final resting = activities
+        .where((a) => a.restingHrBpm != null && !a.isSkipped)
+        .lastOrNull;
 
     for (final participant in participants) {
       records.add({
@@ -315,16 +332,36 @@ class LabRedCapService {
         'redcap_event_name': participant.redcapEventName,
         'ws_session_id': sessionId,
         if (protocolId != null) 'ws_protocol_id': protocolId,
+        if (sessionStartTime != null)
+          'ws_date': formatRedcapDate(sessionStartTime),
+        if (operator != null && operator.trim().isNotEmpty)
+          'ws_operator': operator.trim(),
+        if (cameras != null) 'ws_video_cameras': cameras.toString(),
+        if (notes != null && notes.trim().isNotEmpty)
+          'ws_incidents': notes.trim(),
         if (calibration != null) ...{
           'ws_calibration': '1',
           'ws_calib_start':
               formatRedcapDateTime(calibration.activityStartTime),
           'ws_calib_end': formatRedcapDateTime(calibration.activityEndTime),
         },
+        if (resting != null) ...{
+          'ws_hr_rest': resting.restingHrBpm.toString(),
+          'ws_hr_rest_method': '1',
+          'ws_hr_rest_time': formatRedcapDateTime(
+            resting.restingHrTime ?? resting.activityEndTime,
+          ),
+        },
       });
 
       for (var i = 0; i < labActivities.length; i++) {
         final act = labActivities[i];
+        final timed = !act.isSkipped;
+        final incident = [
+          if (act.incident != null && act.incident!.trim().isNotEmpty)
+            act.incident!.trim(),
+          if (_endNote(act) != null) _endNote(act)!,
+        ].join('. ');
         records.add({
           'record_id': participant.participantId,
           'redcap_event_name': participant.redcapEventName,
@@ -335,16 +372,163 @@ class LabRedCapService {
           if (act.compendiumCode != null) 'la_code': act.compendiumCode,
           'la_name': act.activityName ?? 'Actividad ${act.activityIndex}',
           if (act.met != null) 'la_mets': _formatMet(act.met!),
-          'la_start': formatRedcapDateTime(act.activityStartTime),
-          'la_end': formatRedcapDateTime(act.activityEndTime),
+          if (timed) 'la_start': formatRedcapDateTime(act.activityStartTime),
+          if (timed) 'la_end': formatRedcapDateTime(act.activityEndTime),
           if (act.plannedDurationSeconds != null)
             'la_planned_s': act.plannedDurationSeconds.toString(),
-          'la_completed': '1',
+          'la_completed': ActivityCompletion.redcapCode(act.completion),
+          if (act.rpe != null) 'la_rpe': act.rpe.toString(),
+          if (incident.isNotEmpty) 'la_incident': incident,
           'lab_activity_complete': '2',
         });
       }
     }
     return records;
+  }
+
+  /// Why an attempt is not complete, for `la_incident`.
+  static String? _endNote(ActivityLog act) {
+    if (act.completion == ActivityCompletion.complete) return null;
+    return switch (act.endReason) {
+      'early' => 'Terminada antes de tiempo',
+      'repeat' => 'Interrumpida para repetirla',
+      'finish' => 'Interrumpida al finalizar la sesión',
+      'interrupted' => 'Interrumpida: la aplicación se cerró',
+      'skipped' => 'Saltada por el evaluador',
+      'not_reached' => 'La sesión terminó antes de llegar a ella',
+      _ => null,
+    };
+  }
+
+  /// Attempt that counts for each activity: the last one done (complete or
+  /// partial), or the last skipped one when none was done.
+  static Map<int, ActivityLog> effectiveAttempts(List<ActivityLog> logs) {
+    final result = <int, ActivityLog>{};
+    for (final log in logs) {
+      final previous = result[log.activityIndex];
+      if (previous == null || !log.isSkipped || previous.isSkipped) {
+        result[log.activityIndex] = log;
+      }
+    }
+    return result;
+  }
+
+  /// Fields of the visit record that the protocol activities fill (the
+  /// fitness tests of `physical_fitness`): done, start, effort before and
+  /// after and the values typed by the evaluator.
+  static List<Map<String, dynamic>> buildMappedFieldRecords({
+    required List<ParticipantEntry> participants,
+    required ActivityBattery battery,
+    required List<ActivityLog> logs,
+    Map<int, int> pendingRpeBefore = const {},
+  }) {
+    final effective = effectiveAttempts(logs);
+    final values = <String, String>{};
+    for (var index = 1; index <= battery.activities.length; index++) {
+      final mapping = battery.activityAt(index)!.redcap;
+      if (mapping == null) continue;
+      final log = effective[index];
+      final done = log != null && !log.isSkipped;
+      if (mapping.doneField != null) values[mapping.doneField!] = done ? '1' : '0';
+      if (!done) continue;
+      if (mapping.startField != null) {
+        values[mapping.startField!] = formatRedcapDateTime(log.activityStartTime);
+      }
+      final before = log.rpeBefore ?? pendingRpeBefore[index];
+      if (mapping.rpeBeforeField != null && before != null) {
+        values[mapping.rpeBeforeField!] = before.toString();
+      }
+      if (mapping.rpeAfterField != null && log.rpe != null) {
+        values[mapping.rpeAfterField!] = log.rpe.toString();
+      }
+      for (final field in mapping.fields) {
+        final typed = log.fieldValues[field.field];
+        final value = typed ?? field.defaultValue;
+        if (value == null || value.trim().isEmpty) continue;
+        if (field.validate(value) != null) continue;
+        values[field.field] = field.normalize(value);
+      }
+    }
+    if (values.isEmpty) return const [];
+    return [
+      for (final participant in participants)
+        {
+          'record_id': participant.participantId,
+          'redcap_event_name': participant.redcapEventName,
+          ...values,
+        },
+    ];
+  }
+
+  /// Everything a session sends to REDCap, in three imports so that one
+  /// that fails (an instrument not set up for the event) does not stop the
+  /// others: the protocol summary, the session with one `lab_activity` per
+  /// attempt, and the fields of the fitness tests. [notReached] are the
+  /// activities of the protocol the session never got to, as skipped logs.
+  static List<List<Map<String, dynamic>>> buildSessionImports({
+    required List<ParticipantEntry> participants,
+    required String sessionId,
+    required ActivityBattery? battery,
+    required DateTime sessionStartTime,
+    required DateTime sessionEndTime,
+    required List<ActivityLog> logs,
+    List<ActivityLog> notReached = const [],
+    int? cameras,
+    String? notes,
+    String? operator,
+    Map<int, int> pendingRpeBefore = const {},
+  }) {
+    final effective = effectiveAttempts(logs)
+        .values
+        .where((l) => !l.isSkipped && !l.isCalibration)
+        .toList()
+      ..sort((a, b) => a.activityStartTime.compareTo(b.activityStartTime));
+    final totalProtocol =
+        sessionEndTime.difference(sessionStartTime).inMilliseconds / 1000.0;
+    final totalActivity =
+        effective.fold<double>(0, (sum, l) => sum + l.durationSeconds);
+
+    final summary = buildFlatProtocolRecords(
+      participants: participants,
+      sessionStartTime: sessionStartTime,
+      sessionEndTime: sessionEndTime,
+      activities: effective,
+      totalProtocolSeconds: totalProtocol,
+      totalActivitySeconds: totalActivity,
+      totalTransitionSeconds:
+          (totalProtocol - totalActivity).clamp(0.0, double.infinity),
+      totalStations: effective.length,
+    );
+
+    final detail = buildLabActivityRecords(
+      participants: participants,
+      sessionId: sessionId,
+      protocolId: battery?.protocolId,
+      activities: logs,
+      notDone: notReached,
+      sessionStartTime: sessionStartTime,
+      cameras: cameras,
+      operator: operator,
+      notes: notes,
+    );
+
+    final mapped = battery == null
+        ? const <Map<String, dynamic>>[]
+        : buildMappedFieldRecords(
+            participants: participants,
+            battery: battery,
+            logs: logs,
+            pendingRpeBefore: pendingRpeBefore,
+          );
+
+    return [summary, detail, mapped];
+  }
+
+  /// REDCap `date_ymd` value in the computer's local time.
+  static String formatRedcapDate(DateTime time) {
+    final t = time.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${t.year.toString().padLeft(4, '0')}-${two(t.month)}-${two(t.day)}';
   }
 
   static String _formatMet(double met) =>

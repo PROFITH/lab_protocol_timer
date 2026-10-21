@@ -74,6 +74,7 @@ flutter:
     - assets/gong.ogg
     - assets/gong2.ogg
     - assets/warning.ogg
+    - assets/sounds/
     - assets/protocols/
     - assets/compendium/
 

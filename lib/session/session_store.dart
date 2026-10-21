@@ -185,7 +185,12 @@ class SessionStore {
   }
 
   /// Queued writes, one at a time and in order; errors go to [lastError].
+  /// After [close] nothing more is written (the folder may be renamed).
   Future<void> _enqueue(String name, Future<void> Function() write) {
+    if (_closed) {
+      debugPrint('[STORE] $name no se escribe: la sesión ya está cerrada');
+      return Future.value();
+    }
     final done = Completer<void>();
     _queue = _queue.then((_) async {
       try {
@@ -236,7 +241,10 @@ class SessionStore {
 
   Future<void> flushEvents() async => _events?.flush();
 
+  bool _closed = false;
+
   Future<void> close() async {
+    _closed = true;
     await _events?.close();
     _events = null;
     await drain();

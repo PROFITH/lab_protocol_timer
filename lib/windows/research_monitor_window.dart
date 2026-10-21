@@ -11,12 +11,16 @@ import 'package:camera/camera.dart';
 
 import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
+import '../session/csv_stream_writer.dart';
 import '../models/device_configuration.dart';
 import '../models/device_status.dart';
 import '../models/protocol_configuration.dart';
 import '../models/monitor_slot.dart';
 import '../models/monitor_visualization.dart';
 import 'live_signal.dart';
+import 'monitor_session.dart';
+import 'polar_session_files.dart';
+import 'session_console.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
 
@@ -45,12 +49,24 @@ class _ResearchMonitorHostState extends State<ResearchMonitorHost>
   void initState() {
     super.initState();
     MultiWindowManager.current.addListener(this);
+    // Closing a secondary window takes the whole app down on Windows: the
+    // close button hides it instead (F2 in the participant window shows it).
+    unawaited(
+      MultiWindowManager.current.setPreventClose(true).catchError((Object e) {
+        debugPrint('[MONITOR] setPreventClose no disponible: $e');
+      }),
+    );
   }
 
   @override
   void dispose() {
     MultiWindowManager.current.removeListener(this);
     super.dispose();
+  }
+
+  @override
+  void onWindowClose([int? windowId]) {
+    unawaited(MultiWindowManager.current.hide().catchError((Object _) {}));
   }
 
   @override
@@ -111,20 +127,21 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     const MonitorSlot(slotId: 4),
   ];
 
-  String _participantIds = '--';
-  int _activityIndex = 0;
-  String? _activityName;
-  String _phaseName = 'idle';
-  bool _sessionActive = false;
-  bool _sessionPaused = false;
-  bool _syncAvailable = false;
-  Directory? _sessionExportDirectory;
+  /// The session that runs in the participant window.
+  final MonitorSession _session = MonitorSession();
+
+  /// Polar files of the running session, by device ID.
+  final Map<String, PolarSessionFiles> _polarFiles = {};
+
+  /// `video_sync_session_<stamp>.csv`: one row per saved video segment.
+  CsvStreamWriter? _videoLog;
+
   late ProtocolConfiguration _protocolConfiguration;
-  int _prepSeconds = 10;
-  int _activitySeconds = 60;
-  int _postSeconds = 10;
-  bool _useLapMode = false;
-  bool _enableTts = true;
+
+  /// Right column: 0 activities, 1 devices.
+  int _rightTab = 1;
+  bool _summaryOpen = false;
+  String _lastStatus = 'idle';
 
   // Modo de acelerometría: 'VM' o 'XYZ'
   String _accMode = 'XYZ';
@@ -246,8 +263,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     var ok = false;
     for (var attempt = 1; attempt <= 3 && mounted; attempt++) {
       ok = await camera.service.recoverCamera(
-        participantSummary: _participantIds,
-        activityIndex: _activityIndex,
+        participantSummary: _session.participants,
+        activityIndex: _session.activityIndex,
         restartRecording: wasRecording,
       );
       if (ok) break;
@@ -260,6 +277,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       camera.recovering = false;
       camera.ready = ok;
     });
+    if (_session.isActive) {
+      _log(ok ? 'camera_recovered' : 'camera_lost', camera.configuration.deviceId);
+    }
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -403,6 +423,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       ..start();
 
     MultiWindowManager.current.addListener(this);
+    HardwareKeyboard.instance.addHandler(_onKey);
+    _session.addListener(_onSessionChanged);
 
     MultiWindowManager.current.invokeMethodToWindow(
       0,
@@ -623,6 +645,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _session.removeListener(_onSessionChanged);
+    for (final files in _polarFiles.values) {
+      unawaited(files.stop());
+    }
+    unawaited(_videoLog?.close());
     MultiWindowManager.current.removeListener(this);
     _frameTicker.dispose();
     for (final device in _liveDevices.values) {
@@ -636,15 +664,335 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
 
-  Future<void> _requestSyncWindow() async {
-    await MultiWindowManager.current.invokeMethodToWindow(
-      0,
-      WindowMessages.syncWindowRequested,
-    );
+  // ===========================================================================
+  // SESIÓN (la lleva la ventana del participante)
+  // ===========================================================================
 
-    debugPrint(
-      '[SYNC] Solicitud de ventana de sincronización enviada.',
+  /// Sends an order of the evaluator to the session.
+  Future<Map<String, dynamic>> _send(String command, [Map<String, dynamic> args = const {}]) async {
+    Map<String, dynamic> result;
+    try {
+      final reply = await MultiWindowManager.current
+          .invokeMethodToWindow(0, WindowMessages.sessionCommand, {'command': command, 'args': args})
+          .timeout(const Duration(seconds: 10));
+      result = reply is Map
+          ? Map<String, dynamic>.from(reply)
+          : {'ok': false, 'message': 'La ventana del participante no responde'};
+    } catch (e) {
+      result = {'ok': false, 'message': 'La ventana del participante no responde: $e'};
+    }
+    if (result['ok'] == false && command != 'log' && mounted) {
+      _snack(result['message']?.toString() ?? 'No se pudo hacer', error: true);
+    }
+    return result;
+  }
+
+  /// An event of the sensors or cameras, in the session log.
+  void _log(String event, String detail) {
+    if (_session.sessionDir == null) return;
+    unawaited(_send('log', {'event': event, 'detail': detail}));
+  }
+
+  void _snack(String text, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: error ? Colors.redAccent : const Color(0xFF334155),
+        duration: Duration(seconds: error ? 6 : 4),
+      ),
     );
+  }
+
+  void _onSessionChanged() {
+    final status = _session.status;
+    if (status != _lastStatus) {
+      final wasIdle = _lastStatus == 'idle';
+      _lastStatus = status;
+      if (wasIdle && status != 'idle' && _rightTab != 0) {
+        setState(() => _rightTab = 0);
+      }
+    }
+  }
+
+  /// Shortcuts of the evaluator: F5 start / pause, F6 next, F7 sync. Only
+  /// F keys: the participant may be typing (activity at the computer).
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (ModalRoute.of(context)?.isCurrent == false) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.f5) {
+      if (_session.isIdle) {
+        unawaited(_onStartRequested());
+      } else if (!_session.isClosing) {
+        unawaited(_send('toggle'));
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.f6) {
+      unawaited(runNext(context, _session, _send));
+      return true;
+    }
+    if (key == LogicalKeyboardKey.f7) {
+      if (_session.syncAvailable) unawaited(_send('sync'));
+      return true;
+    }
+    return false;
+  }
+
+  static String _joinOr(List<String> parts, String empty) => parts.isEmpty ? empty : parts.join(' · ');
+
+  /// Checks the devices and starts the session, with or without video.
+  Future<void> _onStartRequested() async {
+    if (!_session.isIdle) return;
+    final items = <PreflightItem>[];
+    final manual = <PreflightItem>[];
+    for (final device in _protocolConfiguration.devices) {
+      final name = device.placementLabel == null
+          ? '${device.deviceName} (${device.deviceId})'
+          : '${device.deviceName} · ${device.placementLabel} (${device.deviceId})';
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        items.add(PreflightItem(
+          name,
+          camera.ready,
+          camera.ready
+              ? 'Preparada · ${camera.service.resolutionLabel}${camera.service.audioUnavailable ? ' · sin audio' : ' · con audio'}'
+              : 'No preparada: púlsala en la barra de dispositivos para elegir la cámara',
+          isCamera: true,
+        ));
+        continue;
+      }
+      final live = _liveDevices[device.deviceId];
+      if (live != null) {
+        final service = live.service;
+        final hr = service.currentHeartRate;
+        final missing = [
+          for (final sensor in _sensorLabels.keys)
+            if (device.hasSensor(sensor) && service.isConnected && !_streaming(service, sensor))
+              _sensorLabels[sensor]!.$1,
+        ];
+        items.add(PreflightItem(
+          name,
+          service.isConnected && missing.isEmpty,
+          !service.isConnected
+              ? 'Sin conectar: sus datos no se guardarán hasta que se conecte'
+              : missing.isNotEmpty
+                  ? 'Conectado, pero sin ${missing.join(', ')}'
+                  : _joinOr([
+                      if (hr > 0) '$hr lpm',
+                      if (service.isAccelerationStreaming) 'ACC ${service.accSampleRateHz} Hz',
+                      if (service.isEcgStreaming) 'ECG',
+                    ], 'Conectado'),
+        ));
+        continue;
+      }
+      // Sensors that record on their own: only the evaluator can check them.
+      manual.add(PreflightItem(
+        name,
+        true,
+        'Graba por su cuenta: comprueba que está colocado y grabando',
+        manual: true,
+      ));
+    }
+    final configured = _session.redcapConfigured;
+    items.add(PreflightItem(
+      'REDCap',
+      configured,
+      configured
+          ? 'Se envía al finalizar (y se puede reintentar)'
+          : 'Sin token en esta compilación: los registros quedan en redcap_records.json',
+    ));
+    final root = _session.info['data_root']?.toString();
+    final service = _cameras.values.isEmpty ? null : _cameras.values.first.service;
+    final free = service == null ? null : await service.getFreeDiskSpaceGB(root);
+    if (free != null) {
+      items.add(PreflightItem(
+        'Espacio en disco',
+        free >= VideoRecordingService.minimumFreeSpaceGB,
+        '${free.toStringAsFixed(1)} GB libres${root == null ? '' : ' en la carpeta de datos'}'
+            '${free >= VideoRecordingService.minimumFreeSpaceGB ? '' : ' (mínimo ${VideoRecordingService.minimumFreeSpaceGB.toStringAsFixed(0)} GB para grabar vídeo)'}',
+      ));
+    }
+    if (!mounted || !_session.isIdle) return;
+    final cameraReady = _cameras.values.any((c) => c.ready);
+    final choice = await showPreflightDialog(context, items: [...items, ...manual], cameraReady: cameraReady);
+    if (choice == null || !_session.isIdle) return;
+    await _send('start', {'video': choice});
+  }
+
+  Future<void> _onSessionStarted(Map<dynamic, dynamic> args) async {
+    final alreadyRecording = _session.sessionDir != null && _session.sessionDir == args['session_dir']?.toString();
+    _session.setStarted(args);
+    final dir = _session.sessionDir;
+    final stamp = _session.fileStamp;
+    if (dir == null || stamp == null) return;
+    final sep = Platform.pathSeparator;
+
+    _videoLog ??= CsvStreamWriter('$dir${sep}video_sync_session_$stamp.csv', VideoLogEntry.csvHeader);
+    for (final camera in _cameras.values) {
+      camera.service.sessionDirectory = dir;
+      camera.service.sessionFileStamp = stamp;
+      camera.service.onSegmentSaved = _onVideoSegment;
+    }
+    for (final entry in _liveDevices.entries) {
+      _polarFiles.putIfAbsent(entry.key, () {
+        final files = PolarSessionFiles(
+          directory: dir,
+          stamp: stamp,
+          deviceId: entry.key,
+          service: entry.value.service,
+        );
+        files.start();
+        return files;
+      });
+    }
+    if (_session.video && !alreadyRecording) await _startVideo();
+    if (mounted) setState(() => _rightTab = 0);
+  }
+
+  Future<void> _startVideo() async {
+    final ready = _cameras.values.where((c) => c.ready && !c.service.isRecording).toList();
+    if (ready.isEmpty) {
+      if (_cameras.values.any((c) => c.service.isRecording)) return;
+      _log('video_not_started', 'Ninguna cámara preparada');
+      _snack('La sesión empezó SIN VÍDEO: ninguna cámara estaba preparada.', error: true);
+      return;
+    }
+    final results = await Future.wait([
+      for (final camera in ready) camera.service.startSessionRecording(participantSummary: _session.participants),
+    ]);
+    for (var i = 0; i < ready.length; i++) {
+      final camera = ready[i];
+      if (results[i]) {
+        _log('video_started', camera.configuration.deviceId);
+      } else {
+        final reason = camera.service.lastStartError ?? 'error desconocido';
+        _log('video_failed', '${camera.configuration.deviceId}: $reason');
+        _snack('${camera.configuration.deviceName} no graba: $reason', error: true);
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _onVideoSegment(VideoLogEntry entry) {
+    final log = _videoLog;
+    if (log != null) {
+      log.add(entry.toCsvRow());
+      unawaited(log.flush());
+    }
+    _log('video_saved', '${entry.cameraId} ${entry.filePath.split(RegExp(r'[\\/]')).last}');
+  }
+
+  /// Stops the cameras (the videos stay in the session folder) and closes
+  /// the Polar files. Answers with the files written.
+  Future<Map<String, dynamic>> _stopRecording() async {
+    final recording = _cameras.values.where((c) => c.service.isRecording).toList();
+    final entries = await Future.wait([
+      for (final camera in recording)
+        camera.service.stopSessionRecording(
+          participantSummary: _session.participants,
+          totalActivities: _session.activityIndex,
+        ),
+    ]);
+    final videoFiles = [
+      for (final camera in _cameras.values)
+        for (final log in camera.service.recordedVideoLogs)
+          if (_session.sessionDir != null && log.filePath.startsWith(_session.sessionDir!)) log.filePath,
+    ];
+    for (var i = 0; i < recording.length; i++) {
+      if (entries[i] == null) {
+        _log('video_stop_failed', recording[i].configuration.deviceId);
+      }
+    }
+    final files = <String>[];
+    for (final polar in _polarFiles.values) {
+      files.addAll(await polar.stop());
+    }
+    _polarFiles.clear();
+    final log = _videoLog;
+    _videoLog = null;
+    if (log != null) {
+      await log.close();
+      if (log.rows > 0 || File(log.path).existsSync()) files.add(log.path);
+    }
+    for (final camera in _cameras.values) {
+      camera.service.sessionDirectory = null;
+      camera.service.sessionFileStamp = null;
+      camera.service.onSegmentSaved = null;
+    }
+    if (mounted) setState(() {});
+    return {
+      'video_files': videoFiles,
+      'files': files,
+      'cameras': _cameras.values.where((c) => c.service.recordedVideoLogs.isNotEmpty).length,
+    };
+  }
+
+  void _onSnapshot(Map<dynamic, dynamic> args) {
+    _session.setSnapshot(args);
+    final participant = _session.info['participants']?.toString() ?? '';
+    for (final device in _liveDevices.values) {
+      device.service.updateProtocolContext(
+        participantId: _session.isActive ? participant : 'idle',
+        activityIndex: _session.activityIndex,
+        phaseName: _session.isActive ? _session.phase : 'idle',
+      );
+    }
+  }
+
+  Map<String, dynamic>? _restingHeartRate(dynamic args) {
+    if (args is! Map) return null;
+    final from = DateTime.tryParse(args['from_utc']?.toString() ?? '');
+    final to = DateTime.tryParse(args['to_utc']?.toString() ?? '');
+    if (from == null || to == null) return null;
+    RestingHeartRate? best;
+    String? bestDevice;
+    for (final entry in _polarFiles.entries) {
+      final result = entry.value.restingHeartRate(from.toUtc(), to.toUtc());
+      if (result == null) continue;
+      final better = best == null ||
+          (result.method == 'rr' && best.method != 'rr') ||
+          (result.method == best.method && result.count > best.count);
+      if (better) {
+        best = result;
+        bestDevice = entry.key;
+      }
+    }
+    if (best == null) return null;
+    return {...best.toJson(), 'device': bestDevice};
+  }
+
+  Future<void> _showSummary() async {
+    if (_summaryOpen || !mounted) return;
+    _summaryOpen = true;
+    try {
+      await MultiWindowManager.current.show();
+      await MultiWindowManager.current.focus();
+    } catch (_) {}
+    if (!mounted) return;
+    await showSessionSummaryDialog(
+      context,
+      session: _session,
+      send: _send,
+      onOpenFolder: _openFolder,
+      onNewSession: () => unawaited(_send('close')),
+    );
+    _summaryOpen = false;
+  }
+
+  void _openFolder(String path) {
+    try {
+      if (Platform.isWindows) {
+        unawaited(Process.run('explorer', [path]));
+      } else if (Platform.isMacOS) {
+        unawaited(Process.run('open', [path]));
+      } else {
+        unawaited(Process.run('xdg-open', [path]));
+      }
+    } catch (e) {
+      _snack('No se pudo abrir la carpeta: $e', error: true);
+    }
   }
 
   // ===========================================================================
@@ -657,31 +1005,45 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     int fromWindowId,
     dynamic arguments,
   ) async {
-    debugPrint('[MONITOR] Evento recibido: $eventName | args: $arguments');
+    if (eventName != WindowMessages.sessionSnapshot) {
+      debugPrint('[MONITOR] Evento recibido: $eventName');
+    }
 
     switch (eventName) {
+      case WindowMessages.sessionSnapshot:
+        if (arguments is Map) _onSnapshot(arguments);
+        return true;
+
+      case WindowMessages.sessionInfo:
+        if (arguments is Map) _session.setInfo(arguments);
+        return true;
+
       case WindowMessages.sessionStarted:
-        _handleSessionStarted(arguments);
-        break;
+        if (arguments is Map) await _onSessionStarted(arguments);
+        return true;
 
-      case WindowMessages.sessionPaused:
-        setState(() {
-          _sessionActive = false;
-          _sessionPaused = true;
-        });
-        break;
+      case WindowMessages.sessionStopping:
+        return await _stopRecording();
 
-      case WindowMessages.sessionResumed:
-        setState(() {
-          _sessionActive = true;
-          _sessionPaused = false;
-        });
-        break;
+      case WindowMessages.sessionSuspending:
+        final result = await _stopRecording();
+        _session.clear();
+        return result;
 
-      case WindowMessages.protocolContext:
-        _handleProtocolContext(arguments);
-        break;
-      
+      case WindowMessages.sessionSaved:
+        if (arguments is Map) _session.setSaved(arguments);
+        unawaited(_showSummary());
+        return true;
+
+      case WindowMessages.sessionCancelled:
+        _session.setCancelled(arguments is Map ? arguments : const {});
+        _snack('Sesión cancelada. Los archivos se conservan en una carpeta marcada como cancelada.');
+        unawaited(_send('close'));
+        return true;
+
+      case WindowMessages.restingHrRequested:
+        return _restingHeartRate(arguments);
+
       case WindowMessages.protocolConfiguration:
         if (arguments is Map) {
           final configuration =
@@ -699,31 +1061,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             '${configuration.devices.length} dispositivos',
           );
         }
-        break;
-      
-      case WindowMessages.protocolSettings:
-        if (arguments is Map) {
-          final settings = Map<String, dynamic>.from(arguments);
-
-          setState(() {
-            _prepSeconds = settings['prepSeconds'] as int;
-            _activitySeconds = settings['activitySeconds'] as int;
-            _postSeconds = settings['postSeconds'] as int;
-            _useLapMode = settings['useLapMode'] as bool;
-            _enableTts = settings['enableTts'] as bool;
-          });
-
-          debugPrint(
-            '[MONITOR] Ajustes del protocolo recibidos: $settings',
-          );
-        }
-        break;
-      
-      case WindowMessages.sessionFinished:
-        return await _handleSessionFinished();
+        return true;
 
       case WindowMessages.releaseResources:
         try {
+          if (_polarFiles.isNotEmpty || _cameras.values.any((c) => c.service.isRecording)) {
+            await _stopRecording();
+          }
           for (final camera in _cameras.values) {
             await camera.service.dispose();
             camera.ready = false;
@@ -736,270 +1080,28 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         }
         if (mounted) setState(() {});
         return true;
-
-      case 'START_VIDEO_RECORDING':
-        // Devuelve {'ok': bool, 'reason': String?} para que la ventana
-        // principal muestre la causa concreta del fallo.
-        final ready = _cameras.values.where((c) => c.ready).toList();
-        if (ready.isEmpty) {
-          const reason =
-              'La cámara no está preparada. Selecciónala o pulsa '
-              '"Reintentar" en el panel de dispositivos.';
-          debugPrint('[VIDEO] No se puede iniciar: $reason');
-          return {'ok': false, 'reason': reason};
-        }
-
-        if (_anyCameraRecording) {
-          const reason = 'Ya existe una grabación activa.';
-          debugPrint('[VIDEO] No se puede iniciar: $reason');
-          return {'ok': false, 'reason': reason};
-        }
-
-        final summary = arguments?.toString() ?? _participantIds;
-
-        // All cameras start together; the result is true if any started.
-        final results = await Future.wait([
-          for (final camera in ready)
-            camera.service.startSessionRecording(
-              participantSummary: summary,
-            ),
-        ]);
-        final success = results.any((r) => r);
-
-        if (mounted) {
-          setState(() {});
-        }
-
-        final failures = [
-          for (var i = 0; i < ready.length; i++)
-            if (!results[i])
-              '${ready[i].configuration.deviceName}: '
-                  '${ready[i].service.lastStartError ?? 'error desconocido'}',
-        ];
-
-        debugPrint(
-          '[VIDEO] Resultado inicio grabación: $results $failures',
-        );
-
-        return {
-          'ok': success,
-          'reason': failures.isEmpty ? null : failures.join('\n'),
-        };
-
-      case 'STOP_VIDEO_RECORDING':
-        if (_anyCameraRecording && arguments is Map) {
-          final summary = arguments['participantSummary']?.toString() ?? _participantIds;
-          final totalActs = int.tryParse(arguments['totalActivities']?.toString() ?? '0') ?? 0;
-          await Future.wait([
-            for (final camera in _cameras.values)
-              if (camera.service.isRecording)
-                camera.service.stopSessionRecording(
-                  participantSummary: summary,
-                  totalActivities: totalActs,
-                ),
-          ]);
-          if (mounted) setState(() {});
-        }
-        break;
-      
-      case WindowMessages.syncAvailability:
-        if (arguments is bool) {
-          setState(() {
-            _syncAvailable = arguments;
-          });
-
-          debugPrint(
-            '[SYNC] Disponibilidad recibida: '
-            '${_syncAvailable ? 'ACTIVA' : 'INACTIVA'}',
-          );
-        }
-        break;
     }
+    return null;
   }
-
-  void _handleSessionStarted(dynamic args) {
-    if (args is! Map) return;
-
-    setState(() {
-      _sessionActive = true;
-      _sessionPaused = false;
-      _participantIds = args['participantIds']?.toString() ?? '--';
-      _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
-      _activityName = args['activityName']?.toString();
-      _phaseName = args['phaseName']?.toString() ?? 'idle';
-    });
-
-    for (final device in _liveDevices.values) {
-      device.service.updateProtocolContext(
-        participantId: _participantIds,
-        activityIndex: _activityIndex,
-        phaseName: _phaseName,
-      );
-    }
-  }
-
-  void _handleProtocolContext(dynamic args) {
-    if (args is! Map) return;
-
-    setState(() {
-      _participantIds = args['participantIds']?.toString() ?? '--';
-      _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
-      _activityName = args['activityName']?.toString();
-      _phaseName = args['phaseName']?.toString() ?? 'idle';
-    });
-
-    for (final device in _liveDevices.values) {
-      final service = device.service;
-      if (!service.isConnected) continue;
-
-      // Registrar muestra por segundo de HR sincronizada
-      if (_sessionActive) {
-        service.captureSample(
-          participantId: _participantIds,
-          activityIndex: _activityIndex,
-          phaseName: _phaseName,
-        );
-      }
-
-      service.updateProtocolContext(
-        participantId: _sessionActive ? _participantIds : 'idle',
-        activityIndex: _activityIndex,
-        phaseName: _sessionActive ? _phaseName : 'idle',
-      );
-    }
-  }
-
-  Future<List<String>> _handleSessionFinished() async {
-    setState(() => _sessionActive = false);
-
-    final timestampStr = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .split('.')
-        .first;
-
-    final generatedFiles = <String>[];
-
-    // ========================================================================
-    // 1-3. HR, ACC y ECG de cada dispositivo en directo
-    // ========================================================================
-    //
-    // The file names carry the device ID of the session (`polar_h10`,
-    // `verity_arm`...), which SAVES uses to match each file with its sensor
-    // in the manifest.
-
-    for (final device in _liveDevices.values) {
-      final service = device.service;
-      final id = device.configuration.deviceId;
-
-      if (service.recordedSamples.isNotEmpty) {
-        final filePath = await _createTemporaryCsvFile(
-          'polar_hr_${id}_$timestampStr.csv',
-          service.exportCsv(),
-        );
-        generatedFiles.add(filePath);
-        debugPrint('[MONITOR] Preparado HR CSV: $filePath');
-      }
-
-      if (service.recordedAccelerationSamples.isNotEmpty) {
-        final filePath = await _createTemporaryCsvFile(
-          'polar_acc_${id}_$timestampStr.csv',
-          service.exportAccelerationCsv(),
-        );
-        generatedFiles.add(filePath);
-        debugPrint('[MONITOR] Preparado ACC CSV: $filePath');
-      }
-
-      if (service.recordedEcgSamples.isNotEmpty) {
-        final filePath = await _createTemporaryCsvFile(
-          'polar_ecg_${id}_$timestampStr.csv',
-          service.exportEcgCsv(),
-        );
-        generatedFiles.add(filePath);
-        debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
-      }
-
-      // Disconnections, data gaps and reconnections, to locate the gaps.
-      if (service.connectionEvents.isNotEmpty) {
-        final filePath = await _createTemporaryCsvFile(
-          'polar_connection_events_${id}_$timestampStr.csv',
-          service.exportConnectionEventsCsv(),
-        );
-        generatedFiles.add(filePath);
-      }
-    }
-
-    // ========================================================================
-    // 4. VIDEO SYNC CSV (una fila por vídeo, de todas las cámaras)
-    // ========================================================================
-
-    final videoLogs = [
-      for (final camera in _cameras.values) ...camera.service.recordedVideoLogs,
-    ];
-
-    if (videoLogs.isNotEmpty) {
-      final csvContent = VideoRecordingService.exportVideoSyncCsvFor(videoLogs);
-
-      final filePath = await _createTemporaryCsvFile(
-        'video_sync_session_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint(
-        '[MONITOR] Preparado Video Sync CSV: $filePath',
-      );
-
-      // ======================================================================
-      // 5. VIDEO
-      // ======================================================================
-
-      for (final videoLog in videoLogs) {
-        if (await File(videoLog.filePath).exists()) {
-          generatedFiles.add(videoLog.filePath);
-
-          debugPrint(
-            '[MONITOR] Vídeo preparado: ${videoLog.filePath}',
-          );
-        }
-      }
-    }
-
-    return generatedFiles;
-  }
-
 
   // ===========================================================================
   // DIÁLOGO DE AJUSTES DE PROTOCOLO
   // ===========================================================================
   
   void _showSettingsDialog() {
-    final prepMinutesController = TextEditingController(
-      text: (_prepSeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final prepSecondsController = TextEditingController(
-      text: (_prepSeconds % 60).toString().padLeft(2, '0'),
-    );
+    final settings = _session.settings;
+    final prep = (settings['prep_seconds'] as num?)?.toInt() ?? 30;
+    final main = (settings['main_seconds'] as num?)?.toInt() ?? 600;
+    final post = (settings['post_seconds'] as num?)?.toInt() ?? 30;
+    final prepMinutesController = TextEditingController(text: (prep ~/ 60).toString().padLeft(2, '0'));
+    final prepSecondsController = TextEditingController(text: (prep % 60).toString().padLeft(2, '0'));
+    final activityMinutesController = TextEditingController(text: (main ~/ 60).toString().padLeft(2, '0'));
+    final activitySecondsController = TextEditingController(text: (main % 60).toString().padLeft(2, '0'));
+    final postMinutesController = TextEditingController(text: (post ~/ 60).toString().padLeft(2, '0'));
+    final postSecondsController = TextEditingController(text: (post % 60).toString().padLeft(2, '0'));
+    var lapMode = settings['lap_mode'] as bool? ?? true;
 
-    final activityMinutesController = TextEditingController(
-      text: (_activitySeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final activitySecondsController = TextEditingController(
-      text: (_activitySeconds % 60).toString().padLeft(2, '0'),
-    );
-
-    final postMinutesController = TextEditingController(
-      text: (_postSeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final postSecondsController = TextEditingController(
-      text: (_postSeconds % 60).toString().padLeft(2, '0'),
-    );
-
-    bool tempLapMode = _useLapMode;
-    bool tempTtsMode = _enableTts;
-
-    showDialog(
+    showDialog<void>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
@@ -1011,91 +1113,61 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
               title: const Row(
                 children: [
-                  Icon(
-                    Icons.tune_rounded,
-                    color: Color(0xFF38BDF8),
-                  ),
+                  Icon(Icons.tune_rounded, color: Color(0xFF38BDF8)),
                   SizedBox(width: 10),
-                  Text(
-                    'Ajustes del Protocolo',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  Text('Duración de las fases', style: TextStyle(color: Colors.white)),
                 ],
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    _buildDurationInput(
-                      label: 'Preparación estática inicial',
-                      minutesController: prepMinutesController,
-                      secondsController: prepSecondsController,
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDurationInput(
-                      label: 'Actividad principal',
-                      minutesController: activityMinutesController,
-                      secondsController: activitySecondsController,
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDurationInput(
-                      label: 'Post-actividad estática final',
-                      minutesController: postMinutesController,
-                      secondsController: postSecondsController,
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Indicaciones por voz',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
+              content: SizedBox(
+                width: 440,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Text(
+                        'Valen para las actividades que no fijan su propia duración en el '
+                        'protocolo. Los cambios se aplican desde la siguiente actividad.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
                       ),
-                      subtitle: const Text(
-                        'Dicta las instrucciones y cambios de fase',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white54,
-                        ),
+                      const SizedBox(height: 14),
+                      _buildDurationInput(
+                        label: 'Fase estática antes (quieto)',
+                        minutesController: prepMinutesController,
+                        secondsController: prepSecondsController,
                       ),
-                      value: tempTtsMode,
-                      activeTrackColor: const Color(0xFF38BDF8),
-                      onChanged: (val) =>
-                          setStateDialog(() => tempTtsMode = val),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Modo Lap (Espera manual)',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
+                      const SizedBox(height: 12),
+                      _buildDurationInput(
+                        label: 'Actividad',
+                        minutesController: activityMinutesController,
+                        secondsController: activitySecondsController,
                       ),
-                      subtitle: const Text(
-                        'Pausa al finalizar para rotación de actividad',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white54,
-                        ),
+                      const SizedBox(height: 12),
+                      _buildDurationInput(
+                        label: 'Fase estática después (quieto)',
+                        minutesController: postMinutesController,
+                        secondsController: postSecondsController,
                       ),
-                      value: tempLapMode,
-                      activeTrackColor: const Color(0xFF38BDF8),
-                      onChanged: (val) =>
-                          setStateDialog(() => tempLapMode = val),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Esperar al evaluador entre actividades',
+                            style: TextStyle(fontSize: 14, color: Colors.white)),
+                        subtitle: const Text(
+                          'Tras cada actividad, descanso hasta pulsar SIGUIENTE (recomendado)',
+                          style: TextStyle(fontSize: 12, color: Colors.white54),
+                        ),
+                        value: lapMode,
+                        activeTrackColor: const Color(0xFF38BDF8),
+                        onChanged: (val) => setStateDialog(() => lapMode = val),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               actions: <Widget>[
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    'Cancelar',
-                    style: TextStyle(color: Colors.white54),
-                  ),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -1103,43 +1175,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       minutesController: prepMinutesController,
                       secondsController: prepSecondsController,
                       minimumSeconds: 5,
-                      fallbackSeconds: _prepSeconds,
+                      fallbackSeconds: prep,
                     );
-
                     final newActivity = _durationFromControllers(
                       minutesController: activityMinutesController,
                       secondsController: activitySecondsController,
                       minimumSeconds: 1,
-                      fallbackSeconds: _activitySeconds,
+                      fallbackSeconds: main,
                     );
-
                     final newPost = _durationFromControllers(
                       minutesController: postMinutesController,
                       secondsController: postSecondsController,
                       minimumSeconds: 5,
-                      fallbackSeconds: _postSeconds,
+                      fallbackSeconds: post,
                     );
-
-                    MultiWindowManager.current.invokeMethodToWindow(
-                      0,
-                      WindowMessages.protocolSettingsUpdated,
-                      {
-                        'prepSeconds': newPrep,
-                        'activitySeconds': newActivity,
-                        'postSeconds': newPost,
-                        'useLapMode': tempLapMode,
-                        'enableTts': tempTtsMode,
-                      },
-                    );
-
-                    setState(() {
-                      _prepSeconds = newPrep;
-                      _activitySeconds = newActivity;
-                      _postSeconds = newPost;
-                      _useLapMode = tempLapMode;
-                      _enableTts = tempTtsMode;
-                    });
-
+                    unawaited(_send('settings', {
+                      'prep_seconds': newPrep,
+                      'main_seconds': newActivity,
+                      'post_seconds': newPost,
+                      'lap_mode': lapMode,
+                    }));
                     Navigator.of(context).pop();
                   },
                   style: FilledButton.styleFrom(
@@ -1598,22 +1653,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       backgroundColor: const Color(0xFF07090E),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildHeader(),
-              const SizedBox(height: 16),
-
-              // ===============================================================
-              // CONTROL DE SESIÓN
-              // ===============================================================
-              _buildSessionControlPanel(),
-
-              const SizedBox(height: 16),
-
-              // ===============================================================
-              // MONITORIZACIÓN
-              // ===============================================================
+              SessionConsole(
+                session: _session,
+                send: _send,
+                onStart: _onStartRequested,
+                devices: _deviceChips,
+                recording: _anyCameraRecording,
+                onOpenFolder: _openFolder,
+                onSettings: _showSettingsDialog,
+              ),
+              const SizedBox(height: 12),
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1622,10 +1675,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       flex: 3,
                       child: _buildMonitoringArea(),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: _buildDeviceStatusPanel(),
+                      child: _buildRightColumn(),
                     ),
                   ],
                 ),
@@ -1637,132 +1690,129 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildSessionControlPanel() {
-    return _MonitorCard(
-      title: 'CONTROL DE SESIÓN',
-      icon: Icons.tune_rounded,
-      child: Row(
-        children: [
-          FilledButton.icon(
-            onPressed: () async {
-              final message = !_sessionActive && !_sessionPaused
-                  ? WindowMessages.sessionStartRequested
-                  : _sessionPaused
-                      ? WindowMessages.sessionResumeRequested
-                      : WindowMessages.sessionPauseRequested;
-
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                message,
-              );
-            },
-            icon: Icon(
-              _sessionPaused
-                  ? Icons.play_arrow_rounded
-                  : _sessionActive
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
+  /// Activities of the protocol (with the notes of each attempt) and the
+  /// devices, one at a time: the activities during the session.
+  Widget _buildRightColumn() {
+    final lost = _deviceChips.any((c) => c.warning);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SegmentedButton<int>(
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(
+              value: 0,
+              icon: Icon(Icons.checklist_rounded),
+              label: Text('Actividades'),
             ),
-            label: Text(
-              _sessionPaused
-                  ? 'REANUDAR'
-                  : _sessionActive
-                      ? 'PAUSAR'
-                      : 'INICIAR',
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: FilledButton.tonalIcon(
-              onPressed: () async {
-                await MultiWindowManager.current.invokeMethodToWindow(
-                  0,
-                  WindowMessages.lapRequested,
-                );
-              },
-              icon: const Icon(Icons.skip_next_rounded),
-              label: const Text(
-                'LAP',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                ),
+            ButtonSegment(
+              value: 1,
+              icon: Icon(
+                lost ? Icons.warning_amber_rounded : Icons.devices_other_rounded,
+                color: lost ? Colors.orangeAccent : null,
               ),
+              label: const Text('Dispositivos'),
             ),
-          ),
-          const SizedBox(width: 10),
-          _buildSyncButton(),
-          const SizedBox(width: 10),
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: () async {
-                await MultiWindowManager.current.invokeMethodToWindow(
-                  0,
-                  WindowMessages.sessionFinishRequested,
-                );
-              },
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
+          ],
+          selected: {_rightTab},
+          onSelectionChanged: (value) => setState(() => _rightTab = value.first),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: IndexedStack(
+            index: _rightTab,
+            sizing: StackFit.expand,
+            children: [
+              _MonitorCard(
+                title: 'ACTIVIDADES DEL PROTOCOLO',
+                icon: Icons.checklist_rounded,
+                expandChild: true,
+                child: ActivityPanel(session: _session, send: _send),
               ),
-              icon: const Icon(Icons.stop_rounded),
-              label: const Text(
-                'FINALIZAR Y SINCRONIZAR',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
+              _buildDeviceStatusPanel(),
+            ],
           ),
-          const SizedBox(width: 10),
-          IconButton(
-            tooltip: _enableTts ? 'Desactivar voz' : 'Activar voz',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color(0xFF38BDF8),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: () async {
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                WindowMessages.voiceToggleRequested,
-              );
-            },
-            icon: Icon(
-              _enableTts
-                  ? Icons.volume_up_rounded
-                  : Icons.volume_off_rounded,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Ajustes',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color(0xFF38BDF8),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: _showSettingsDialog,
-            icon: const Icon(Icons.settings_rounded),
-          ),
-          IconButton(
-            tooltip: 'Cancelar prueba',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color.fromARGB(255, 243, 52, 52),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: () async {
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                WindowMessages.sessionCancelRequested,
-              );
-            },
-            icon: const Icon(
-              Icons.close_rounded,
-              color: Colors.redAccent,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
+
+  /// The devices that can be checked from here (cameras and live Polar
+  /// sensors), for the status strip of the console.
+  List<DeviceChip> get _deviceChips {
+    final chips = <DeviceChip>[];
+    final active = !_session.isIdle && !_session.isClosing;
+    void showDevices() => setState(() => _rightTab = 1);
+
+    for (final device in _protocolConfiguration.devices) {
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        final service = camera.service;
+        final recording = service.isRecording;
+        final error = service.cameraError.value;
+        final (String detail, Color color) = camera.recovering
+            ? ('Recuperando...', Colors.orangeAccent)
+            : recording
+                ? ('Grabando${service.audioUnavailable ? ' sin audio' : ''}', const Color(0xFFF87171))
+                : camera.ready
+                    ? ('Preparada', const Color(0xFF34D399))
+                    : error != null
+                        ? ('Error', Colors.redAccent)
+                        : ('Sin preparar', Colors.white38);
+        chips.add(DeviceChip(
+          label: device.deviceName,
+          detail: detail,
+          color: color,
+          icon: recording ? Icons.fiber_manual_record_rounded : Icons.videocam_rounded,
+          warning: active && _session.video && !recording,
+          onTap: camera.ready || camera.recovering || recording
+              ? showDevices
+              : () => _showCameraConnectionDialog(device.deviceId),
+        ));
+        continue;
+      }
+      final live = _liveDevices[device.deviceId];
+      if (live == null) continue;
+      final service = live.service;
+      final state = service.linkStatus.value.state;
+      final connected = service.isConnected && state != PolarLinkState.reconnecting;
+      final missing = [
+        for (final sensor in _sensorLabels.keys)
+          if (device.hasSensor(sensor) && connected && !_streaming(service, sensor)) _sensorLabels[sensor]!.$1,
+      ];
+      final hr = service.currentHeartRate;
+      final (String detail, Color color) = switch (state) {
+        _ when connected && missing.isEmpty => (
+            [if (hr > 0) '$hr lpm' else 'Conectado', if (device.hasSensor('acc')) 'ACC'].join(' · '),
+            const Color(0xFF34D399),
+          ),
+        _ when connected => ('Sin ${missing.join(', ')}', Colors.orangeAccent),
+        PolarLinkState.reconnecting => ('Reconectando...', Colors.orangeAccent),
+        PolarLinkState.connecting || PolarLinkState.pairing || PolarLinkState.configuring =>
+          ('Conectando...', Colors.orangeAccent),
+        PolarLinkState.error => ('Error', Colors.redAccent),
+        _ => ('Sin conectar', Colors.white38),
+      };
+      chips.add(DeviceChip(
+        label: device.placementLabel == null ? device.deviceName : '${device.deviceName} · ${device.placementLabel}',
+        detail: detail,
+        color: color,
+        icon: Icons.favorite_rounded,
+        // Lost during the session: it was connected and is not now.
+        warning: active && service.hasLastDevice && !connected,
+        onTap: connected ? showDevices : () => _showPolarConnectionDialog(device.deviceId),
+      ));
+    }
+    return chips;
+  }
+
+  static bool _streaming(PolarBleService service, String sensor) => switch (sensor) {
+        'heart_rate' => service.isHeartRateStreaming,
+        'rr' => service.isRrStreaming,
+        'acc' => service.isAccelerationStreaming,
+        'ecg' => service.isEcgStreaming,
+        _ => false,
+      };
 
   Widget _buildMonitoringArea() {
     return _MonitorCard(
@@ -2144,181 +2194,6 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildHeader() {
-    return _MonitorCard(
-      title: 'SESIÓN',
-      icon: Icons.assignment_rounded,
-      child: Row(
-        children: [
-          // ---------------------------------------------------------------
-          // PARTICIPANTE
-          // ---------------------------------------------------------------
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'PARTICIPANTE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white38,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$_participantIds · Día 0',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Separador
-          Container(
-            width: 1,
-            height: 38,
-            color: Colors.white12,
-          ),
-
-          const SizedBox(width: 20),
-
-          // ---------------------------------------------------------------
-          // ACTIVIDAD
-          // ---------------------------------------------------------------
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'ACTIVIDAD ACTUAL',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white38,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        _sessionActive || _sessionPaused
-                            ? _activityName == null
-                                ? 'Actividad $_activityIndex'
-                                : 'Actividad $_activityIndex · $_activityName'
-                            : 'No iniciado',
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF38BDF8).withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        _phaseName.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF38BDF8),
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Separador
-          Container(
-            width: 1,
-            height: 38,
-            color: Colors.white12,
-          ),
-
-          const SizedBox(width: 20),
-
-          // ---------------------------------------------------------------
-          // ESTADO
-          // ---------------------------------------------------------------
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _StatusDot(
-                color: _sessionActive
-                    ? Colors.greenAccent
-                    : Colors.grey,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _sessionActive ? 'SESIÓN ACTIVA' : 'EN ESPERA',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  color: _sessionActive
-                      ? Colors.greenAccent
-                      : Colors.grey.shade400,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSyncButton() {
-    return ElevatedButton.icon(
-      onPressed: _syncAvailable ? _requestSyncWindow : null,
-      icon: const Icon(
-        Icons.sync_rounded,
-        size: 18,
-      ),
-      label: const Text(
-        'SINCRONIZAR',
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 12,
-        ),
-      ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF38BDF8),
-        foregroundColor: Colors.black,
-        disabledBackgroundColor: Colors.grey.shade300,
-        disabledForegroundColor: Colors.grey.shade600,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 10,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
-      ),
-    );
-  }
-
   Widget _buildTimePartField({
     required TextEditingController controller,
     required String label,
@@ -2471,26 +2346,6 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     return totalSeconds < minimumSeconds
         ? minimumSeconds
         : totalSeconds;
-  }
-
-  Future<String> _createTemporaryCsvFile(
-    String fileName,
-    String content,
-  ) async {
-    _sessionExportDirectory ??=
-        await Directory.systemTemp.createTemp(
-      'lab_protocol_timer_session_',
-    );
-
-    final file = File(
-      '${_sessionExportDirectory!.path}'
-      '${Platform.pathSeparator}'
-      '$fileName',
-    );
-
-    await file.writeAsString(content);
-
-    return file.path;
   }
 }
 

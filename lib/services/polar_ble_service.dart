@@ -6,6 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import '../models/polar_hr_sample.dart';
 import '../models/device_configuration.dart';
+import 'pmd_clock.dart';
 
 /// Estado del enlace BLE con el sensor Polar, pensado para mostrarse en la UI.
 enum PolarLinkState {
@@ -124,23 +125,18 @@ class PolarBleService {
   // TIME CALIBRATION
   // ===========================================================================
   
-  // Diferencia calculada: (Host UTC Microseconds) - (Polar Timestamp Microseconds)
-  int? _sensorToHostEpochOffsetMicros;
+  /// Sensor clock to host clock, from every PMD frame (see [PmdClockMapper]).
+  final PmdClockMapper _clock = PmdClockMapper();
+
+  /// One row per PMD frame: arrival, sensor time of its last sample and the
+  /// offset in use, so SAVES can check or redo the mapping.
+  final List<PmdClockObservation> clockObservations = [];
 
   void _resetClockSync() {
-    _sensorToHostEpochOffsetMicros = null;
+    _clock.reset();
   }
 
-  DateTime _convertPmdTimestampToHostUtc(int timestampNs) {
-    final sampleMicrosFromPolar = timestampNs ~/ 1000;
-    final nowHostMicros = DateTime.now().toUtc().microsecondsSinceEpoch;
-
-    // Se calibra con el primer paquete recibido en la sesión
-    _sensorToHostEpochOffsetMicros ??= (nowHostMicros - sampleMicrosFromPolar);
-
-    final synchronizedMicros = sampleMicrosFromPolar + _sensorToHostEpochOffsetMicros!;
-    return DateTime.fromMicrosecondsSinceEpoch(synchronizedMicros, isUtc: true);
-  }
+  DateTime _convertPmdTimestampToHostUtc(int timestampNs) => _clock.toHostUtc(timestampNs);
 
   // ===========================================================================
   // ACC SETTINGS
@@ -2034,6 +2030,20 @@ class PolarBleService {
     final measurementType =
         data[0] & 0x3F;
 
+    // Bytes 1..8: sensor time of the last sample of the frame.
+    if (data.length >= 10 &&
+        (measurementType == pmdTypeEcg || measurementType == pmdTypeAcc)) {
+      final arrival = DateTime.now().toUtc().microsecondsSinceEpoch;
+      final frameNs = _readUint64LittleEndian(data, 1);
+      _clock.observe(arrivalHostMicros: arrival, lastSampleSensorMicros: frameNs ~/ 1000);
+      clockObservations.add(PmdClockObservation(
+        measurementType: measurementType,
+        arrivalHostMicros: arrival,
+        frameSensorNs: frameNs,
+        offsetMicros: _clock.offsetMicros ?? 0,
+      ));
+    }
+
     switch (measurementType) {
       case pmdTypeEcg:
         _parseEcgFrame(data);
@@ -2172,6 +2182,8 @@ class PolarBleService {
             currentPhaseName,
         microVolts:
             rawUv,
+        sensorTimeNs:
+            timestamps[i],
       );
 
       recordedEcgSamples.add(
@@ -3147,6 +3159,7 @@ class PolarBleService {
       xMg: xMg,
       yMg: yMg,
       zMg: zMg,
+      sensorTimeNs: sampleNs,
     );
 
     recordedAccelerationSamples.add(
@@ -3329,6 +3342,21 @@ class PolarBleService {
       currentRrIntervals =
           rrList;
 
+      // One row per notification keeps every RR interval (a row per second
+      // taken from the last value lost the RR of skipped notifications).
+      if (bpm > 0 || rrList.isNotEmpty) {
+        recordedSamples.add(
+          PolarHrSample(
+            timestamp: DateTime.now().toUtc(),
+            participantId: currentParticipantId,
+            activityIndex: currentActivityIndex,
+            phaseName: currentPhaseName,
+            heartRateBpm: bpm,
+            rrIntervalsMs: rrList,
+          ),
+        );
+      }
+
       if (!_hrStreamController.isClosed) {
         _hrStreamController.add(
           bpm,
@@ -3352,40 +3380,6 @@ class PolarBleService {
         '[POLAR DEBUG] $stack',
       );
     }
-  }
-
-  // ===========================================================================
-  // CAPTURE HR SAMPLE
-  // ===========================================================================
-
-  void captureSample({
-    required String participantId,
-    required int activityIndex,
-    required String phaseName,
-  }) {
-    if (!isConnected ||
-        currentHeartRate == 0) {
-      return;
-    }
-
-    recordedSamples.add(
-      PolarHrSample(
-        timestamp:
-            DateTime.now().toUtc(),
-        participantId:
-            participantId,
-        activityIndex:
-            activityIndex,
-        phaseName:
-            phaseName,
-        heartRateBpm:
-            currentHeartRate,
-        rrIntervalsMs:
-            List.from(
-          currentRrIntervals,
-        ),
-      ),
-    );
   }
 
   // ===========================================================================
@@ -3895,23 +3889,56 @@ class PolarEcgSample {
   final String phaseName;
   final int microVolts;
 
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
   const PolarEcgSample({
     required this.timestamp,
     required this.participantId,
     required this.activityIndex,
     required this.phaseName,
     required this.microVolts,
+    this.sensorTimeNs,
   });
 
   static const String csvHeader =
-      'timestamp_iso,participant_id,activity_index,phase_name,ecg_uv';
+      'timestamp_iso,participant_id,activity_index,phase_name,ecg_uv,sensor_time_ns';
 
   String toCsvRow() {
     return '${timestamp.toIso8601String()},'
         '$participantId,'
         '$activityIndex,'
         '$phaseName,'
-        '$microVolts';
+        '$microVolts,'
+        '${sensorTimeNs ?? ''}';
+  }
+}
+
+/// One PMD frame as received: see [PolarBleService.clockObservations].
+class PmdClockObservation {
+  final int measurementType;
+  final int arrivalHostMicros;
+  final int frameSensorNs;
+  final int offsetMicros;
+
+  const PmdClockObservation({
+    required this.measurementType,
+    required this.arrivalHostMicros,
+    required this.frameSensorNs,
+    required this.offsetMicros,
+  });
+
+  static const String csvHeader =
+      'arrival_utc,stream,frame_sensor_time_ns,offset_us';
+
+  String toCsvRow() {
+    final stream = switch (measurementType) {
+      PolarBleService.pmdTypeEcg => 'ecg',
+      PolarBleService.pmdTypeAcc => 'acc',
+      _ => '$measurementType',
+    };
+    final arrival = DateTime.fromMicrosecondsSinceEpoch(arrivalHostMicros, isUtc: true);
+    return '${arrival.toIso8601String()},$stream,$frameSensorNs,$offsetMicros';
   }
 }
 
@@ -3928,6 +3955,9 @@ class PolarAccelerationSample {
   final double yMg;
   final double zMg;
 
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
   const PolarAccelerationSample({
     required this.timestamp,
     required this.participantId,
@@ -3936,11 +3966,12 @@ class PolarAccelerationSample {
     required this.xMg,
     required this.yMg,
     required this.zMg,
+    this.sensorTimeNs,
   });
 
   static const String csvHeader =
       'timestamp_iso,participant_id,activity_index,phase_name,'
-      'acc_x_mg,acc_y_mg,acc_z_mg';
+      'acc_x_mg,acc_y_mg,acc_z_mg,sensor_time_ns';
 
   String toCsvRow() {
     return '${timestamp.toIso8601String()},'
@@ -3949,7 +3980,8 @@ class PolarAccelerationSample {
         '$phaseName,'
         '$xMg,'
         '$yMg,'
-        '$zMg';
+        '$zMg,'
+        '${sensorTimeNs ?? ''}';
   }
 }
 
