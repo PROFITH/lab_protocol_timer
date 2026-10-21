@@ -1555,6 +1555,13 @@ Future<void> showSessionSummaryDialog(
         final video = summary['video_saved'] == true;
         final total = (summary['total_seconds'] as num?)?.toDouble() ?? 0;
 
+        final after = SensorsAfterSession(session.battery?.sensors ?? const []);
+        final unnamed = [
+          for (final sensor in after.withoutSerial)
+            if (SensorsAfterSession.fileNameFor(sensor, dir) case final name?) name,
+        ];
+        String names(List<SessionSensor> sensors) => sensors.map((s) => s.displayName).join(', ');
+
         Widget line(IconData icon, Color color, String text) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 3),
               child: Row(
@@ -1602,6 +1609,34 @@ Future<void> showSessionSummaryDialog(
                       'REDCap: $redcapError\nLos registros quedan en redcap_records.json.')
                 else
                   line(Icons.cloud_done_rounded, _green, 'Enviado a REDCap'),
+                if (!after.isEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'ANTES DE QUE SE VAYA EL PARTICIPANTE',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                      color: Colors.white70,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (after.download.isNotEmpty)
+                    line(Icons.download_rounded, _amber,
+                        'Descarga y copia a la carpeta de la sesión: ${names(after.download)}.'),
+                  if (after.downloadAndRestart.isNotEmpty)
+                    line(Icons.restart_alt_rounded, _amber,
+                        'Descarga, copia a la carpeta y vuelve a inicializar para la vida libre: '
+                        '${names(after.downloadAndRestart)}.'),
+                  if (after.startFreeLiving.isNotEmpty)
+                    line(Icons.play_circle_outline_rounded, _amber,
+                        'Inicia su grabación de vida libre (lo del laboratorio ya está en la carpeta): '
+                        '${names(after.startFreeLiving)}.'),
+                  if (unnamed.isNotEmpty)
+                    line(Icons.drive_file_rename_outline_rounded, Colors.white70,
+                        'Sin número de serie en la configuración: nombra sus archivos ${unnamed.join(', ')} '
+                        '(con su extensión) para que SAVES los reconozca.'),
+                ],
                 if (dir != null) ...[
                   const SizedBox(height: 8),
                   SelectableText(dir, style: const TextStyle(fontSize: 12, color: Colors.white54)),

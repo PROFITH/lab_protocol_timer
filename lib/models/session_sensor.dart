@@ -327,6 +327,9 @@ class SessionSensor {
 
   bool get hasSerial => serial != null && serial!.trim().isNotEmpty;
 
+  /// Device and place, for lists read by the evaluator.
+  String get displayName => placementLabel == null ? deviceName : '$deviceName · $placementLabel';
+
   /// ID made of the type prefix and the placement code (`ax3_wnd`), with a
   /// number when [taken] already has it.
   static String suggestId(
@@ -464,5 +467,49 @@ class SessionSensor {
       timestampDomainOverride:
           rawType == null ? (timestampDomain ?? 'unknown') : timestampDomain,
     );
+  }
+}
+
+/// What the evaluator does with the sensors once the session is saved,
+/// before the participant leaves. Offline devices are downloaded and their
+/// files go to the session folder; those that stay on for the free-living
+/// days are then started again (an Axivity has to stop recording to be
+/// downloaded). A live one that stays on only starts its free-living
+/// recording: its laboratory data is already in the folder.
+class SensorsAfterSession {
+  SensorsAfterSession(Iterable<SessionSensor> sensors)
+      : download = [
+          for (final s in sensors)
+            if (s.connection == 'offline' && !s.freeLiving) s,
+        ],
+        downloadAndRestart = [
+          for (final s in sensors)
+            if (s.connection == 'offline' && s.freeLiving) s,
+        ],
+        startFreeLiving = [
+          for (final s in sensors)
+            if (s.connection == 'live' && s.freeLiving) s,
+        ];
+
+  final List<SessionSensor> download;
+  final List<SessionSensor> downloadAndRestart;
+  final List<SessionSensor> startFreeLiving;
+
+  bool get isEmpty => download.isEmpty && downloadAndRestart.isEmpty && startFreeLiving.isEmpty;
+
+  /// Downloaded sensors without a serial number: SAVES finds their files by
+  /// the sensor ID in the file name.
+  List<SessionSensor> get withoutSerial => [
+        for (final s in [...download, ...downloadAndRestart])
+          if (!s.hasSerial) s,
+      ];
+
+  /// File name (without extension) for a sensor without a serial number,
+  /// from the session folder (`…/R4H_001/D0` → `R4H_001_D0_matrix_wnd`).
+  static String? fileNameFor(SessionSensor sensor, String? sessionDir) {
+    if (sessionDir == null) return null;
+    final parts = sessionDir.split(RegExp(r'[\\/]')).where((p) => p.isNotEmpty).toList();
+    if (parts.length < 2) return null;
+    return '${parts[parts.length - 2]}_${parts.last}_${sensor.sensorId}';
   }
 }

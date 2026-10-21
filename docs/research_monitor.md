@@ -33,6 +33,14 @@ Per live device, with its sensor ID (SAVES matches files by it):
 video of every camera (last column `camera_id`), and the videos
 `video_session_<participants>_<camera>_<ts>.mp4`.
 
+The summary shown after «FINALIZAR Y GUARDAR» also lists what to do with
+the sensors before the participant leaves: download the offline ones and
+copy their files to the session folder; download those that stay on for the
+free-living days and initialise them again (an Axivity has to stop
+recording to be downloaded); start the free-living recording of a live one
+that stays on. Sensors without a serial number get the file name SAVES
+recognises (`R4H_001_D0_matrix_wnd` plus the extension).
+
 ## Live charts
 
 Every sample is kept for the window of the chart (ECG 6 s, ACC 10 s, HR and

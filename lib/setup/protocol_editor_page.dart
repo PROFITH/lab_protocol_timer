@@ -1063,7 +1063,7 @@ class _SensorDialogState extends State<_SensorDialog> {
                     onChanged: (v) => setState(() => _freeLiving = v),
                     title: const Text('Sigue puesto en vida libre'),
                     subtitle: const Text(
-                      'No se quita al terminar la visita',
+                      'Al terminar el laboratorio se descarga y se vuelve a inicializar para la vida libre',
                       style: TextStyle(color: Colors.white38),
                     ),
                   ),
