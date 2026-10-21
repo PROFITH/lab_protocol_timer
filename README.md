@@ -52,7 +52,7 @@ Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) 
 
 ## REDCap Configuration
 
-REDCap is optional. On the start screen, **REDCap (opcional) → Conectar** asks for the API address (default `https://redcap.ugr.es/api/`) and the project's API token, tries them (**Probar conexión** shows the project title and its events) and keeps them on this computer. The same build works with any REDCap project: the visit list shows the events of the project the token belongs to (RUN4HEALTH's Day 0 and Day 8 until REDCap has answered once), and in a project without events the records go without `redcap_event_name`. **Quitar token** removes it.
+REDCap is optional. On the start screen, **REDCap (opcional) → Conectar** asks for the API address (default `https://minerva.ugr.es/api/`, the UGR's public REDCap; `redcap.ugr.es` only works inside the UGR network or with its VPN) and the project's API token, tries them (**Probar conexión** shows the project title and its events) and keeps them on this computer. The same build works with any REDCap project: the visit list shows the events of the project the token belongs to (RUN4HEALTH's Day 0 and Day 8 until REDCap has answered once), and in a project without events the records go without `redcap_event_name`. **Quitar token** removes it.
 
 Without a token, nothing is sent: each session is saved only in its folder, with the records in `redcap_records.json`, and **Enviar a REDCap una sesión guardada…** sends them once a token is set.
 
