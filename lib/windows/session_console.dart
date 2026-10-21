@@ -1603,10 +1603,12 @@ Future<void> showSessionSummaryDialog(
                 const SizedBox(height: 6),
                 if (redcapSkipped)
                   line(Icons.cloud_off_rounded, _amber,
-                      'REDCap no está configurado: los registros quedan en redcap_records.json')
+                      'REDCap no está configurado: los registros quedan en redcap_records.json. '
+                      'Se envían después con «Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else if (redcapError != null)
                   line(Icons.cloud_off_rounded, _red,
-                      'REDCap: $redcapError\nLos registros quedan en redcap_records.json.')
+                      'REDCap: $redcapError\nLos registros quedan en redcap_records.json. Si cierras la app sin '
+                      'reintentar, se envían después con «Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else
                   line(Icons.cloud_done_rounded, _green, 'Enviado a REDCap'),
                 if (!after.isEmpty) ...[

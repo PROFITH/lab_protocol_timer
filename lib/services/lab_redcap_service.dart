@@ -540,8 +540,9 @@ class LabRedCapService {
   ];
 
   /// [error] of an import of [records], with what to change in the REDCap
-  /// project when the cause is known.
-  static String explainImportError(String error, List<Map<String, dynamic>> records) {
+  /// project when the cause is known and the button that sends it again.
+  static String explainImportError(String error, List<Map<String, dynamic>> records,
+      {String retry = '«Reintentar REDCap»'}) {
     final repeating = {
       for (final r in records)
         if (r['redcap_repeat_instrument'] != null) r['redcap_repeat_instrument'].toString(),
@@ -550,7 +551,7 @@ class LabRedCapService {
       final events = {for (final r in records) r['redcap_event_name']?.toString() ?? ''}..remove('');
       return 'En REDCap, ${repeating.map((f) => '«$f»').join(' y ')} tiene que ser un instrumento '
           'repetible en ${events.isEmpty ? 'el evento' : events.join(', ')} '
-          '(Project Setup → Repeating instruments and events). Después pulsa «Reintentar REDCap». '
+          '(Project Setup → Repeating instruments and events). Después pulsa $retry. '
           'Respuesta de REDCap: $error';
     }
     return error;

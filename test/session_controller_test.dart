@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lab_protocol_timer/models/activity_battery.dart';
 import 'package:lab_protocol_timer/services/lab_redcap_service.dart';
+import 'package:lab_protocol_timer/services/redcap_resend.dart';
 import 'package:lab_protocol_timer/session/protocol_engine.dart';
 import 'package:lab_protocol_timer/session/session_clock.dart';
 import 'package:lab_protocol_timer/session/session_controller.dart';
@@ -342,6 +343,40 @@ void main() {
     fail = false;
     await c.retryRedcap();
     expect(c.summary!.redcapError, isNull);
+    // Once REDCap has them, nothing is left pending in the folder.
+    expect(File('$dir/redcap_records.json').existsSync(), isFalse);
+    expect(Directory(dir).listSync().any((f) => f.path.contains('redcap_records_enviados_')), isTrue);
+  });
+
+  test('a session saved without REDCap is sent later from its folder', () async {
+    final clock = FakeSessionClock();
+    final c = SessionController(
+      participants: participants,
+      battery: battery,
+      dataRoot: root.path,
+      clock: clock,
+      monitor: FakeMonitor(),
+      redcapConfigured: true,
+      importRecords: (records) async => 'sin red',
+    );
+    await c.command('start', {'video': false});
+    await run(c, clock, 400);
+    await c.finish();
+    final dir = Directory(c.store!.path);
+    c.dispose();
+
+    // The app was closed; the session goes from the start screen.
+    final sent = <List<Map<String, dynamic>>>[];
+    final error = await SavedSessionRedcap.send(dir, importRecords: (batch) async {
+      sent.add(batch);
+      return null;
+    });
+    expect(error, isNull);
+    final all = sent.expand((b) => b).toList();
+    expect(all.any((r) => r.containsKey('ws_session_id')), isTrue);
+    expect(all.any((r) => r.containsKey('lab_total_stations')), isTrue);
+    expect(sent.last.every((r) => r['redcap_repeat_instrument'] == 'lab_activity'), isTrue);
+    expect(File('${dir.path}/redcap_records.json').existsSync(), isFalse);
   });
 
   test('an instrument that is not repeating stops only the activities, and says which', () async {

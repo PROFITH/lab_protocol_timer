@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/protocol_library.dart';
+import '../services/redcap_resend.dart';
 import '../session/session_controller.dart';
 import '../session/session_store.dart';
 import 'protocol_editor_page.dart';
@@ -106,6 +107,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   final _operatorController = TextEditingController();
   String? _dataRoot;
   bool _starting = false;
+  bool _sendingSaved = false;
 
   /// Protocol and sensors of the session (null: numbered activities).
   ActivityBattery? _battery;
@@ -333,6 +335,32 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     );
     if (edited == null || !mounted) return;
     setState(() => _battery = edited);
+  }
+
+  /// Sends to REDCap a saved session whose records did not get there (the
+  /// app was closed, there was no network or the REDCap project needed a
+  /// change).
+  Future<void> _sendSavedSession() async {
+    final chosen = await getDirectoryPath(
+      confirmButtonText: 'Enviar esta sesión',
+      initialDirectory: _dataRoot,
+    );
+    if (chosen == null || !mounted) return;
+    setState(() => _sendingSaved = true);
+    final error = await SavedSessionRedcap.send(Directory(chosen));
+    if (!mounted) return;
+    setState(() => _sendingSaved = false);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: Text(error == null ? 'Sesión enviada a REDCap' : 'No se pudo enviar'),
+        content: SelectableText(error ?? 'REDCap ya tiene los registros de $chosen.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar')),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteCustomProtocol() async {
@@ -922,6 +950,19 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                           label: Text(
                             'COMENZAR SESIÓN (${_participants.length} SUJETO${_participants.length > 1 ? 'S' : ''})',
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.2),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Center(
+                        child: Tooltip(
+                          message: 'Para una sesión que se guardó sin llegar a REDCap: elige su carpeta '
+                              '(por ejemplo R4H_001\\D0) y se envía lo que quedó pendiente.',
+                          child: TextButton.icon(
+                            onPressed: _sendingSaved ? null : _sendSavedSession,
+                            style: TextButton.styleFrom(foregroundColor: Colors.white60),
+                            icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                            label: Text(_sendingSaved ? 'Enviando a REDCap…' : 'Enviar a REDCap una sesión guardada…'),
                           ),
                         ),
                       ),

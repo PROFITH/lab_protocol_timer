@@ -9,6 +9,7 @@ import '../models/activity_battery.dart';
 import '../models/session_manifest.dart';
 import '../models/sync_window.dart';
 import '../services/lab_redcap_service.dart';
+import '../services/redcap_resend.dart';
 import '../windows/window_messages.dart';
 import 'csv_stream_writer.dart';
 import 'protocol_engine.dart';
@@ -1197,10 +1198,11 @@ class SessionController extends ChangeNotifier {
     final error = errors.isEmpty ? null : errors.join('\n');
     s.logEvent(error == null ? 'redcap_sent' : 'redcap_failed', detail: error);
     if (error != null) {
-      // What would have been sent, to import it by hand.
-      s.writeJson('redcap_records.json', [for (final batch in imports) ...batch]);
+      // What would have been sent, to send it again from the start screen.
+      s.writeJson(SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
     }
     await s.drain();
+    if (error == null) await SavedSessionRedcap.markSent(s.directory);
     return error;
   }
 
