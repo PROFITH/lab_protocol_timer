@@ -56,6 +56,16 @@ REDCap is optional. On the start screen, **REDCap (opcional) → Conectar** asks
 
 Without a token, nothing is sent: each session is saved only in its folder, with the records in `redcap_records.json`, and **Enviar a REDCap una sesión guardada…** sends them once a token is set.
 
+### Records from the phones (healthy_tracker)
+
+The phones cannot reach the UGR's REDCap from home, so healthy_tracker leaves its records as `healthy_tracker_*.json` files in the study's Google Drive folder, or they are copied from the phone by cable (see healthy_tracker's `docs/drive_upload.md` and `docs/export_format.md`). **Enviar a REDCap los registros del móvil (healthy_tracker)…** on the start screen sends every such file of a folder and its subfolders (for example the Drive folder synced by Google Drive for desktop), with the VPN on:
+
+- The participant must already exist in REDCap; the app never creates a record.
+- Each new row gets the next free instance of `healthy_tracker` in its event. Rows REDCap already has, with the same type and times (to the minute), are skipped, so a file sent twice, or the same rows in a Drive file and a cable copy, add nothing. Photos (`meal_photo`) and videos (`act_video`) go to their instance unless REDCap already has a file there.
+- A file fully sent is renamed `…_enviado_<fecha>.json`. On an error (for example, no VPN) the file stays as it was and the summary says why; pressing the button again sends only what is missing.
+
+The folder chosen last is remembered on this computer (`lpt_phone_records_folder`). The code is in `lib/services/phone_records_import.dart`.
+
 The token is never written in the code. A build can still bring one, used while none is set in the app:
 
 ```sh

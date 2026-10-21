@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
+import '../services/phone_records_import.dart';
 import '../services/protocol_library.dart';
 import '../services/redcap_connection.dart';
 import '../services/redcap_resend.dart';
@@ -40,6 +41,10 @@ class SetupPrefs {
 
   /// Clap or jump, as last chosen on this computer.
   static const syncKind = 'lpt_sync_kind';
+
+  /// Folder of the healthy_tracker phones' files (the study's Google Drive
+  /// folder on this computer), as last chosen.
+  static const phoneRecordsFolder = 'lpt_phone_records_folder';
 
   /// Session-recovery keys of the old timer (before the session folder).
   static const legacy = [
@@ -110,6 +115,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   String? _dataRoot;
   bool _starting = false;
   bool _sendingSaved = false;
+
+  /// While the phones' files go to REDCap: which one (e.g. «2 de 5»).
+  String? _sendingPhone;
 
   /// Protocol and sensors of the session (null: numbered activities).
   ActivityBattery? _battery;
@@ -383,6 +391,54 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         backgroundColor: const Color(0xFF1E293B),
         title: Text(error == null ? 'Sesión enviada a REDCap' : 'No se pudo enviar'),
         content: SelectableText(error ?? 'REDCap ya tiene los registros de $chosen.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar')),
+        ],
+      ),
+    );
+  }
+
+  /// Sends to REDCap the records healthy_tracker phones left in a folder:
+  /// the study's Google Drive folder, synced to this computer, or a file
+  /// copied from a phone by cable. Rows REDCap already has are skipped.
+  Future<void> _sendPhoneRecords() async {
+    if (!RedcapConnection.isConfigured) {
+      await _openRedcapSettings();
+      if (!mounted || !RedcapConnection.isConfigured) return;
+    }
+    String? lastFolder;
+    try {
+      lastFolder = (await SharedPreferences.getInstance()).getString(SetupPrefs.phoneRecordsFolder);
+    } catch (_) {}
+    final chosen = await getDirectoryPath(
+      confirmButtonText: 'Enviar los registros de esta carpeta',
+      initialDirectory: lastFolder ?? _dataRoot,
+    );
+    if (chosen == null || !mounted) return;
+    try {
+      await (await SharedPreferences.getInstance()).setString(SetupPrefs.phoneRecordsFolder, chosen);
+    } catch (_) {}
+    setState(() => _sendingPhone = '');
+    // Whether the project has events decides how the rows go.
+    await RedcapConnection.refreshProject();
+    final results = await PhoneRecordsImport().sendFolder(
+      Directory(chosen),
+      onFile: (index, total, _) {
+        if (mounted) setState(() => _sendingPhone = '${index + 1} de $total');
+      },
+    );
+    if (!mounted) return;
+    setState(() => _sendingPhone = null);
+    final summary = PhoneRecordsImport.describe(results, chosen);
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: Text(summary.title),
+        content: SizedBox(
+          width: 640,
+          child: SingleChildScrollView(child: SelectableText(summary.message)),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cerrar')),
         ],
@@ -1042,6 +1098,22 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                             style: TextButton.styleFrom(foregroundColor: Colors.white60),
                             icon: const Icon(Icons.cloud_upload_outlined, size: 18),
                             label: Text(_sendingSaved ? 'Enviando a REDCap…' : 'Enviar a REDCap una sesión guardada…'),
+                          ),
+                        ),
+                      ),
+                      Center(
+                        child: Tooltip(
+                          message: 'Para los registros de los móviles (healthy_tracker): elige la carpeta de Google '
+                              'Drive del estudio, o la de un archivo copiado del móvil por cable. Lo que REDCap ya '
+                              'tiene no se repite.',
+                          child: TextButton.icon(
+                            key: const ValueKey('send_phone_records'),
+                            onPressed: _sendingPhone != null ? null : _sendPhoneRecords,
+                            style: TextButton.styleFrom(foregroundColor: Colors.white60),
+                            icon: const Icon(Icons.phone_android_outlined, size: 18),
+                            label: Text(_sendingPhone == null
+                                ? 'Enviar a REDCap los registros del móvil (healthy_tracker)…'
+                                : 'Enviando los registros del móvil${_sendingPhone!.isEmpty ? '' : ' ($_sendingPhone)'}…'),
                           ),
                         ),
                       ),
