@@ -311,6 +311,10 @@ void main() {
     final again = controller(FakeSessionClock(), FakeMonitor(), imported);
     await again.command('start', {'video': false});
     expect(again.store!.path, dir);
+    // Its first files are still being written; the folder goes after them.
+    await again.store!.close();
+    again.dispose();
+    c.dispose();
   });
 
   test('a REDCap failure keeps the records on disk and can be retried', () async {

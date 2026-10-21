@@ -405,6 +405,7 @@ class SessionController extends ChangeNotifier {
 
   Timer? _ticker;
   int _lastShownSecond = -1;
+  int _lastSessionSecond = -1;
   int _lastTickBeep = -1;
   DateTime? _lastStateSave;
   bool _disposed = false;
@@ -499,10 +500,21 @@ class SessionController extends ChangeNotifier {
     final shown = engine.phase == SessionPhase.wait
         ? engine.phaseElapsed.inSeconds
         : engine.remainingSeconds;
-    if (events.isNotEmpty || shown != _lastShownSecond) {
+    final sessionSecond = sessionElapsedSeconds;
+    if (events.isNotEmpty || shown != _lastShownSecond || sessionSecond != _lastSessionSecond) {
       _lastShownSecond = shown;
+      _lastSessionSecond = sessionSecond;
       notifyListeners();
+      // The clocks of the monitor's console move only with a snapshot.
+      unawaited(sendSnapshot());
     }
+  }
+
+  /// Seconds since the session started; it goes on during a pause.
+  int get sessionElapsedSeconds {
+    final start = engine.sessionStartUtc;
+    if (start == null) return 0;
+    return (engine.sessionEndUtc ?? clock.nowUtc()).difference(start).inSeconds;
   }
 
   // ===========================================================================
@@ -1282,6 +1294,7 @@ class SessionController extends ChangeNotifier {
       _snapshotQueued = true;
       await Future.delayed(const Duration(milliseconds: 200));
       _snapshotQueued = false;
+      if (_disposed) return;
     }
     _lastSnapshotAt = DateTime.now();
     await monitor.send(WindowMessages.sessionSnapshot, snapshot());
@@ -1321,9 +1334,7 @@ class SessionController extends ChangeNotifier {
       'remaining_s': engine.remainingSeconds,
       'planned_s': engine.plannedPhaseSeconds,
       'elapsed_phase_s': engine.phaseElapsed.inSeconds,
-      'session_elapsed_s': engine.sessionStartUtc == null
-          ? 0
-          : (engine.sessionEndUtc ?? clock.nowUtc()).difference(engine.sessionStartUtc!).inSeconds,
+      'session_elapsed_s': sessionElapsedSeconds,
       'next_index': upcoming,
       'next_name': upcoming == null ? null : _planFor(upcoming).label,
       'protocol_complete': engine.protocolComplete,

@@ -171,6 +171,38 @@ void main() {
     t.c.dispose();
   });
 
+  test('the console clocks move every second, not only with an event', () async {
+    final t = setup();
+    await t.send('start', {'video': false});
+    // The rest lying down: five minutes with no event at all.
+    await run(t.c, t.clock, 60, until: () => t.c.engine.phase == SessionPhase.main);
+    final remaining = t.s.remainingSeconds;
+    final elapsed = t.s.sessionElapsedSeconds;
+    // Snapshots go at most five times a second; give each one its time.
+    Future<void> second() async {
+      t.clock.advance(const Duration(seconds: 1));
+      t.c.tick();
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+
+    for (var i = 1; i <= 3; i++) {
+      await second();
+      expect(t.s.remainingSeconds, remaining - i);
+      expect(t.s.sessionElapsedSeconds, elapsed + i);
+    }
+
+    // Paused, the activity clock stops and the session clock goes on.
+    expect((await t.send('toggle'))['ok'], isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(t.s.isPaused, isTrue);
+    await second();
+    await second();
+    expect(t.s.remainingSeconds, remaining - 3);
+    expect(t.s.sessionElapsedSeconds, elapsed + 5);
+    await t.c.cancel(reason: 'fin de la prueba');
+    t.c.dispose();
+  });
+
   test('no Polar for the resting heart rate: the session goes on with a notice', () async {
     final t = setup();
     t.link.restingHr = null;
