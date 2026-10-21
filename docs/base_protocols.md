@@ -29,7 +29,7 @@ Source: *Protocolos RUN4HEALTH: recogida y sincronización v1* (Protocols 4-6) a
 | 9 | Marcha de 6 minutos | 17220 | 5.5 | 6:00 |
 
 - Resting first (300 s, resting HR) and the two fitness tests last follow the guide's recommendation. The sit-to-stand fills `chairstand_*` (repetitions and incidents typed in the monitor) and the walk fills `mwt_*`, `circuito_m`, `vueltas_6mwt` and `adicional_6mwt` in `physical_fitness`.
-- Sync: a clap in every static phase, given by the timer (Protocol 5.3 of the guide). A jump is better for the thigh and chest sensors: choose it in the session setup and the lying and sitting activities keep the clap.
+- Sync: a clap in every static phase, given by the timer (Protocol 5.3 of the guide). A jump is better for the thigh and chest sensors: choose «Salto» under «Sincronización» in the session setup, and the lying and sitting activities keep the clap.
 - **[revisar]** Activities 2-7: the guide leaves the list pending ("5-10 activities chosen from the 16 of WEARGAP"). These six are among those the WEARGAP proposal names; 4 min each is a default for a steady heart rate.
 - **[revisar]** 02344 (sit to stand, 18-24/min) is the closest code to a 30-s maximal test; 17220 (6.4-7.1 km/h) assumes runners walk fast. Check against the measured speed.
 - Sensors from the guide's table: Matrix (non-dominant wrist, free living), AX3 non-dominant wrist, AX3 dominant wrist, SENS (thigh, free living), AX3 thigh, Polar H10 (chest, live), Verity Sense (arm, live in the lab and free living), fixed camera. AX3 at 100 Hz and ±8 g as the guide's default. **[revisar]** Thigh AX3 marked as not staying in free living (guide default); the optional shoe AX3s are not in the list.

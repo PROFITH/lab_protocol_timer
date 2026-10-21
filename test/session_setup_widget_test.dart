@@ -50,6 +50,34 @@ void main() {
     expect(selected, isNull);
   });
 
+  testWidgets('setup card switches the sync cue between clap and jump',
+      (tester) async {
+    var battery = _r4h();
+    await tester.pumpWidget(StatefulBuilder(
+      builder: (context, setState) => _app(SessionSetupCard(
+        protocols: [battery],
+        battery: battery,
+        modified: false,
+        note: null,
+        loading: false,
+        onSelect: (_) {},
+        onEdit: () {},
+        onImport: () {},
+        onSyncKind: (kind) => setState(() =>
+            battery = battery.copyWith(sync: battery.sync.copyWith(kind: kind))),
+      )),
+    ));
+
+    expect(battery.sync.kind, SyncKind.clap);
+    expect(find.textContaining('muñeca contra muñeca'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('sync_kind_jump')));
+    await tester.pumpAndSettle();
+    expect(battery.sync.kind, SyncKind.jump);
+    expect(battery.sync.auto, AutoSync.everyStatic);
+    expect(find.textContaining('se mantiene la palmada'), findsOneWidget);
+  });
+
   testWidgets('editor removes an activity and returns the edited protocol',
       (tester) async {
     ActivityBattery? result;

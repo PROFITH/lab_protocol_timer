@@ -819,6 +819,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                                 (p) => p.protocolId == _battery?.protocolId)
                             ? _deleteCustomProtocol
                             : null,
+                        onSyncKind: (kind) => setState(() => _battery =
+                            _battery?.copyWith(
+                                sync: _battery!.sync.copyWith(kind: kind))),
                       ),
 
                       const SizedBox(height: 20),

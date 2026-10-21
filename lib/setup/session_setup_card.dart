@@ -28,6 +28,9 @@ class SessionSetupCard extends StatelessWidget {
   final VoidCallback? onReset;
   final VoidCallback? onDeleteCustom;
 
+  /// Changes the sync cue of this session (clap or jump).
+  final ValueChanged<SyncKind>? onSyncKind;
+
   const SessionSetupCard({
     super.key,
     required this.protocols,
@@ -40,6 +43,7 @@ class SessionSetupCard extends StatelessWidget {
     required this.onImport,
     this.onReset,
     this.onDeleteCustom,
+    this.onSyncKind,
   });
 
   @override
@@ -153,6 +157,45 @@ class SessionSetupCard extends StatelessWidget {
                   style: const TextStyle(color: Color(0xFFFBBF24), fontSize: 12),
                 ),
               ),
+            if (onSyncKind != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Text(
+                    'SINCRONIZACIÓN',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SegmentedButton<SyncKind>(
+                    showSelectedIcon: false,
+                    segments: [
+                      for (final kind in SyncKind.values)
+                        ButtonSegment(
+                          value: kind,
+                          label: Text(kind.label,
+                              key: ValueKey('sync_kind_${kind.name}')),
+                        ),
+                    ],
+                    selected: {current.sync.kind},
+                    onSelectionChanged: (s) => onSyncKind!(s.first),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                current.sync.kind == SyncKind.jump
+                    ? 'Un salto con los pies juntos, que notan todos los '
+                        'sensores. Tumbado, sentado, en bicicleta y al '
+                        'sentarse y levantarse se mantiene la palmada.'
+                    : 'Una palmada seca muñeca contra muñeca, con la muñeca '
+                        'de abajo apoyada en el muslo.',
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
           ] else
             const Text(
               'Todas las actividades duran lo que diga el Research Monitor y no '
