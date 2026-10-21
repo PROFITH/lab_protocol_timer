@@ -7,7 +7,7 @@ The WEARGAP protocols start with a calibration box (2 min still with three taps,
 Protocol files can also say, for the timer screen and REDCap:
 
 - `instructions` (what the participant sees under the activity name) and `animation` (the figure: `lie`, `stand`, `sit`, `type`, `walk`, `walk_bags`, `walk_fast`, `run`, `stairs`, `uphill`, `sweep`, `dishes`, `cycle`, `sit_to_stand`, `treadmill`; guessed from the name when missing).
-- `sync`: `kind` (`clap` or `jump`) and `auto` (`every_static`, `first_last` or `manual`): when the timer gives the sync cue by itself.
+- `sync`: `kind` (`clap` or `jump`) and `auto` (`every_static`, `first_last` or `manual`): when the timer gives the sync cue by itself. The cue is a 3-2-1 countdown with a short go beep (0.15 s, so it never covers the impact in the video's sound). A clap is one sharp wrist-to-wrist clap with the lower wrist resting on the thigh, so the wrist and thigh sensors feel the same impact; a jump is one countermovement jump, landing on both feet, which every sensor on the body feels. With `jump`, the activities done lying, sitting or cycling, and the sit-to-stand test, keep the clap (figures `lie`, `sit`, `type`, `cycle`, `sit_to_stand`). The automatic cue puts the go in the middle of the static phase, with stillness on both sides. The event log keeps the cue (`sync_cue`) and the go (`sync_go`), and `sync_windows.csv` the kind and the go time (`sync_kind`, `cue_time_utc`), which SAVES uses to look for each impact.
 - `ask_rpe`: ask the effort (0-10) after every activity, for `la_rpe`.
 - `resting_hr`: the mean heart rate of the last 2 min of that activity goes to `ws_hr_rest` (method 1). **[revisar]** 2 min is the default of the RUN4HEALTH guide.
 - `redcap`: fields of the visit's record that the activity fills: `done_field` (yes/no), `start_field`, `rpe_before_field`, `rpe_after_field` and `fields` typed in the Research Monitor (repetitions, laps...).
@@ -29,7 +29,7 @@ Source: *Protocolos RUN4HEALTH: recogida y sincronización v1* (Protocols 4-6) a
 | 9 | Marcha de 6 minutos | 17220 | 5.5 | 6:00 |
 
 - Resting first (300 s, resting HR) and the two fitness tests last follow the guide's recommendation. The sit-to-stand fills `chairstand_*` (repetitions and incidents typed in the monitor) and the walk fills `mwt_*`, `circuito_m`, `vueltas_6mwt` and `adicional_6mwt` in `physical_fitness`.
-- Sync: a clap in every static phase, given by the timer (Protocol 5.3 of the guide).
+- Sync: a clap in every static phase, given by the timer (Protocol 5.3 of the guide). A jump is better for the thigh and chest sensors: choose it in the session setup and the lying and sitting activities keep the clap.
 - **[revisar]** Activities 2-7: the guide leaves the list pending ("5-10 activities chosen from the 16 of WEARGAP"). These six are among those the WEARGAP proposal names; 4 min each is a default for a steady heart rate.
 - **[revisar]** 02344 (sit to stand, 18-24/min) is the closest code to a 30-s maximal test; 17220 (6.4-7.1 km/h) assumes runners walk fast. Check against the measured speed.
 - Sensors from the guide's table: Matrix (non-dominant wrist, free living), AX3 non-dominant wrist, AX3 dominant wrist, SENS (thigh, free living), AX3 thigh, Polar H10 (chest, live), Verity Sense (arm, live in the lab and free living), fixed camera. AX3 at 100 Hz and ±8 g as the guide's default. **[revisar]** Thigh AX3 marked as not staying in free living (guide default); the optional shoe AX3s are not in the list.

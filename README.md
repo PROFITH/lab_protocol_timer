@@ -10,7 +10,7 @@ The app captures high-precision timestamps to isolate active exercise windows fr
 
 ## Features
 
-- **Accelerometer Time-Synchronization:** Visual and acoustic prompts during pre- and post-activity static phases to perform controlled sensor-to-sensor clapping events, facilitating offline clock synchronization.
+- **Accelerometer Time-Synchronization:** Visual and acoustic prompts during pre- and post-activity static phases for a sharp clap or a jump that every sensor feels, so SAVES can synchronize the offline sensors and the video.
 - **Precise Activity Isolation:** Explicit logging of exact exercise boundaries (`activityStartTime`, `activityEndTime`), separating movement from static baseline and transition intervals.
 - **Multi-Participant Setup:** Simultaneous tracking of multiple participants in a single lab trial, allowing individual assignment of Participant IDs and REDCap longitudinal event arms (e.g., *Day 0 — Initial Visit* or *Day 8 — Final Visit*).
 - **Aggregated REDCap Batch Export:** Automated flat-record data transfer delivering key aggregated metrics: total protocol duration, total activity duration, total transition time, and total completed stations.
@@ -23,9 +23,9 @@ The app captures high-precision timestamps to isolate active exercise windows fr
 
 ## Protocol Structure per Activity
 
-1. **Initial Static Baseline (30 s default):** Subject remains motionless. A 5-second countdown prompts the initial accelerometer synchronization clap.
+1. **Initial Static Baseline (30 s default):** Subject remains motionless. A 3-2-1 countdown puts the go for the synchronization clap or jump in the middle of the phase (15 s into a 30-s phase).
 2. **Main Activity (Configurable duration):** Active exercise phase. Triggers and records `activityStartTime`.
-3. **Final Static Baseline (30 s default):** Immediate cessation of movement and logging of `activityEndTime`. The first 5 seconds prompt the final synchronization clap.
+3. **Final Static Baseline (30 s default):** Immediate cessation of movement and logging of `activityEndTime`, with a second clap or jump after the same countdown.
 4. **Lap / Transition Mode:** Manual pause interval for station rotation or protocol completion.
 
 ---

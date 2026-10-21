@@ -936,7 +936,7 @@ class _SyncCueOverlay extends StatelessWidget {
     final title = go ? (jump ? '¡SALTA!' : '¡PALMADA!') : '$count';
     final detail = jump
         ? 'Un salto con los pies juntos'
-        : 'Choca las muñecas y golpea el muslo con el puño';
+        : 'Un solo golpe seco de muñeca contra muñeca, con una apoyada en el muslo';
     return ColoredBox(
       color: color.withValues(alpha: go ? 0.96 : 0.9),
       child: SafeArea(

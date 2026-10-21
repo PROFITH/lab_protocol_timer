@@ -28,6 +28,10 @@ class SessionStore {
   /// Last write that failed, shown to the operator.
   final ValueNotifier<String?> lastError = ValueNotifier(null);
 
+  /// Clock of the event log (the session clock, so the log lines up with
+  /// the activity and sync times).
+  DateTime Function() now = DateTime.now;
+
   CsvStreamWriter? _events;
   Future<void> _queue = Future.value();
 
@@ -225,7 +229,7 @@ class SessionStore {
     String? detail,
     DateTime? time,
   }) {
-    final t = (time ?? DateTime.now()).toUtc();
+    final t = (time ?? now()).toUtc();
     final local = t.toLocal();
     final localText = '${_two(local.hour)}:${_two(local.minute)}:${_two(local.second)}';
     _events?.add([

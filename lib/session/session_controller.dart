@@ -373,7 +373,14 @@ class SessionController extends ChangeNotifier {
   final void Function(String? directory)? onActiveSessionChanged;
 
   late ProtocolEngine engine;
-  SessionStore? store;
+  SessionStore? _store;
+
+  /// The session folder; its log uses the session clock.
+  SessionStore? get store => _store;
+  set store(SessionStore? value) {
+    _store = value;
+    value?.now = clock.nowUtc;
+  }
   String? sessionId;
 
   /// True when this session was rebuilt after the app closed.

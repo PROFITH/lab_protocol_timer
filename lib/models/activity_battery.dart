@@ -24,7 +24,8 @@ enum ActivityKind {
 
 /// What the participant does at a sync cue.
 enum SyncKind {
-  /// Wrist-to-wrist clap and a fist on the thigh sensor.
+  /// One sharp wrist-to-wrist clap with the lower wrist resting on the
+  /// thigh: the wrist and thigh sensors feel the same impact.
   clap,
 
   /// A jump on the spot: every sensor on the body feels the landing.
