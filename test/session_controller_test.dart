@@ -184,23 +184,24 @@ void main() {
     expect(events.where((e) => e.contains(',sync_go,')).length, 18);
     expect(events.any((e) => e.contains(',resting_hr,')), isTrue);
 
-    // REDCap: summary, session with 9 lab_activity, fitness fields.
-    expect(imported.length, 3);
+    // REDCap: summary, session, 9 lab_activity, fitness fields.
+    expect(imported.length, 4);
     final summaryRecord = imported[0].single;
     expect(summaryRecord['lab_total_stations'], '9');
     expect(summaryRecord['act_9_end_time'], isNotNull);
-    final session = imported[1].first;
+    final session = imported[1].single;
     expect(session['ws_hr_rest'], '52');
     expect(session['ws_hr_rest_method'], '1');
     expect(session['ws_operator'], 'JHM');
     expect(session['ws_video_cameras'], '1');
     expect(session.containsKey('ws_bmi'), isFalse);
-    final instances = imported[1].skip(1).toList();
+    final instances = imported[2];
+    expect(instances.every((r) => r['redcap_repeat_instrument'] == 'lab_activity'), isTrue);
     expect(instances.length, 9);
     expect(instances.every((r) => r['la_completed'] == '1'), isTrue);
     expect(instances.every((r) => r['la_rpe'] == '3'), isTrue);
     expect(instances.any((r) => r.containsKey('la_duration_s')), isFalse);
-    final fitness = imported[2].single;
+    final fitness = imported[3].single;
     expect(fitness['chairstand_realiza'], '1');
     expect(fitness['chairstand_repeticiones'], '17');
     expect(fitness['incidencia_chairstand'], '0', reason: 'default of the choice');
@@ -271,8 +272,8 @@ void main() {
 
     final markers = File('$dir/activity_markers.csv').readAsLinesSync();
     expect(markers.length, 11, reason: '9 activities and the cut attempt');
-    final instances = imported.last.isEmpty ? imported[imported.length - 2] : imported[1];
-    final labActivity = instances.where((r) => r['redcap_repeat_instrument'] == 'lab_activity').toList();
+    final labActivity =
+        imported.expand((batch) => batch).where((r) => r['redcap_repeat_instrument'] == 'lab_activity').toList();
     expect(labActivity.length, 10);
     final first3 = labActivity.firstWhere((r) => r['la_name'] == battery.activityAt(3)!.name);
     expect(first3['la_completed'], '2');
@@ -341,6 +342,38 @@ void main() {
     fail = false;
     await c.retryRedcap();
     expect(c.summary!.redcapError, isNull);
+  });
+
+  test('an instrument that is not repeating stops only the activities, and says which', () async {
+    final clock = FakeSessionClock();
+    final sent = <Map<String, dynamic>>[];
+    final c = SessionController(
+      participants: participants,
+      battery: battery,
+      dataRoot: root.path,
+      clock: clock,
+      monitor: FakeMonitor(),
+      redcapConfigured: true,
+      importRecords: (records) async {
+        if (records.any((r) => r.containsKey('redcap_repeat_instrument'))) {
+          return 'REDCap respondió 400: {"error":"lab_activity is not a repeating instrument in this event"}';
+        }
+        sent.addAll(records);
+        return null;
+      },
+    );
+    await c.command('start', {'video': false});
+    await run(c, clock, 400);
+    final summary = await c.finish();
+    final error = summary!.redcapError!;
+    expect(error, startsWith('Actividades (lab_activity): '));
+    expect(error, contains('«lab_activity» tiene que ser un instrumento repetible en da_0__visita_inici_arm_1'));
+    expect(error, contains('Reintentar REDCap'));
+    expect(error, isNot(contains('wearable_session')));
+    // The session and the summary went in all the same.
+    expect(sent.any((r) => r.containsKey('ws_session_id')), isTrue);
+    expect(sent.any((r) => r.containsKey('lab_total_stations')), isTrue);
+    c.dispose();
   });
 
   test('voice, settings and notes reach the state file', () async {

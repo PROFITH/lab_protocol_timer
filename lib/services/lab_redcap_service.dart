@@ -460,11 +460,12 @@ class LabRedCapService {
     ];
   }
 
-  /// Everything a session sends to REDCap, in three imports so that one
+  /// Everything a session sends to REDCap, in four imports so that one
   /// that fails (an instrument not set up for the event) does not stop the
-  /// others: the protocol summary, the session with one `lab_activity` per
-  /// attempt, and the fields of the fitness tests. [notReached] are the
-  /// activities of the protocol the session never got to, as skipped logs.
+  /// others: the protocol summary, the session, one `lab_activity` per
+  /// attempt (a repeating instrument) and the fields of the fitness tests.
+  /// [notReached] are the activities of the protocol the session never got
+  /// to, as skipped logs.
   static List<List<Map<String, dynamic>>> buildSessionImports({
     required List<ParticipantEntry> participants,
     required String sessionId,
@@ -521,7 +522,38 @@ class LabRedCapService {
             pendingRpeBefore: pendingRpeBefore,
           );
 
-    return [summary, detail, mapped];
+    bool repeating(Map<String, dynamic> r) => r.containsKey('redcap_repeat_instrument');
+    return [
+      summary,
+      [for (final r in detail) if (!repeating(r)) r],
+      [for (final r in detail) if (repeating(r)) r],
+      mapped,
+    ];
+  }
+
+  /// Names of the imports of [buildSessionImports], for the evaluator.
+  static const sessionImportNames = [
+    'Resumen del protocolo (protocol_feasibility)',
+    'Sesión (wearable_session)',
+    'Actividades (lab_activity)',
+    'Condición física',
+  ];
+
+  /// [error] of an import of [records], with what to change in the REDCap
+  /// project when the cause is known.
+  static String explainImportError(String error, List<Map<String, dynamic>> records) {
+    final repeating = {
+      for (final r in records)
+        if (r['redcap_repeat_instrument'] != null) r['redcap_repeat_instrument'].toString(),
+    };
+    if (repeating.isNotEmpty && RegExp('repeat|repet', caseSensitive: false).hasMatch(error)) {
+      final events = {for (final r in records) r['redcap_event_name']?.toString() ?? ''}..remove('');
+      return 'En REDCap, ${repeating.map((f) => '«$f»').join(' y ')} tiene que ser un instrumento '
+          'repetible en ${events.isEmpty ? 'el evento' : events.join(', ')} '
+          '(Project Setup → Repeating instruments and events). Después pulsa «Reintentar REDCap». '
+          'Respuesta de REDCap: $error';
+    }
+    return error;
   }
 
   /// REDCap `date_ymd` value in the computer's local time.

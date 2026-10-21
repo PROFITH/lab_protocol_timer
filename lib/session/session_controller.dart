@@ -1185,11 +1185,13 @@ class SessionController extends ChangeNotifier {
     if (!redcapConfigured) {
       errors.add('Falta el token de REDCap (compila con --dart-define=REDCAP_TOKEN=...)');
     } else {
-      const names = ['Resumen del protocolo', 'Sesión y actividades', 'Condición física'];
+      const names = LabRedCapService.sessionImportNames;
       for (var i = 0; i < imports.length; i++) {
         if (imports[i].isEmpty) continue;
         final error = await importRecords(imports[i]);
-        if (error != null) errors.add('${i < names.length ? names[i] : 'Envío ${i + 1}'}: $error');
+        if (error == null) continue;
+        errors.add('${i < names.length ? names[i] : 'Envío ${i + 1}'}: '
+            '${LabRedCapService.explainImportError(error, imports[i])}');
       }
     }
     final error = errors.isEmpty ? null : errors.join('\n');
