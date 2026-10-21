@@ -56,8 +56,9 @@ class RedcapCheckError implements Exception {
 /// is sent, and every session stays in its folder, ready to be sent later
 /// with «Enviar a REDCap una sesión guardada…».
 class RedcapConnection {
-  /// The UGR's public REDCap. redcap.ugr.es only exists inside the UGR
-  /// network (or with its VPN).
+  /// The address the UGR gives for its REDCap. It only accepts connections
+  /// from the UGR network or its VPN (redcap.ugr.es does not even resolve
+  /// outside it).
   static const defaultUrl = 'https://minerva.ugr.es/api/';
   static const builtInUrl = String.fromEnvironment('REDCAP_URL', defaultValue: defaultUrl);
   static const builtInToken = String.fromEnvironment('REDCAP_TOKEN', defaultValue: '');
