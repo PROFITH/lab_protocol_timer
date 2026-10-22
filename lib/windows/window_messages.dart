@@ -1,31 +1,54 @@
+/// Messages between the participant window (main) and the Research Monitor.
 class WindowMessages {
-  static const String sessionStarted = 'session_started';
-  static const String sessionPaused = 'session_paused';
-  static const String sessionResumed = 'session_resumed';
-  static const String sessionFinished = 'session_finished';
+  // ===========================================================================
+  // Main -> monitor
+  // ===========================================================================
 
-  static const String protocolContext = 'protocol_context';
+  /// The session started (or was resumed): its folder and the stamp of the
+  /// Polar and video file names. The monitor writes the Polar files there.
+  static const String sessionStarted = 'session_started';
+
+  /// Protocol, participants and settings of the session (sent when they
+  /// change, not every second).
+  static const String sessionInfo = 'session_info';
+
+  /// State of the timer, several times a second.
+  static const String sessionSnapshot = 'session_snapshot';
+
+  /// The session is ending: the monitor stops the cameras, moves the videos
+  /// into the session folder, closes the Polar files and answers with the
+  /// files it wrote.
+  static const String sessionStopping = 'session_stopping';
+
+  /// The app is closing in the middle of a session: the monitor flushes
+  /// its files and stops the cameras so the videos are kept.
+  static const String sessionSuspending = 'session_suspending';
+
+  /// The session was saved: summary for the evaluator.
+  static const String sessionSaved = 'session_saved';
+
+  /// The session was cancelled.
+  static const String sessionCancelled = 'session_cancelled';
+
+  /// Mean heart rate of a time span (resting heart rate).
+  static const String restingHrRequested = 'resting_hr_requested';
+
+  /// Asks the monitor to stop the camera and Bluetooth before its window is
+  /// hidden at the end of an evaluation.
+  static const String releaseResources = 'release_resources';
+
+  /// Rebuilds the hidden monitor from scratch for a new evaluation.
+  static const String resetMonitor = 'reset_monitor';
+
   static const String protocolConfiguration = 'protocol_configuration';
+
+  // ===========================================================================
+  // Monitor -> main
+  // ===========================================================================
 
   static const String researchMonitorReady = 'research_monitor_ready';
 
-  static const String syncWindowRequested = 'sync_window_requested';
-  static const String syncAvailability = 'sync_availability';
-  static const String sessionStartRequested = 'session_start_requested';
-  static const String sessionPauseRequested = 'session_pause_requested';
-  static const String sessionResumeRequested = 'session_resume_requested';
-  static const String lapRequested = 'lap_requested';
-  static const String sessionFinishRequested = 'session_finish_requested';
-  static const String sessionCancelRequested = 'session_cancel_requested';
-  static const String voiceToggleRequested = 'voice_toggle_requested';
-  static const String settingsRequested = 'settings_requested';
-  static const String protocolSettingsUpdated = 'protocol_settings_updated';
-  static const String protocolSettings = 'protocol_settings';
-  
-  static const String sensorStatus = 'sensor_status';
-
-  static const String videoStarted = 'video_started';
-  static const String videoStopped = 'video_stopped';
-
-
+  /// A command of the evaluator: `{'command': 'start' | 'pause' | ...}`.
+  /// The answer is `{'ok': bool, 'message': String?}`.
+  static const String sessionCommand = 'session_command';
 }

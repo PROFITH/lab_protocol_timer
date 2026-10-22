@@ -1,20 +1,93 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'package:camera/camera.dart';
-import 'dart:math' as math;
 
 import '../services/polar_ble_service.dart';
 import '../services/video_recording_service.dart';
+import '../session/csv_stream_writer.dart';
+import '../models/device_configuration.dart';
 import '../models/device_status.dart';
 import '../models/protocol_configuration.dart';
 import '../models/monitor_slot.dart';
 import '../models/monitor_visualization.dart';
+import 'live_signal.dart';
+import 'monitor_session.dart';
+import 'polar_session_files.dart';
+import 'session_console.dart';
 import 'window_messages.dart';
 import 'sensor_chart_card.dart';
-import 'dart:io';
 
+
+/// Keeps one monitor window for the whole run of the app.
+///
+/// The window is hidden, not destroyed, between evaluations; on
+/// [WindowMessages.resetMonitor] the monitor is rebuilt with a fresh state.
+class ResearchMonitorHost extends StatefulWidget {
+  final ProtocolConfiguration protocolConfiguration;
+
+  const ResearchMonitorHost({
+    super.key,
+    required this.protocolConfiguration,
+  });
+
+  @override
+  State<ResearchMonitorHost> createState() => _ResearchMonitorHostState();
+}
+
+class _ResearchMonitorHostState extends State<ResearchMonitorHost>
+    with WindowListener {
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    MultiWindowManager.current.addListener(this);
+    // Closing a secondary window takes the whole app down on Windows: the
+    // close button hides it instead (F2 in the participant window shows it).
+    unawaited(
+      MultiWindowManager.current.setPreventClose(true).catchError((Object e) {
+        debugPrint('[MONITOR] setPreventClose no disponible: $e');
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    MultiWindowManager.current.removeListener(this);
+    super.dispose();
+  }
+
+  @override
+  void onWindowClose([int? windowId]) {
+    unawaited(MultiWindowManager.current.hide().catchError((Object _) {}));
+  }
+
+  @override
+  Future<dynamic> onEventFromWindow(
+    String eventName,
+    int fromWindowId,
+    dynamic arguments,
+  ) async {
+    if (eventName != WindowMessages.resetMonitor) return null;
+    if (mounted) setState(() => _generation++);
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ResearchMonitorWindow(
+      key: ValueKey(_generation),
+      protocolConfiguration: widget.protocolConfiguration,
+    );
+  }
+}
 
 class ResearchMonitorWindow extends StatefulWidget {
   final ProtocolConfiguration protocolConfiguration;
@@ -30,15 +103,22 @@ class ResearchMonitorWindow extends StatefulWidget {
 }
 
 class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
-    with WindowListener {
+    with WindowListener, SingleTickerProviderStateMixin {
   
   // State variables
-  final PolarBleService _polarService = PolarBleService();
-  final VideoRecordingService _videoService = VideoRecordingService();
-  final List<double> _hrHistory = [];
-  final List<double> _rrHistory = [];
-  final List<double> _accHistory = [];
-  final List<double> _ecgHistory = [];
+  //
+  // One Polar service per live device of the session (Polar H10, Verity
+  // Sense) and one recorder per camera, keyed by the device ID of the
+  // session setup. Connecting them is optional: offline sensors are only
+  // listed, and a live device can be left unconnected.
+  final Map<String, _LiveDevice> _liveDevices = {};
+  final Map<String, _CameraDevice> _cameras = {};
+
+  /// Charts repaint on this clock, once per frame with new samples, instead
+  /// of rebuilding the window on every sample.
+  final LiveFrameClock _frameClock = LiveFrameClock();
+  late final Ticker _frameTicker;
+  bool _samplesPending = false;
 
   final List<MonitorSlot> _monitorSlots = [
     const MonitorSlot(slotId: 1),
@@ -47,28 +127,28 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     const MonitorSlot(slotId: 4),
   ];
 
-  String _participantIds = '--';
-  int _activityIndex = 0;
-  String _phaseName = 'idle';
-  bool _sessionActive = false;
-  bool _sessionPaused = false;
-  bool _cameraReady = false;
-  bool _syncAvailable = false;
-  Directory? _sessionExportDirectory;
-  late ProtocolConfiguration _protocolConfiguration;
-  int _prepSeconds = 10;
-  int _activitySeconds = 60;
-  int _postSeconds = 10;
-  bool _useLapMode = false;
-  bool _enableTts = true;
+  /// The session that runs in the participant window.
+  final MonitorSession _session = MonitorSession();
 
-  // Valores de visualización en tiempo real
-  int _heartRate = 0;
-  PolarAccelerationSample? _lastAcc;
-  PolarEcgSample? _lastEcg;
+  /// Polar files of the running session, by device ID.
+  final Map<String, PolarSessionFiles> _polarFiles = {};
+
+  /// `video_sync_session_<stamp>.csv`: one row per saved video segment.
+  CsvStreamWriter? _videoLog;
+
+  late ProtocolConfiguration _protocolConfiguration;
+
+  /// Right column: 0 activities, 1 devices.
+  int _rightTab = 1;
+  bool _summaryOpen = false;
+  String _lastStatus = 'idle';
 
   // Modo de acelerometría: 'VM' o 'XYZ'
   String _accMode = 'XYZ';
+
+  bool get _anyCameraRecording =>
+      _cameras.values.any((c) => c.service.isRecording);
+
 
   String _sourceId(
     String deviceId,
@@ -93,16 +173,127 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   VoidCallback? _deviceActionForDevice(String deviceId) {
-    switch (deviceId) {
-      case 'polar_h10':
-        return _showPolarConnectionDialog;
-      case 'camera':
-      return _showCameraConnectionDialog;
+    if (_liveDevices.containsKey(deviceId)) {
+      return () => _showPolarConnectionDialog(deviceId);
+    }
+    if (_cameras.containsKey(deviceId)) {
+      return () => _showCameraConnectionDialog(deviceId);
+    }
+    return null;
+  }
 
-      default:
+  /// "Reintentar conexión" of each device: shown for a Polar that was
+  /// connected and dropped (or is waiting to reconnect), and for a camera
+  /// that failed.
+  VoidCallback? _retryActionForDevice(String deviceId) {
+    final live = _liveDevices[deviceId];
+    if (live != null) {
+      final service = live.service;
+      final state = service.linkStatus.value.state;
+      if (!service.hasLastDevice) return null;
+      if (service.isConnected && state != PolarLinkState.reconnecting) {
         return null;
+      }
+      if (state == PolarLinkState.connecting ||
+          state == PolarLinkState.pairing ||
+          state == PolarLinkState.configuring) {
+        return null;
+      }
+      return () => _retryPolar(deviceId);
+    }
+
+    final camera = _cameras[deviceId];
+    if (camera != null) {
+      if (camera.ready || camera.recovering) return null;
+      if (camera.service.lastCamera == null) return null;
+      return () => _retryCamera(deviceId);
+    }
+
+    return null;
+  }
+
+  Future<void> _retryPolar(String deviceId) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return;
+
+    final ok = await device.service.retryConnection(
+      configuration: device.configuration,
+    );
+
+    if (!mounted) return;
+    setState(() {});
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(device.service.linkStatus.value.message),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
+
+  /// A camera error (USB unplugged, MediaFoundation failure...) is retried
+  /// on its own; if it was recording, a new video segment starts.
+  void _onCameraError(String deviceId) {
+    final camera = _cameras[deviceId];
+    if (camera == null || !mounted) return;
+
+    final error = camera.service.cameraError.value;
+    setState(() {
+      if (error != null) camera.ready = false;
+    });
+
+    if (error != null && !camera.recovering) {
+      _retryCamera(deviceId, automatic: true);
+    }
+  }
+
+  Future<void> _retryCamera(String deviceId, {bool automatic = false}) async {
+    final camera = _cameras[deviceId];
+    if (camera == null || camera.recovering) return;
+    if (camera.service.lastCamera == null) {
+      if (!automatic) await _showCameraConnectionDialog(deviceId);
+      return;
+    }
+
+    setState(() => camera.recovering = true);
+
+    final wasRecording = camera.service.isRecording;
+    var ok = false;
+    for (var attempt = 1; attempt <= 3 && mounted; attempt++) {
+      ok = await camera.service.recoverCamera(
+        participantSummary: _session.participants,
+        activityIndex: _session.activityIndex,
+        restartRecording: wasRecording,
+      );
+      if (ok) break;
+      await Future.delayed(Duration(seconds: 2 * attempt));
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      camera.recovering = false;
+      camera.ready = ok;
+    });
+    if (_session.isActive) {
+      _log(ok ? 'camera_recovered' : 'camera_lost', camera.configuration.deviceId);
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? '${camera.configuration.deviceName} recuperada'
+              : 'No se pudo recuperar ${camera.configuration.deviceName}: '
+                  '${camera.service.lastStartError ?? camera.service.cameraError.value ?? 'error desconocido'}',
+        ),
+        backgroundColor: ok ? const Color(0xFF34D399) : Colors.redAccent,
+      ),
+    );
+  }
+
 
   void _assignSourceToSlot(
     int slotId,
@@ -216,81 +407,91 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
   }
 
-  // Búferes individuales para los 3 ejes
-  final List<double> _accXHistory = [];
-  final List<double> _accYHistory = [];
-  final List<double> _accZHistory = [];
-
   @override
   void initState() {
     super.initState();
     
     _protocolConfiguration = widget.protocolConfiguration;
+    _syncDevices();
+
+    _frameTicker = createTicker((_) {
+      if (_samplesPending) {
+        _samplesPending = false;
+        _frameClock.tick();
+      }
+    })
+      ..start();
 
     MultiWindowManager.current.addListener(this);
+    HardwareKeyboard.instance.addHandler(_onKey);
+    _session.addListener(_onSessionChanged);
 
     MultiWindowManager.current.invokeMethodToWindow(
       0,
       WindowMessages.researchMonitorReady,
     );
 
-    // Escuchar streams de Polar para refrescar el panel visual
-    _polarService.hrStream.listen((bpm) {
-      if (mounted) {
-        setState(() {
-          _heartRate = bpm;
-          _hrHistory.add(bpm.toDouble());
-          if (_hrHistory.length > 100) _hrHistory.removeAt(0);
-        });
-      }
-    });
-
-    _polarService.rrStream.listen((rrMs) {
-      if (mounted) {
-        setState(() {
-          _rrHistory.add(rrMs.toDouble());
-
-          if (_rrHistory.length > 100) {
-            _rrHistory.removeAt(0);
-          }
-        });
-      }
-    });
-
-    _polarService.accelerationUiStream.listen((acc) {
-      if (mounted) {
-        final vm = math.sqrt((acc.xMg * acc.xMg) + (acc.yMg * acc.yMg) + (acc.zMg * acc.zMg));
-        setState(() {
-          _lastAcc = acc;
-          _accHistory.add(vm);
-          if (_accHistory.length > 100) _accHistory.removeAt(0);
-
-          _accXHistory.add(acc.xMg.toDouble());
-          if (_accXHistory.length > 100) _accXHistory.removeAt(0);
-
-          _accYHistory.add(acc.yMg.toDouble());
-          if (_accYHistory.length > 100) _accYHistory.removeAt(0);
-
-          _accZHistory.add(acc.zMg.toDouble());
-          if (_accZHistory.length > 100) _accZHistory.removeAt(0);
-        });
-      }
-    });
-
-    _polarService.ecgUiStream.listen((ecg) {
-      if (mounted) {
-        setState(() {
-          _lastEcg = ecg;
-          _ecgHistory.add(ecg.microVolts.toDouble());
-          if (_ecgHistory.length > 100) _ecgHistory.removeAt(0);
-        });
-      }
-    });
-
     debugPrint('[MONITOR] Research Monitor inicializado con servicios locales.');
   }
 
-  Future<void> _showCameraConnectionDialog() async {
+  /// Creates the services of new live devices and cameras of
+  /// [_protocolConfiguration] and releases those no longer listed.
+  void _syncDevices() {
+    final live = {
+      for (final d in _protocolConfiguration.devices)
+        if (d.isLive && d.sensors.isNotEmpty) d.deviceId: d,
+    };
+    final cameras = {
+      for (final d in _protocolConfiguration.devices)
+        if (d.isCamera) d.deviceId: d,
+    };
+
+    for (final id in _liveDevices.keys.toList()) {
+      if (!live.containsKey(id)) _liveDevices.remove(id)!.dispose();
+    }
+    for (final id in _cameras.keys.toList()) {
+      if (!cameras.containsKey(id)) _cameras.remove(id)!.service.dispose();
+    }
+
+    live.forEach((id, configuration) {
+      final existing = _liveDevices[id];
+      if (existing != null) {
+        existing.configuration = configuration;
+        return;
+      }
+      _liveDevices[id] = _LiveDevice(
+        configuration,
+        onSamples: () => _samplesPending = true,
+        onStatusChanged: () {
+          if (mounted) setState(() {});
+        },
+      );
+    });
+    cameras.forEach((id, configuration) {
+      final existing = _cameras[id];
+      if (existing != null) {
+        existing.configuration = configuration;
+        return;
+      }
+      final camera = _CameraDevice(configuration);
+      camera.service.cameraError.addListener(() => _onCameraError(id));
+      _cameras[id] = camera;
+    });
+
+    // Monitors showing a device that left the session are emptied.
+    for (var i = 0; i < _monitorSlots.length; i++) {
+      final deviceId = _monitorSlots[i].deviceId;
+      if (deviceId != null &&
+          !_liveDevices.containsKey(deviceId) &&
+          !_cameras.containsKey(deviceId)) {
+        _monitorSlots[i] = _monitorSlots[i].copyWith(clearSource: true);
+      }
+    }
+  }
+
+  Future<void> _showCameraConnectionDialog(String deviceId) async {
+    final camera = _cameras[deviceId];
+    if (camera == null) return;
     try {
       debugPrint('[VIDEO] Buscando cámaras disponibles...');
       final cameras = await availableCameras();
@@ -298,9 +499,30 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
       if (cameras.isEmpty) {
         debugPrint('[VIDEO] No se encontraron cámaras.');
-        if (mounted) setState(() => _cameraReady = false);
+        if (mounted) {
+          setState(() => camera.ready = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'No hay cámaras. Si usas el móvil, abre DroidCam en el '
+                'móvil y en el ordenador antes de buscar.',
+              ),
+            ),
+          );
+        }
         return;
       }
+
+      // Cameras already taken by another device of the session.
+      final taken = {
+        for (final other in _cameras.values)
+          if (other != camera && other.ready)
+            other.service.selectedCamera?.name,
+      };
+
+      await camera.service.loadSettings();
+      var preset = camera.service.resolutionPreset;
+      var quality = camera.service.quality;
 
       // Mostrar diálogo para que elijas qué cámara usar
       if (!mounted) return;
@@ -308,37 +530,115 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         context: context,
         barrierDismissible: false,
         builder: (BuildContext dialogContext) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            title: const Row(
-              children: [
-                Icon(Icons.videocam_rounded, color: Color(0xFF38BDF8)),
-                SizedBox(width: 10),
-                Text('Seleccionar Cámara', style: TextStyle(color: Colors.white)),
-              ],
-            ),
-            content: SizedBox(
-              width: 350,
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: cameras.length,
-                itemBuilder: (context, index) {
-                  final camera = cameras[index];
-                  return ListTile(
-                    leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
-                    title: Text(
-                      camera.name,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              backgroundColor: const Color(0xFF1E293B),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              title: Row(
+                children: [
+                  const Icon(Icons.videocam_rounded, color: Color(0xFF38BDF8)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Cámara para ${camera.configuration.deviceId}',
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    subtitle: Text(
-                      'Lens: ${camera.lensDirection.name}',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                    ),
-                    onTap: () => Navigator.of(dialogContext).pop(camera),
-                  );
-                },
+                  ),
+                ],
               ),
+              content: SizedBox(
+                width: 380,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: cameras.length,
+                        itemBuilder: (context, index) {
+                          final option = cameras[index];
+                          final busy = taken.contains(option.name);
+                          return ListTile(
+                            enabled: !busy,
+                            leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
+                            title: Text(
+                              option.name,
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                            subtitle: Text(
+                              busy ? 'En uso por otra cámara de la sesión' : 'Lens: ${option.lensDirection.name}',
+                              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                            ),
+                            onTap: () => Navigator.of(dialogContext).pop(option),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<ResolutionPreset>(
+                      initialValue: preset,
+                      dropdownColor: const Color(0xFF1E293B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Resolución',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                      items: const [
+                        DropdownMenuItem(value: ResolutionPreset.high, child: Text('720p')),
+                        DropdownMenuItem(value: ResolutionPreset.veryHigh, child: Text('1080p')),
+                        DropdownMenuItem(value: ResolutionPreset.ultraHigh, child: Text('4K (si la cámara lo da)')),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => preset = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<VideoQuality>(
+                      key: ValueKey('video_quality_${preset.name}'),
+                      initialValue: quality,
+                      dropdownColor: const Color(0xFF1E293B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Calidad',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                      items: [
+                        for (final option in VideoQuality.values)
+                          DropdownMenuItem(
+                            value: option,
+                            child: Text(
+                              '${option.label} · ${VideoRecordingService.formatPerHour(VideoRecordingService.bitrateFor(VideoRecordingService.nominalSize(preset), option))}',
+                            ),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => quality = value);
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Normal basta para contar pasos y repeticiones. El peso es '
+                      'por cámara y, si la cámara da menos resolución de la '
+                      'elegida, menor.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'El vídeo graba también audio (las palmadas) del primer '
+                      'micrófono que da Windows; con DroidCam conviene dejar '
+                      'activado su micrófono virtual o desactivar los demás.',
+                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancelar'),
+                ),
+              ],
             ),
           );
         },
@@ -353,37 +653,394 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return;
       }
 
-      final CameraDescription chosenCamera = selectedCamera;
+      debugPrint('[VIDEO] Inicializando cámara seleccionada: ${selectedCamera.name}');
 
-      debugPrint('[VIDEO] Inicializando cámara seleccionada: ${chosenCamera.name}');
-
-      // Invocamos tu método pasándole la cámara elegida
-      final success = await _videoService.initializeCamera(chosenCamera);
+      camera.service.resolutionPreset = preset;
+      camera.service.quality = quality;
+      unawaited(camera.service.saveSettings());
+      final success = await camera.service.initializeCamera(selectedCamera);
       if (!mounted) return;
-      setState(() => _cameraReady = success);
+      setState(() => camera.ready = success);
+      if (success && camera.service.audioUnavailable) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No se pudo abrir el micrófono: la cámara grabará sin audio.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     } catch (e, stackTrace) {
       debugPrint('[VIDEO] Error inicializando cámara: $e\n$stackTrace');
-      if (mounted) setState(() => _cameraReady = false);
+      if (mounted) setState(() => camera.ready = false);
     }
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _session.removeListener(_onSessionChanged);
+    for (final files in _polarFiles.values) {
+      unawaited(files.stop());
+    }
+    unawaited(_videoLog?.close());
     MultiWindowManager.current.removeListener(this);
-    _polarService.dispose();
-    _videoService.dispose();
+    _frameTicker.dispose();
+    for (final device in _liveDevices.values) {
+      device.dispose();
+    }
+    for (final camera in _cameras.values) {
+      camera.service.dispose();
+    }
+    _frameClock.dispose();
     super.dispose();
   }
 
-  Future<void> _requestSyncWindow() async {
-    await MultiWindowManager.current.invokeMethodToWindow(
-      0,
-      WindowMessages.syncWindowRequested,
-    );
 
-    debugPrint(
-      '[SYNC] Solicitud de ventana de sincronización enviada.',
+  // ===========================================================================
+  // SESIÓN (la lleva la ventana del participante)
+  // ===========================================================================
+
+  /// Sends an order of the evaluator to the session.
+  Future<Map<String, dynamic>> _send(String command, [Map<String, dynamic> args = const {}]) async {
+    Map<String, dynamic> result;
+    try {
+      final reply = await MultiWindowManager.current
+          .invokeMethodToWindow(0, WindowMessages.sessionCommand, {'command': command, 'args': args})
+          .timeout(const Duration(seconds: 10));
+      result = reply is Map
+          ? Map<String, dynamic>.from(reply)
+          : {'ok': false, 'message': 'La ventana del participante no responde'};
+    } catch (e) {
+      result = {'ok': false, 'message': 'La ventana del participante no responde: $e'};
+    }
+    if (result['ok'] == false && command != 'log' && mounted) {
+      _snack(result['message']?.toString() ?? 'No se pudo hacer', error: true);
+    }
+    return result;
+  }
+
+  /// An event of the sensors or cameras, in the session log.
+  void _log(String event, String detail) {
+    if (_session.sessionDir == null) return;
+    unawaited(_send('log', {'event': event, 'detail': detail}));
+  }
+
+  void _snack(String text, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: error ? Colors.redAccent : const Color(0xFF334155),
+        duration: Duration(seconds: error ? 6 : 4),
+      ),
     );
+  }
+
+  void _onSessionChanged() {
+    final status = _session.status;
+    if (status != _lastStatus) {
+      final wasIdle = _lastStatus == 'idle';
+      _lastStatus = status;
+      if (wasIdle && status != 'idle' && _rightTab != 0) {
+        setState(() => _rightTab = 0);
+      }
+    }
+  }
+
+  /// Shortcuts of the evaluator: F5 start / pause, F6 next, F7 sync. Only
+  /// F keys: the participant may be typing (activity at the computer).
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (ModalRoute.of(context)?.isCurrent == false) return false;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.f5) {
+      if (_session.isIdle) {
+        unawaited(_onStartRequested());
+      } else if (!_session.isClosing) {
+        unawaited(_send('toggle'));
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.f6) {
+      unawaited(runNext(context, _session, _send));
+      return true;
+    }
+    if (key == LogicalKeyboardKey.f7) {
+      if (_session.syncAvailable) unawaited(_send('sync'));
+      return true;
+    }
+    return false;
+  }
+
+  static String _joinOr(List<String> parts, String empty) => parts.isEmpty ? empty : parts.join(' · ');
+
+  /// Checks the devices and starts the session, with or without video.
+  Future<void> _onStartRequested() async {
+    if (!_session.isIdle) return;
+    final items = <PreflightItem>[];
+    final manual = <PreflightItem>[];
+    for (final device in _protocolConfiguration.devices) {
+      final name = device.placementLabel == null
+          ? '${device.deviceName} (${device.deviceId})'
+          : '${device.deviceName} · ${device.placementLabel} (${device.deviceId})';
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        items.add(PreflightItem(
+          name,
+          camera.ready,
+          camera.ready
+              ? 'Preparada · ${camera.service.resolutionLabel} · ${camera.service.qualityLabel}'
+                  '${camera.service.audioUnavailable ? ' · sin audio' : ' · con audio'}'
+              : 'No preparada: púlsala en la barra de dispositivos para elegir la cámara',
+          isCamera: true,
+        ));
+        continue;
+      }
+      final live = _liveDevices[device.deviceId];
+      if (live != null) {
+        final service = live.service;
+        final hr = service.currentHeartRate;
+        final missing = [
+          for (final sensor in _sensorLabels.keys)
+            if (device.hasSensor(sensor) && service.isConnected && !_streaming(service, sensor))
+              _sensorLabels[sensor]!.$1,
+        ];
+        items.add(PreflightItem(
+          name,
+          service.isConnected && missing.isEmpty,
+          !service.isConnected
+              ? 'Sin conectar: sus datos no se guardarán hasta que se conecte'
+              : missing.isNotEmpty
+                  ? 'Conectado, pero sin ${missing.join(', ')}'
+                  : _joinOr([
+                      if (hr > 0) '$hr lpm',
+                      if (service.isAccelerationStreaming) 'ACC ${service.accSampleRateHz} Hz',
+                      if (service.isEcgStreaming) 'ECG',
+                      if (service.isPpgStreaming) 'PPG',
+                      if (service.isPpiStreaming) 'PPI',
+                      if (service.isGyroStreaming) 'GYRO',
+                      if (service.isMagnetometerStreaming) 'MAG',
+                    ], 'Conectado'),
+        ));
+        continue;
+      }
+      // Sensors that record on their own: only the evaluator can check them.
+      manual.add(PreflightItem(
+        name,
+        true,
+        'Graba por su cuenta: comprueba que está colocado y grabando',
+        manual: true,
+      ));
+    }
+    final configured = _session.redcapConfigured;
+    items.add(PreflightItem(
+      'REDCap',
+      true,
+      configured
+          ? 'Se envía al finalizar (y se puede reintentar)'
+          : 'Sin conexión con REDCap: la sesión se guarda solo en su carpeta y se puede enviar después',
+      info: !configured,
+    ));
+    final root = _session.info['data_root']?.toString();
+    final service = _cameras.values.isEmpty ? null : _cameras.values.first.service;
+    final free = service == null ? null : await service.getFreeDiskSpaceGB(root);
+    if (free != null) {
+      // GB per hour of all the cameras that will record.
+      final perHour = _cameras.values.where((c) => c.ready).fold<double>(
+            0,
+            (sum, c) => sum +
+                VideoRecordingService.gigabytesPerHour(c.service.videoBitrate,
+                    withAudio: !c.service.audioUnavailable),
+          );
+      items.add(PreflightItem(
+        'Espacio en disco',
+        free >= VideoRecordingService.minimumFreeSpaceGB,
+        '${free.toStringAsFixed(1)} GB libres${root == null ? '' : ' en la carpeta de datos'}'
+            '${perHour > 0 ? ' (caben unas ${(free / perHour).floor()} h de vídeo)' : ''}'
+            '${free >= VideoRecordingService.minimumFreeSpaceGB ? '' : ' (mínimo ${VideoRecordingService.minimumFreeSpaceGB.toStringAsFixed(0)} GB para grabar vídeo)'}',
+      ));
+    }
+    if (!mounted || !_session.isIdle) return;
+    final cameraReady = _cameras.values.any((c) => c.ready);
+    final choice = await showPreflightDialog(context, items: [...items, ...manual], cameraReady: cameraReady);
+    if (choice == null || !_session.isIdle) return;
+    await _send('start', {'video': choice});
+  }
+
+  Future<void> _onSessionStarted(Map<dynamic, dynamic> args) async {
+    final alreadyRecording = _session.sessionDir != null && _session.sessionDir == args['session_dir']?.toString();
+    _session.setStarted(args);
+    final dir = _session.sessionDir;
+    final stamp = _session.fileStamp;
+    if (dir == null || stamp == null) return;
+    final sep = Platform.pathSeparator;
+
+    _videoLog ??= CsvStreamWriter('$dir${sep}video_sync_session_$stamp.csv', VideoLogEntry.csvHeader);
+    for (final camera in _cameras.values) {
+      camera.service.sessionDirectory = dir;
+      camera.service.sessionFileStamp = stamp;
+      camera.service.onSegmentSaved = _onVideoSegment;
+    }
+    for (final entry in _liveDevices.entries) {
+      _polarFiles.putIfAbsent(entry.key, () {
+        final files = PolarSessionFiles(
+          directory: dir,
+          stamp: stamp,
+          deviceId: entry.key,
+          service: entry.value.service,
+        );
+        files.start();
+        return files;
+      });
+    }
+    if (_session.video && !alreadyRecording) await _startVideo();
+    if (mounted) setState(() => _rightTab = 0);
+  }
+
+  Future<void> _startVideo() async {
+    final ready = _cameras.values.where((c) => c.ready && !c.service.isRecording).toList();
+    if (ready.isEmpty) {
+      if (_cameras.values.any((c) => c.service.isRecording)) return;
+      _log('video_not_started', 'Ninguna cámara preparada');
+      _snack('La sesión empezó SIN VÍDEO: ninguna cámara estaba preparada.', error: true);
+      return;
+    }
+    final results = await Future.wait([
+      for (final camera in ready) camera.service.startSessionRecording(participantSummary: _session.participants),
+    ]);
+    for (var i = 0; i < ready.length; i++) {
+      final camera = ready[i];
+      if (results[i]) {
+        _log('video_started', camera.configuration.deviceId);
+      } else {
+        final reason = camera.service.lastStartError ?? 'error desconocido';
+        _log('video_failed', '${camera.configuration.deviceId}: $reason');
+        _snack('${camera.configuration.deviceName} no graba: $reason', error: true);
+      }
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _onVideoSegment(VideoLogEntry entry) {
+    final log = _videoLog;
+    if (log != null) {
+      log.add(entry.toCsvRow());
+      unawaited(log.flush());
+    }
+    _log('video_saved', '${entry.cameraId} ${entry.filePath.split(RegExp(r'[\\/]')).last}');
+  }
+
+  /// Stops the cameras (the videos stay in the session folder) and closes
+  /// the Polar files. Answers with the files written.
+  Future<Map<String, dynamic>> _stopRecording() async {
+    final recording = _cameras.values.where((c) => c.service.isRecording).toList();
+    final entries = await Future.wait([
+      for (final camera in recording)
+        camera.service.stopSessionRecording(
+          participantSummary: _session.participants,
+          totalActivities: _session.activityIndex,
+        ),
+    ]);
+    final videoFiles = [
+      for (final camera in _cameras.values)
+        for (final log in camera.service.recordedVideoLogs)
+          if (_session.sessionDir != null && log.filePath.startsWith(_session.sessionDir!)) log.filePath,
+    ];
+    for (var i = 0; i < recording.length; i++) {
+      if (entries[i] == null) {
+        _log('video_stop_failed', recording[i].configuration.deviceId);
+      }
+    }
+    final files = <String>[];
+    for (final polar in _polarFiles.values) {
+      files.addAll(await polar.stop());
+    }
+    _polarFiles.clear();
+    final log = _videoLog;
+    _videoLog = null;
+    if (log != null) {
+      await log.close();
+      if (log.rows > 0 || File(log.path).existsSync()) files.add(log.path);
+    }
+    for (final camera in _cameras.values) {
+      camera.service.sessionDirectory = null;
+      camera.service.sessionFileStamp = null;
+      camera.service.onSegmentSaved = null;
+    }
+    if (mounted) setState(() {});
+    return {
+      'video_files': videoFiles,
+      'files': files,
+      'cameras': _cameras.values.where((c) => c.service.recordedVideoLogs.isNotEmpty).length,
+    };
+  }
+
+  void _onSnapshot(Map<dynamic, dynamic> args) {
+    _session.setSnapshot(args);
+    final participant = _session.info['participants']?.toString() ?? '';
+    for (final device in _liveDevices.values) {
+      device.service.updateProtocolContext(
+        participantId: _session.isActive ? participant : 'idle',
+        activityIndex: _session.activityIndex,
+        phaseName: _session.isActive ? _session.phase : 'idle',
+      );
+    }
+  }
+
+  Map<String, dynamic>? _restingHeartRate(dynamic args) {
+    if (args is! Map) return null;
+    final from = DateTime.tryParse(args['from_utc']?.toString() ?? '');
+    final to = DateTime.tryParse(args['to_utc']?.toString() ?? '');
+    if (from == null || to == null) return null;
+    RestingHeartRate? best;
+    String? bestDevice;
+    for (final entry in _polarFiles.entries) {
+      final result = entry.value.restingHeartRate(from.toUtc(), to.toUtc());
+      if (result == null) continue;
+      final better = best == null ||
+          (result.method == 'rr' && best.method != 'rr') ||
+          (result.method == best.method && result.count > best.count);
+      if (better) {
+        best = result;
+        bestDevice = entry.key;
+      }
+    }
+    if (best == null) return null;
+    return {...best.toJson(), 'device': bestDevice};
+  }
+
+  Future<void> _showSummary() async {
+    if (_summaryOpen || !mounted) return;
+    _summaryOpen = true;
+    try {
+      await MultiWindowManager.current.show();
+      await MultiWindowManager.current.focus();
+    } catch (_) {}
+    if (!mounted) return;
+    await showSessionSummaryDialog(
+      context,
+      session: _session,
+      send: _send,
+      onOpenFolder: _openFolder,
+      onNewSession: () => unawaited(_send('close')),
+    );
+    _summaryOpen = false;
+  }
+
+  void _openFolder(String path) {
+    try {
+      if (Platform.isWindows) {
+        unawaited(Process.run('explorer', [path]));
+      } else if (Platform.isMacOS) {
+        unawaited(Process.run('open', [path]));
+      } else {
+        unawaited(Process.run('xdg-open', [path]));
+      }
+    } catch (e) {
+      _snack('No se pudo abrir la carpeta: $e', error: true);
+    }
   }
 
   // ===========================================================================
@@ -396,31 +1053,45 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     int fromWindowId,
     dynamic arguments,
   ) async {
-    debugPrint('[MONITOR] Evento recibido: $eventName | args: $arguments');
+    if (eventName != WindowMessages.sessionSnapshot) {
+      debugPrint('[MONITOR] Evento recibido: $eventName');
+    }
 
     switch (eventName) {
+      case WindowMessages.sessionSnapshot:
+        if (arguments is Map) _onSnapshot(arguments);
+        return true;
+
+      case WindowMessages.sessionInfo:
+        if (arguments is Map) _session.setInfo(arguments);
+        return true;
+
       case WindowMessages.sessionStarted:
-        _handleSessionStarted(arguments);
-        break;
+        if (arguments is Map) await _onSessionStarted(arguments);
+        return true;
 
-      case WindowMessages.sessionPaused:
-        setState(() {
-          _sessionActive = false;
-          _sessionPaused = true;
-        });
-        break;
+      case WindowMessages.sessionStopping:
+        return await _stopRecording();
 
-      case WindowMessages.sessionResumed:
-        setState(() {
-          _sessionActive = true;
-          _sessionPaused = false;
-        });
-        break;
+      case WindowMessages.sessionSuspending:
+        final result = await _stopRecording();
+        _session.clear();
+        return result;
 
-      case WindowMessages.protocolContext:
-        _handleProtocolContext(arguments);
-        break;
-      
+      case WindowMessages.sessionSaved:
+        if (arguments is Map) _session.setSaved(arguments);
+        unawaited(_showSummary());
+        return true;
+
+      case WindowMessages.sessionCancelled:
+        _session.setCancelled(arguments is Map ? arguments : const {});
+        _snack('Sesión cancelada. Los archivos se conservan en una carpeta marcada como cancelada.');
+        unawaited(_send('close'));
+        return true;
+
+      case WindowMessages.restingHrRequested:
+        return _restingHeartRate(arguments);
+
       case WindowMessages.protocolConfiguration:
         if (arguments is Map) {
           final configuration =
@@ -430,6 +1101,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
           setState(() {
             _protocolConfiguration = configuration;
+            _syncDevices();
           });
 
           debugPrint(
@@ -437,232 +1109,27 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             '${configuration.devices.length} dispositivos',
           );
         }
-        break;
-      
-      case WindowMessages.protocolSettings:
-        if (arguments is Map) {
-          final settings = Map<String, dynamic>.from(arguments);
+        return true;
 
-          setState(() {
-            _prepSeconds = settings['prepSeconds'] as int;
-            _activitySeconds = settings['activitySeconds'] as int;
-            _postSeconds = settings['postSeconds'] as int;
-            _useLapMode = settings['useLapMode'] as bool;
-            _enableTts = settings['enableTts'] as bool;
-          });
-
-          debugPrint(
-            '[MONITOR] Ajustes del protocolo recibidos: $settings',
-          );
+      case WindowMessages.releaseResources:
+        try {
+          if (_polarFiles.isNotEmpty || _cameras.values.any((c) => c.service.isRecording)) {
+            await _stopRecording();
+          }
+          for (final camera in _cameras.values) {
+            await camera.service.dispose();
+            camera.ready = false;
+          }
+          for (final device in _liveDevices.values) {
+            await device.service.disconnect();
+          }
+        } catch (e) {
+          debugPrint('[MONITOR] Error liberando cámara/Bluetooth: $e');
         }
-        break;
-      
-      case WindowMessages.sessionFinished:
-        return await _handleSessionFinished();
-
-      case 'START_VIDEO_RECORDING':
-        if (!_cameraReady) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: cámara no preparada.',
-          );
-          return false;
-        }
-
-        if (_videoService.isRecording) {
-          debugPrint(
-            '[VIDEO] No se puede iniciar: ya existe una grabación activa.',
-          );
-          return false;
-        }
-
-        final summary = arguments?.toString() ?? _participantIds;
-
-        final success = await _videoService.startSessionRecording(
-          participantSummary: summary,
-        );
-
-        if (mounted) {
-          setState(() {});
-        }
-
-        debugPrint(
-          '[VIDEO] Resultado inicio grabación: $success',
-        );
-
-        return success;
-
-      case 'STOP_VIDEO_RECORDING':
-        if (_videoService.isRecording && arguments is Map) {
-          final summary = arguments['participantSummary']?.toString() ?? _participantIds;
-          final totalActs = int.tryParse(arguments['totalActivities']?.toString() ?? '0') ?? 0;
-          await _videoService.stopSessionRecording(
-            participantSummary: summary,
-            totalActivities: totalActs,
-          );
-          if (mounted) setState(() {});
-        }
-        break;
-      
-      case WindowMessages.syncAvailability:
-        if (arguments is bool) {
-          setState(() {
-            _syncAvailable = arguments;
-          });
-
-          debugPrint(
-            '[SYNC] Disponibilidad recibida: '
-            '${_syncAvailable ? 'ACTIVA' : 'INACTIVA'}',
-          );
-        }
-        break;
+        if (mounted) setState(() {});
+        return true;
     }
-  }
-
-  void _handleSessionStarted(dynamic args) {
-    if (args is! Map) return;
-
-    setState(() {
-      _sessionActive = true;
-      _sessionPaused = false;
-      _participantIds = args['participantIds']?.toString() ?? '--';
-      _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
-      _phaseName = args['phaseName']?.toString() ?? 'idle';
-    });
-
-    _polarService.updateProtocolContext(
-      participantId: _participantIds,
-      activityIndex: _activityIndex,
-      phaseName: _phaseName,
-    );
-  }
-
-  void _handleProtocolContext(dynamic args) {
-    if (args is! Map) return;
-
-    setState(() {
-      _participantIds = args['participantIds']?.toString() ?? '--';
-      _activityIndex = int.tryParse(args['activityIndex']?.toString() ?? '') ?? 0;
-      _phaseName = args['phaseName']?.toString() ?? 'idle';
-    });
-
-    if (_polarService.isConnected) {
-      // Registrar muestra por segundo de HR sincronizada
-      if (_sessionActive) {
-        _polarService.captureSample(
-          participantId: _participantIds,
-          activityIndex: _activityIndex,
-          phaseName: _phaseName,
-        );
-      }
-
-      _polarService.updateProtocolContext(
-        participantId: _sessionActive ? _participantIds : 'idle',
-        activityIndex: _activityIndex,
-        phaseName: _sessionActive ? _phaseName : 'idle',
-      );
-    }
-  }
-
-  Future<List<String>> _handleSessionFinished() async {
-    setState(() => _sessionActive = false);
-
-    final timestampStr = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .split('.')
-        .first;
-
-    final generatedFiles = <String>[];
-
-    // ========================================================================
-    // 1. HEART RATE
-    // ========================================================================
-
-    if (_polarService.recordedSamples.isNotEmpty) {
-      final csvContent = _polarService.exportCsv();
-
-      final filePath = await _createTemporaryCsvFile(
-        'polar_hr_session_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint('[MONITOR] Preparado HR CSV: $filePath');
-    }
-
-    // ========================================================================
-    // 2. ACCELEROMETRÍA
-    // ========================================================================
-
-    if (_polarService.recordedAccelerationSamples.isNotEmpty) {
-      final csvContent =
-          _polarService.exportAccelerationCsv();
-
-      final filePath = await _createTemporaryCsvFile(
-        'polar_acc_raw_200hz_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint('[MONITOR] Preparado ACC CSV: $filePath');
-    }
-
-    // ========================================================================
-    // 3. ECG
-    // ========================================================================
-
-    if (_polarService.recordedEcgSamples.isNotEmpty) {
-      final csvContent =
-          _polarService.exportEcgCsv();
-
-      final filePath = await _createTemporaryCsvFile(
-        'polar_ecg_raw_130hz_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint('[MONITOR] Preparado ECG CSV: $filePath');
-    }
-
-    // ========================================================================
-    // 4. VIDEO SYNC CSV
-    // ========================================================================
-
-    if (_videoService.recordedVideoLogs.isNotEmpty) {
-      final csvContent =
-          _videoService.exportVideoSyncCsv();
-
-      final filePath = await _createTemporaryCsvFile(
-        'video_sync_session_$timestampStr.csv',
-        csvContent,
-      );
-
-      generatedFiles.add(filePath);
-
-      debugPrint(
-        '[MONITOR] Preparado Video Sync CSV: $filePath',
-      );
-
-      // ======================================================================
-      // 5. VIDEO
-      // ======================================================================
-
-      for (final videoLog
-          in _videoService.recordedVideoLogs) {
-        if (await File(videoLog.filePath).exists()) {
-          generatedFiles.add(videoLog.filePath);
-
-          debugPrint(
-            '[MONITOR] Vídeo preparado: ${videoLog.filePath}',
-          );
-        }
-      }
-    }
-
-    return generatedFiles;
+    return null;
   }
 
   // ===========================================================================
@@ -670,31 +1137,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   // ===========================================================================
   
   void _showSettingsDialog() {
-    final prepMinutesController = TextEditingController(
-      text: (_prepSeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final prepSecondsController = TextEditingController(
-      text: (_prepSeconds % 60).toString().padLeft(2, '0'),
-    );
+    final settings = _session.settings;
+    final prep = (settings['prep_seconds'] as num?)?.toInt() ?? 30;
+    final main = (settings['main_seconds'] as num?)?.toInt() ?? 600;
+    final post = (settings['post_seconds'] as num?)?.toInt() ?? 30;
+    final prepMinutesController = TextEditingController(text: (prep ~/ 60).toString().padLeft(2, '0'));
+    final prepSecondsController = TextEditingController(text: (prep % 60).toString().padLeft(2, '0'));
+    final activityMinutesController = TextEditingController(text: (main ~/ 60).toString().padLeft(2, '0'));
+    final activitySecondsController = TextEditingController(text: (main % 60).toString().padLeft(2, '0'));
+    final postMinutesController = TextEditingController(text: (post ~/ 60).toString().padLeft(2, '0'));
+    final postSecondsController = TextEditingController(text: (post % 60).toString().padLeft(2, '0'));
+    var lapMode = settings['lap_mode'] as bool? ?? true;
 
-    final activityMinutesController = TextEditingController(
-      text: (_activitySeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final activitySecondsController = TextEditingController(
-      text: (_activitySeconds % 60).toString().padLeft(2, '0'),
-    );
-
-    final postMinutesController = TextEditingController(
-      text: (_postSeconds ~/ 60).toString().padLeft(2, '0'),
-    );
-    final postSecondsController = TextEditingController(
-      text: (_postSeconds % 60).toString().padLeft(2, '0'),
-    );
-
-    bool tempLapMode = _useLapMode;
-    bool tempTtsMode = _enableTts;
-
-    showDialog(
+    showDialog<void>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
@@ -706,91 +1161,61 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
               title: const Row(
                 children: [
-                  Icon(
-                    Icons.tune_rounded,
-                    color: Color(0xFF38BDF8),
-                  ),
+                  Icon(Icons.tune_rounded, color: Color(0xFF38BDF8)),
                   SizedBox(width: 10),
-                  Text(
-                    'Ajustes del Protocolo',
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  Text('Duración de las fases', style: TextStyle(color: Colors.white)),
                 ],
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    _buildDurationInput(
-                      label: 'Preparación estática inicial',
-                      minutesController: prepMinutesController,
-                      secondsController: prepSecondsController,
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDurationInput(
-                      label: 'Actividad principal',
-                      minutesController: activityMinutesController,
-                      secondsController: activitySecondsController,
-                    ),
-                    const SizedBox(height: 12),
-                    _buildDurationInput(
-                      label: 'Post-actividad estática final',
-                      minutesController: postMinutesController,
-                      secondsController: postSecondsController,
-                    ),
-                    const SizedBox(height: 16),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Indicaciones por voz',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
+              content: SizedBox(
+                width: 440,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Text(
+                        'Valen para las actividades que no fijan su propia duración en el '
+                        'protocolo. Los cambios se aplican desde la siguiente actividad.',
+                        style: TextStyle(color: Colors.white54, fontSize: 12),
                       ),
-                      subtitle: const Text(
-                        'Dicta las instrucciones y cambios de fase',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white54,
-                        ),
+                      const SizedBox(height: 14),
+                      _buildDurationInput(
+                        label: 'Fase estática antes (quieto)',
+                        minutesController: prepMinutesController,
+                        secondsController: prepSecondsController,
                       ),
-                      value: tempTtsMode,
-                      activeTrackColor: const Color(0xFF38BDF8),
-                      onChanged: (val) =>
-                          setStateDialog(() => tempTtsMode = val),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text(
-                        'Modo Lap (Espera manual)',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
+                      const SizedBox(height: 12),
+                      _buildDurationInput(
+                        label: 'Actividad',
+                        minutesController: activityMinutesController,
+                        secondsController: activitySecondsController,
                       ),
-                      subtitle: const Text(
-                        'Pausa al finalizar para rotación de actividad',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.white54,
-                        ),
+                      const SizedBox(height: 12),
+                      _buildDurationInput(
+                        label: 'Fase estática después (quieto)',
+                        minutesController: postMinutesController,
+                        secondsController: postSecondsController,
                       ),
-                      value: tempLapMode,
-                      activeTrackColor: const Color(0xFF38BDF8),
-                      onChanged: (val) =>
-                          setStateDialog(() => tempLapMode = val),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Esperar al evaluador entre actividades',
+                            style: TextStyle(fontSize: 14, color: Colors.white)),
+                        subtitle: const Text(
+                          'Tras cada actividad, descanso hasta pulsar SIGUIENTE (recomendado)',
+                          style: TextStyle(fontSize: 12, color: Colors.white54),
+                        ),
+                        value: lapMode,
+                        activeTrackColor: const Color(0xFF38BDF8),
+                        onChanged: (val) => setStateDialog(() => lapMode = val),
+                      ),
+                    ],
+                  ),
                 ),
               ),
               actions: <Widget>[
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    'Cancelar',
-                    style: TextStyle(color: Colors.white54),
-                  ),
+                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -798,43 +1223,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       minutesController: prepMinutesController,
                       secondsController: prepSecondsController,
                       minimumSeconds: 5,
-                      fallbackSeconds: _prepSeconds,
+                      fallbackSeconds: prep,
                     );
-
                     final newActivity = _durationFromControllers(
                       minutesController: activityMinutesController,
                       secondsController: activitySecondsController,
                       minimumSeconds: 1,
-                      fallbackSeconds: _activitySeconds,
+                      fallbackSeconds: main,
                     );
-
                     final newPost = _durationFromControllers(
                       minutesController: postMinutesController,
                       secondsController: postSecondsController,
                       minimumSeconds: 5,
-                      fallbackSeconds: _postSeconds,
+                      fallbackSeconds: post,
                     );
-
-                    MultiWindowManager.current.invokeMethodToWindow(
-                      0,
-                      WindowMessages.protocolSettingsUpdated,
-                      {
-                        'prepSeconds': newPrep,
-                        'activitySeconds': newActivity,
-                        'postSeconds': newPost,
-                        'useLapMode': tempLapMode,
-                        'enableTts': tempTtsMode,
-                      },
-                    );
-
-                    setState(() {
-                      _prepSeconds = newPrep;
-                      _activitySeconds = newActivity;
-                      _postSeconds = newPost;
-                      _useLapMode = tempLapMode;
-                      _enableTts = tempTtsMode;
-                    });
-
+                    unawaited(_send('settings', {
+                      'prep_seconds': newPrep,
+                      'main_seconds': newActivity,
+                      'post_seconds': newPost,
+                      'lap_mode': lapMode,
+                    }));
                     Navigator.of(context).pop();
                   },
                   style: FilledButton.styleFrom(
@@ -855,13 +1263,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   // DIÁLOGO DE CONEXIÓN POLAR BLE
   // ===========================================================================
 
-  void _showPolarConnectionDialog() {
+  /// Words of the advertised name that identify each live device type.
+  static const _bleNameHints = {
+    'polar_h10': 'h10',
+    'verity_sense': 'sense',
+  };
+
+  void _showPolarConnectionDialog(String deviceId) {
+    final device = _liveDevices[deviceId];
+    if (device == null) return;
+    final service = device.service;
+    final configuration = device.configuration;
+    final title = configuration.placementLabel == null
+        ? configuration.deviceName
+        : '${configuration.deviceName} · ${configuration.placementLabel}';
 
     debugPrint(
-      '[POLAR UI] isConnected = ${_polarService.isConnected}',
+      '[POLAR UI] $deviceId isConnected = ${service.isConnected}',
     );
     
-    if (_polarService.isConnected) {
+    if (service.isConnected) {
       showDialog(
         context: context,
         builder: (dialogCtx) {
@@ -870,22 +1291,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
-            title: const Row(
+            title: Row(
               children: [
-                Icon(
+                const Icon(
                   Icons.bluetooth_connected_rounded,
                   color: Color(0xFF38BDF8),
                 ),
-                SizedBox(width: 10),
-                Text(
-                  'Polar H10',
-                  style: TextStyle(color: Colors.white),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(color: Colors.white),
+                  ),
                 ),
               ],
             ),
-            content: const Text(
-              'El Polar H10 está actualmente vinculado.',
-              style: TextStyle(color: Colors.white70),
+            content: Text(
+              'Vinculado a ${service.connectedDeviceName ?? service.connectedDeviceId}.',
+              style: const TextStyle(color: Colors.white70),
             ),
             actions: [
               TextButton(
@@ -896,7 +1319,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               ),
               FilledButton.icon(
                 onPressed: () async {
-                  await _polarService.disconnect();
+                  await service.disconnect();
 
                   if (!dialogCtx.mounted) return;
 
@@ -907,8 +1330,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   setState(() {});
 
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Polar H10 desvinculado'),
+                    SnackBar(
+                      content: Text('$title desvinculado'),
                     ),
                   );
                 },
@@ -927,30 +1350,59 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       return;
     }
 
-    _polarService.startScan();
+    // Devices already linked to another sensor of the session.
+    final taken = {
+      for (final other in _liveDevices.values)
+        if (other != device && other.service.connectedDeviceId != null)
+          other.service.connectedDeviceId!,
+    };
+    final hint = _bleNameHints[configuration.type];
+    final serial = configuration.serial?.toLowerCase();
+
+    service.startScan();
+
+    var connecting = false;
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (dialogCtx) {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: const Color(0xFF1E293B),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
-                  SizedBox(width: 10),
-                  Text('Conectar Sensor Polar H10', style: TextStyle(color: Colors.white)),
+                  const Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Conectar $title', style: const TextStyle(color: Colors.white)),
+                  ),
                 ],
               ),
               content: SizedBox(
-                width: 400,
-                height: 300,
-                child: StreamBuilder<List<BleDevice>>(
-                  stream: _polarService.scanStream,
+                width: 420,
+                height: 320,
+                child: connecting
+                    ? _buildPolarConnectingView(service)
+                    : StreamBuilder<List<BleDevice>>(
+                  stream: service.scanStream,
                   builder: (context, snapshot) {
-                    final results = snapshot.data ?? [];
+                    // Devices of this type first; the serial (printed on
+                    // the sensor and part of its Bluetooth name) on top.
+                    int rank(BleDevice d) {
+                      final name = (d.name ?? '').toLowerCase();
+                      if (serial != null && serial.isNotEmpty && name.contains(serial)) return 0;
+                      if (hint != null && name.contains(hint)) return 1;
+                      if (name.contains('polar')) return 2;
+                      return 3;
+                    }
+
+                    final results = [
+                      for (final d in snapshot.data ?? const <BleDevice>[])
+                        if (!taken.contains(d.deviceId)) d,
+                    ]..sort((a, b) => rank(a).compareTo(rank(b)));
                     if (results.isEmpty) {
                       return const Center(
                         child: Column(
@@ -967,45 +1419,60 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     return ListView.builder(
                       itemCount: results.length,
                       itemBuilder: (context, index) {
-                        final device = results[index];
-                        final name = device.name?.isNotEmpty == true
-                            ? device.name!
-                            : 'Dispositivo BLE (${device.deviceId})';
+                        final bleDevice = results[index];
+                        final r = rank(bleDevice);
+                        final name = bleDevice.name?.isNotEmpty == true
+                            ? bleDevice.name!
+                            : 'Dispositivo BLE (${bleDevice.deviceId})';
 
                         return ListTile(
-                          leading: const Icon(Icons.favorite, color: Colors.redAccent),
-                          title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                          subtitle: Text(device.deviceId, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                          leading: Icon(
+                            r == 0 ? Icons.verified_rounded : Icons.favorite,
+                            color: r <= 1 ? Colors.redAccent : Colors.white24,
+                          ),
+                          title: Text(
+                            name,
+                            style: TextStyle(
+                              color: r <= 1 ? Colors.white : Colors.white54,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          subtitle: Text(
+                            r == 0 ? 'Coincide el número de serie' : bleDevice.deviceId,
+                            style: const TextStyle(color: Colors.white38, fontSize: 11),
+                          ),
                           trailing: ElevatedButton(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF38BDF8),
                               foregroundColor: Colors.black,
                             ),
                             onPressed: () async {
-                              await _polarService.stopScan();
-                              final connected = await _polarService.connectToDevice(device);
-                              if (connected) {
-                                try {
-                                  final polarConfiguration =
-                                      _protocolConfiguration.deviceById('polar_h10');
-
-                                  if (polarConfiguration != null) {
-                                    await _polarService.startHeartRate();
-                                    await _polarService.startAcceleration();
-                                    await _polarService.startEcg();
-                                  }
-                                } catch (e) {
-                                  debugPrint(
-                                    '[POLAR DEBUG] Error al iniciar sensores: $e',
-                                  );
-                                }
-                              }
+                              setDialogState(() => connecting = true);
+                              await service.stopScan();
+                              final connected = await service.connectToDevice(bleDevice);
+                              final failed = connected
+                                  ? await device.startConfiguredSignals()
+                                  : const <String>[];
                               if (dialogCtx.mounted) {
                                 Navigator.of(dialogCtx).pop();
-                                ScaffoldMessenger.of(context).showSnackBar(
+                              }
+                              if (mounted) {
+                                ScaffoldMessenger.of(this.context).showSnackBar(
                                   SnackBar(
-                                    content: Text(connected ? 'Conectado a $name' : 'Fallo de conexión'),
-                                    backgroundColor: connected ? const Color(0xFF34D399) : Colors.redAccent,
+                                    content: Text(
+                                      !connected
+                                          ? service.linkStatus.value.message
+                                          : failed.isEmpty
+                                              ? 'Conectado a $name'
+                                              : 'Conectado a $name, sin ${failed.join(', ')}'
+                                                  '${service.pmdProblem == null ? '' : '. ${service.pmdProblem}.'}',
+                                    ),
+                                    duration: Duration(seconds: connected && failed.isEmpty ? 4 : 12),
+                                    backgroundColor: !connected
+                                        ? Colors.redAccent
+                                        : failed.isEmpty
+                                            ? const Color(0xFF34D399)
+                                            : Colors.orange,
                                   ),
                                 );
                                 setState(() {});
@@ -1020,13 +1487,22 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 ),
               ),
               actions: [
-                TextButton(
-                  onPressed: () {
-                    _polarService.stopScan();
-                    Navigator.of(dialogCtx).pop();
-                  },
-                  child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
-                ),
+                if (connecting)
+                  TextButton(
+                    onPressed: () async {
+                      Navigator.of(dialogCtx).pop();
+                      await service.cancelConnection();
+                    },
+                    child: const Text('Cancelar conexión', style: TextStyle(color: Colors.white54)),
+                  )
+                else
+                  TextButton(
+                    onPressed: () {
+                      service.stopScan();
+                      Navigator.of(dialogCtx).pop();
+                    },
+                    child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+                  ),
               ],
             );
           },
@@ -1035,110 +1511,195 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  Widget _buildPolarConnectingView(PolarBleService service) {
+    return ValueListenableBuilder<PolarLinkStatus>(
+      valueListenable: service.linkStatus,
+      builder: (context, status, _) {
+        final isError = status.state == PolarLinkState.error;
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isError)
+                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40)
+              else
+                const CircularProgressIndicator(color: Color(0xFF38BDF8)),
+              const SizedBox(height: 16),
+              Text(
+                status.message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white70),
+              ),
+              if (status.state == PolarLinkState.pairing) ...[
+                const SizedBox(height: 12),
+                const Text(
+                  'Si Windows pide permiso para emparejar, pulsa "Permitir". '
+                  'Si no aparece nada en un minuto, cancela y vuelve a intentarlo.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static DeviceConnectionStatus _polarConnectionStatus(PolarBleService service) {
+    switch (service.linkStatus.value.state) {
+      case PolarLinkState.connected:
+        return DeviceConnectionStatus.connected;
+      case PolarLinkState.connecting:
+      case PolarLinkState.pairing:
+      case PolarLinkState.configuring:
+      case PolarLinkState.reconnecting:
+        return DeviceConnectionStatus.connecting;
+      case PolarLinkState.error:
+        return DeviceConnectionStatus.error;
+      case PolarLinkState.disconnected:
+        return service.isConnected
+            ? DeviceConnectionStatus.connected
+            : DeviceConnectionStatus.disconnected;
+    }
+  }
+
+  static const _sensorLabels = {
+    'heart_rate': ('HR', Icons.favorite_rounded),
+    'rr': ('RR', Icons.timeline_rounded),
+    'acc': ('ACC', Icons.sensors_rounded),
+    'ecg': ('ECG', Icons.show_chart_rounded),
+    'ppg': ('PPG', Icons.fingerprint_rounded),
+    'ppi': ('PPI', Icons.monitor_heart_outlined),
+    'gyro': ('GYRO', Icons.threesixty_rounded),
+    'mag': ('MAG', Icons.explore_rounded),
+  };
+
+  /// Every device of the session, in the order of the session setup.
   List<DeviceStatus> get _deviceStatuses {
     final statuses = <DeviceStatus>[];
 
     for (final device in _protocolConfiguration.devices) {
-      switch (device.deviceId) {
-        case 'camera':
-          statuses.add(
-            DeviceStatus(
-              id: device.deviceId,
-              name: device.deviceName,
-              icon: Icons.videocam_rounded,
-              connectionStatus: _cameraReady
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
-              sensors: [
-                if (device.hasSensor('video'))
-                  SensorStatus(
-                    id: 'video',
-                    name: 'Vídeo',
-                    icon: Icons.videocam_rounded,
-                    status: _videoService.isRecording
-                        ? SensorAcquisitionStatus.acquiring
-                        : _cameraReady
-                            ? SensorAcquisitionStatus.ready
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-              ],
-            ),
-          );
-          break;
+      final subtitle = [
+        if (device.placementLabel != null) device.placementLabel!,
+        if (device.serial != null) 'n.º ${device.serial}',
+      ].join(' · ');
 
-        case 'polar_h10':
-          statuses.add(
-            DeviceStatus(
-              id: device.deviceId,
-              name: device.deviceName,
-              icon: Icons.favorite_rounded,
-              connectionStatus: _polarService.isConnected
-                  ? DeviceConnectionStatus.connected
-                  : DeviceConnectionStatus.disconnected,
-              sensors: [
-                if (device.hasSensor('heart_rate'))
-                  SensorStatus(
-                    id: 'heart_rate',
-                    name: 'HR',
-                    icon: Icons.favorite_rounded,
-                    status: _polarService.isHeartRateStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-
-                if (device.hasSensor('rr'))
-                  SensorStatus(
-                    id: 'rr',
-                    name: 'RR',
-                    icon: Icons.timeline_rounded,
-                    status: _polarService.isRrStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                  ),
-
-                if (device.hasSensor('acc'))
-                  SensorStatus(
-                    id: 'acc',
-                    name: 'ACC',
-                    icon: Icons.sensors_rounded,
-                    status: _polarService.isAccelerationStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                    detail: '200 Hz',
-                  ),
-                if (device.hasSensor('ecg'))
-                  SensorStatus(
-                    id: 'ecg',
-                    name: 'ECG',
-                    icon: Icons.show_chart_rounded,
-                    status: _polarService.isEcgStreaming
-                        ? SensorAcquisitionStatus.acquiring
-                        : _polarService.isConnected
-                            ? SensorAcquisitionStatus.stopped
-                            : SensorAcquisitionStatus.unavailable,
-                    detail: '130 Hz',
-                  ),
-              ],
-            ),
-          );
-          break;
-
-        default:
-          debugPrint(
-            '[MONITOR] Dispositivo no soportado: ${device.deviceId}',
-          );
-          break;
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        statuses.add(
+          DeviceStatus(
+            id: device.deviceId,
+            name: '${device.deviceName} · ${device.deviceId}',
+            subtitle: camera.ready
+                ? camera.service.selectedCamera?.name
+                : (subtitle.isEmpty ? null : subtitle),
+            icon: Icons.videocam_rounded,
+            connectionStatus: camera.recovering
+                ? DeviceConnectionStatus.connecting
+                : camera.ready
+                    ? DeviceConnectionStatus.connected
+                    : camera.service.cameraError.value != null
+                        ? DeviceConnectionStatus.error
+                        : DeviceConnectionStatus.disconnected,
+            statusMessage: camera.recovering
+                ? 'Recuperando cámara...'
+                : camera.ready
+                    ? null
+                    : camera.service.cameraError.value,
+            sensors: [
+              if (device.hasSensor('video'))
+                SensorStatus(
+                  id: 'video',
+                  name: camera.service.audioUnavailable ? 'Vídeo (sin audio)' : 'Vídeo + audio',
+                  icon: Icons.videocam_rounded,
+                  status: camera.service.isRecording
+                      ? SensorAcquisitionStatus.acquiring
+                      : camera.ready
+                          ? SensorAcquisitionStatus.ready
+                          : SensorAcquisitionStatus.unavailable,
+                  detail: camera.ready
+                      ? '${camera.service.resolutionLabel} · ${VideoRecordingService.formatBitrate(camera.service.videoBitrate)}'
+                      : null,
+                ),
+            ],
+          ),
+        );
+        continue;
       }
+
+      final live = _liveDevices[device.deviceId];
+      if (live != null) {
+        final service = live.service;
+        bool streaming(String sensor) => switch (sensor) {
+              'heart_rate' => service.isHeartRateStreaming,
+              'rr' => service.isRrStreaming,
+              'acc' => service.isAccelerationStreaming,
+              'ecg' => service.isEcgStreaming,
+              _ => false,
+            };
+        statuses.add(
+          DeviceStatus(
+            id: device.deviceId,
+            name: '${device.deviceName} · ${device.deviceId}',
+            subtitle: service.isConnected
+                ? [
+                    service.connectedDeviceName ?? service.connectedDeviceId,
+                    if (subtitle.isNotEmpty) subtitle,
+                  ].join(' · ')
+                : (subtitle.isEmpty ? null : subtitle),
+            icon: Icons.favorite_rounded,
+            connectionStatus: _polarConnectionStatus(service),
+            statusMessage: switch (service.linkStatus.value.state) {
+              PolarLinkState.connected || PolarLinkState.disconnected => null,
+              _ => service.linkStatus.value.message,
+            },
+            sensors: [
+              for (final sensor in _sensorLabels.keys)
+                if (device.hasSensor(sensor))
+                  SensorStatus(
+                    id: sensor,
+                    name: _sensorLabels[sensor]!.$1,
+                    icon: _sensorLabels[sensor]!.$2,
+                    status: streaming(sensor)
+                        ? SensorAcquisitionStatus.acquiring
+                        : service.isConnected
+                            ? SensorAcquisitionStatus.stopped
+                            : SensorAcquisitionStatus.unavailable,
+                    detail: switch (sensor) {
+                      'acc' when service.isAccelerationStreaming =>
+                        '${service.accSampleRateHz} Hz',
+                      'ecg' => '${PolarBleService.ecgSampleRateHz} Hz',
+                      'ppg' when service.isPpgStreaming => '${service.ppgSampleRateHz} Hz',
+                      'gyro' when service.isGyroStreaming => '${service.gyroSampleRateHz} Hz',
+                      'mag' when service.isMagnetometerStreaming => '${service.magSampleRateHz} Hz',
+                      'ppi' when service.isPpiStreaming => 'por pulso, con retraso',
+                      _ => null,
+                    },
+                  ),
+            ],
+          ),
+        );
+        continue;
+      }
+
+      // Offline sensors (and live ones without signals here): listed so the
+      // team sees the whole setup, but they record on their own.
+      statuses.add(
+        DeviceStatus(
+          id: device.deviceId,
+          name: '${device.deviceName} · ${device.deviceId}',
+          subtitle: subtitle.isEmpty ? null : subtitle,
+          icon: Icons.watch_rounded,
+          connectionStatus: DeviceConnectionStatus.disconnected,
+          note: 'Graba por su cuenta (sin conexión en directo)',
+        ),
+      );
     }
 
     return statuses;
   }
+
 
   // ===========================================================================
   // UI
@@ -1150,22 +1711,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       backgroundColor: const Color(0xFF07090E),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(16),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildHeader(),
-              const SizedBox(height: 16),
-
-              // ===============================================================
-              // CONTROL DE SESIÓN
-              // ===============================================================
-              _buildSessionControlPanel(),
-
-              const SizedBox(height: 16),
-
-              // ===============================================================
-              // MONITORIZACIÓN
-              // ===============================================================
+              SessionConsole(
+                session: _session,
+                send: _send,
+                onStart: _onStartRequested,
+                devices: _deviceChips,
+                recording: _anyCameraRecording,
+                onOpenFolder: _openFolder,
+                onSettings: _showSettingsDialog,
+              ),
+              const SizedBox(height: 12),
               Expanded(
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1174,10 +1733,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       flex: 3,
                       child: _buildMonitoringArea(),
                     ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Expanded(
                       flex: 2,
-                      child: _buildDeviceStatusPanel(),
+                      child: _buildRightColumn(),
                     ),
                   ],
                 ),
@@ -1189,132 +1748,123 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildSessionControlPanel() {
-    return _MonitorCard(
-      title: 'CONTROL DE SESIÓN',
-      icon: Icons.tune_rounded,
-      child: Row(
-        children: [
-          FilledButton.icon(
-            onPressed: () async {
-              final message = !_sessionActive && !_sessionPaused
-                  ? WindowMessages.sessionStartRequested
-                  : _sessionPaused
-                      ? WindowMessages.sessionResumeRequested
-                      : WindowMessages.sessionPauseRequested;
-
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                message,
-              );
-            },
-            icon: Icon(
-              _sessionPaused
-                  ? Icons.play_arrow_rounded
-                  : _sessionActive
-                      ? Icons.pause_rounded
-                      : Icons.play_arrow_rounded,
+  /// Activities of the protocol (with the notes of each attempt) and the
+  /// devices, one at a time: the activities during the session.
+  Widget _buildRightColumn() {
+    final lost = _deviceChips.any((c) => c.warning);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SegmentedButton<int>(
+          showSelectedIcon: false,
+          segments: [
+            const ButtonSegment(
+              value: 0,
+              icon: Icon(Icons.checklist_rounded),
+              label: Text('Actividades'),
             ),
-            label: Text(
-              _sessionPaused
-                  ? 'REANUDAR'
-                  : _sessionActive
-                      ? 'PAUSAR'
-                      : 'INICIAR',
-              style: const TextStyle(fontWeight: FontWeight.w900),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: FilledButton.tonalIcon(
-              onPressed: () async {
-                await MultiWindowManager.current.invokeMethodToWindow(
-                  0,
-                  WindowMessages.lapRequested,
-                );
-              },
-              icon: const Icon(Icons.skip_next_rounded),
-              label: const Text(
-                'LAP',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                ),
+            ButtonSegment(
+              value: 1,
+              icon: Icon(
+                lost ? Icons.warning_amber_rounded : Icons.devices_other_rounded,
+                color: lost ? Colors.orangeAccent : null,
               ),
+              label: const Text('Dispositivos'),
             ),
-          ),
-          const SizedBox(width: 10),
-          _buildSyncButton(),
-          const SizedBox(width: 10),
-          Expanded(
-            child: FilledButton.icon(
-              onPressed: () async {
-                await MultiWindowManager.current.invokeMethodToWindow(
-                  0,
-                  WindowMessages.sessionFinishRequested,
-                );
-              },
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
+          ],
+          selected: {_rightTab},
+          onSelectionChanged: (value) => setState(() => _rightTab = value.first),
+        ),
+        const SizedBox(height: 10),
+        Expanded(
+          child: IndexedStack(
+            index: _rightTab,
+            sizing: StackFit.expand,
+            children: [
+              _MonitorCard(
+                title: 'ACTIVIDADES DEL PROTOCOLO',
+                icon: Icons.checklist_rounded,
+                expandChild: true,
+                child: ActivityPanel(session: _session, send: _send),
               ),
-              icon: const Icon(Icons.stop_rounded),
-              label: const Text(
-                'FINALIZAR Y SINCRONIZAR',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
+              _buildDeviceStatusPanel(),
+            ],
           ),
-          const SizedBox(width: 10),
-          IconButton(
-            tooltip: _enableTts ? 'Desactivar voz' : 'Activar voz',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color(0xFF38BDF8),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: () async {
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                WindowMessages.voiceToggleRequested,
-              );
-            },
-            icon: Icon(
-              _enableTts
-                  ? Icons.volume_up_rounded
-                  : Icons.volume_off_rounded,
-            ),
-          ),
-          IconButton(
-            tooltip: 'Ajustes',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color(0xFF38BDF8),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: _showSettingsDialog,
-            icon: const Icon(Icons.settings_rounded),
-          ),
-          IconButton(
-            tooltip: 'Cancelar prueba',
-            style: IconButton.styleFrom(
-              foregroundColor: const Color.fromARGB(255, 243, 52, 52),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: () async {
-              await MultiWindowManager.current.invokeMethodToWindow(
-                0,
-                WindowMessages.sessionCancelRequested,
-              );
-            },
-            icon: const Icon(
-              Icons.close_rounded,
-              color: Colors.redAccent,
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
+
+  /// The devices that can be checked from here (cameras and live Polar
+  /// sensors), for the status strip of the console.
+  List<DeviceChip> get _deviceChips {
+    final chips = <DeviceChip>[];
+    final active = !_session.isIdle && !_session.isClosing;
+    void showDevices() => setState(() => _rightTab = 1);
+
+    for (final device in _protocolConfiguration.devices) {
+      final camera = _cameras[device.deviceId];
+      if (camera != null) {
+        final service = camera.service;
+        final recording = service.isRecording;
+        final error = service.cameraError.value;
+        final (String detail, Color color) = camera.recovering
+            ? ('Recuperando...', Colors.orangeAccent)
+            : recording
+                ? ('Grabando${service.audioUnavailable ? ' sin audio' : ''}', const Color(0xFFF87171))
+                : camera.ready
+                    ? ('Preparada', const Color(0xFF34D399))
+                    : error != null
+                        ? ('Error', Colors.redAccent)
+                        : ('Sin preparar', Colors.white38);
+        chips.add(DeviceChip(
+          label: device.deviceName,
+          detail: detail,
+          color: color,
+          icon: recording ? Icons.fiber_manual_record_rounded : Icons.videocam_rounded,
+          warning: active && _session.video && !recording,
+          onTap: camera.ready || camera.recovering || recording
+              ? showDevices
+              : () => _showCameraConnectionDialog(device.deviceId),
+        ));
+        continue;
+      }
+      final live = _liveDevices[device.deviceId];
+      if (live == null) continue;
+      final service = live.service;
+      final state = service.linkStatus.value.state;
+      final connected = service.isConnected && state != PolarLinkState.reconnecting;
+      final missing = [
+        for (final sensor in _sensorLabels.keys)
+          if (device.hasSensor(sensor) && connected && !_streaming(service, sensor)) _sensorLabels[sensor]!.$1,
+      ];
+      final hr = service.currentHeartRate;
+      final (String detail, Color color) = switch (state) {
+        _ when connected && missing.isEmpty => (
+            [if (hr > 0) '$hr lpm' else 'Conectado', if (device.hasSensor('acc')) 'ACC'].join(' · '),
+            const Color(0xFF34D399),
+          ),
+        _ when connected => ('Sin ${missing.join(', ')}', Colors.orangeAccent),
+        PolarLinkState.reconnecting => ('Reconectando...', Colors.orangeAccent),
+        PolarLinkState.connecting || PolarLinkState.pairing || PolarLinkState.configuring =>
+          ('Conectando...', Colors.orangeAccent),
+        PolarLinkState.error => ('Error', Colors.redAccent),
+        _ => ('Sin conectar', Colors.white38),
+      };
+      chips.add(DeviceChip(
+        label: device.placementLabel == null ? device.deviceName : '${device.deviceName} · ${device.placementLabel}',
+        detail: detail,
+        color: color,
+        icon: Icons.favorite_rounded,
+        // Lost during the session: it was connected and is not now.
+        warning: active && service.hasLastDevice && !connected,
+        onTap: connected ? showDevices : () => _showPolarConnectionDialog(device.deviceId),
+      ));
+    }
+    return chips;
+  }
+
+  static bool _streaming(PolarBleService service, String sensor) => service.isStreaming(sensor);
 
   Widget _buildMonitoringArea() {
     return _MonitorCard(
@@ -1397,16 +1947,45 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  Widget _buildHeartRateMonitor(MonitorSlot slot) {
+  Widget _buildChart({
+    required MonitorSlot slot,
+    required String label,
+    required IconData icon,
+    required String unit,
+    required Duration window,
+    required List<ChartSeries> series,
+    required String Function() currentValue,
+    Widget? trailingAction,
+  }) {
     return SensorChartCard(
       title: 'MONITOR ${slot.slotId}',
-      subtitle: 'HR · ${slot.sensorId}',
+      subtitle: '$label · ${slot.deviceId}',
+      icon: icon,
+      currentValue: currentValue,
+      unit: unit,
+      window: window,
+      clock: _frameClock,
+      seriesList: series,
+      trailingAction: trailingAction,
+    );
+  }
+
+  static String _format(double? value, [int decimals = 0]) =>
+      value == null ? '--' : value.toStringAsFixed(decimals);
+
+  Widget _buildHeartRateMonitor(MonitorSlot slot) {
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'HR',
       icon: Icons.favorite_rounded,
-      currentValue: _heartRate > 0 ? '$_heartRate' : '--',
       unit: 'bpm',
-      seriesList: [
+      window: device.hr.window,
+      currentValue: () => _format(device.hr.lastValue),
+      series: [
         ChartSeries(
-          points: _hrHistory,
+          buffer: device.hr,
           color: Colors.redAccent,
           label: 'HR',
         ),
@@ -1415,17 +1994,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildRrMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'RR · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'RR',
       icon: Icons.timeline_rounded,
-      currentValue: _rrHistory.isNotEmpty
-          ? _rrHistory.last.toStringAsFixed(0)
-          : '--',
       unit: 'ms',
-      seriesList: [
+      window: device.rr.window,
+      currentValue: () => _format(device.rr.lastValue),
+      series: [
         ChartSeries(
-          points: _rrHistory,
+          buffer: device.rr,
           color: Colors.orangeAccent,
           label: 'RR',
         ),
@@ -1434,39 +2014,38 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildAccelerationMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'ACC · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'ACC',
       icon: Icons.sensors_rounded,
-      currentValue: _accMode == 'VM'
-          ? (_accHistory.isNotEmpty
-              ? _accHistory.last.toStringAsFixed(1)
-              : '--')
-          : (_lastAcc != null
-              ? _lastAcc!.zMg.toStringAsFixed(1)
-              : '--'),
       unit: 'mg',
-      seriesList: _accMode == 'VM'
+      window: device.accVm.window,
+      currentValue: () => _accMode == 'VM'
+          ? _format(device.accVm.lastValue, 1)
+          : _format(device.accZ.lastValue, 1),
+      series: _accMode == 'VM'
           ? [
               ChartSeries(
-                points: _accHistory,
+                buffer: device.accVm,
                 color: const Color(0xFF38BDF8),
                 label: 'VM',
               ),
             ]
           : [
               ChartSeries(
-                points: _accXHistory,
+                buffer: device.accX,
                 color: Colors.redAccent,
                 label: 'X',
               ),
               ChartSeries(
-                points: _accYHistory,
+                buffer: device.accY,
                 color: Colors.greenAccent,
                 label: 'Y',
               ),
               ChartSeries(
-                points: _accZHistory,
+                buffer: device.accZ,
                 color: const Color(0xFF38BDF8),
                 label: 'Z',
               ),
@@ -1490,17 +2069,18 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildEcgMonitor(MonitorSlot slot) {
-    return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: 'ECG · ${slot.sensorId}',
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'ECG',
       icon: Icons.show_chart_rounded,
-      currentValue: _lastEcg != null
-          ? _lastEcg!.microVolts.toStringAsFixed(1)
-          : '--',
       unit: 'µV',
-      seriesList: [
+      window: device.ecg.window,
+      currentValue: () => _format(device.ecg.lastValue),
+      series: [
         ChartSeries(
-          points: _ecgHistory,
+          buffer: device.ecg,
           color: const Color(0xFFF43F5E),
           label: 'ECG',
         ),
@@ -1509,7 +2089,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildVideoMonitor(MonitorSlot slot) {
-    final controller = _videoService.controller;
+    final camera = _cameras[slot.deviceId];
+    final controller = camera?.service.controller;
 
     return Container(
       decoration: BoxDecoration(
@@ -1517,7 +2098,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
-      child: (_cameraReady &&
+      child: (camera != null &&
+              camera.ready &&
               controller != null &&
               controller.value.isInitialized)
           ? Stack(
@@ -1529,7 +2111,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     child: CameraPreview(controller),
                   ),
                 ),
-                if (_videoService.isRecording)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Text(
+                    slot.deviceId ?? '',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 11,
+                      shadows: [Shadow(blurRadius: 4)],
+                    ),
+                  ),
+                ),
+                if (camera.service.isRecording)
                   Positioned(
                     top: 10,
                     right: 10,
@@ -1642,178 +2237,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             onDeviceAction: _deviceActionForDevice(
               _deviceStatuses[index].id,
             ),
+            onRetry: _retryActionForDevice(
+              _deviceStatuses[index].id,
+            ),
           );
         },
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return _MonitorCard(
-      title: 'SESIÓN',
-      icon: Icons.assignment_rounded,
-      child: Row(
-        children: [
-          // ---------------------------------------------------------------
-          // PARTICIPANTE
-          // ---------------------------------------------------------------
-          Expanded(
-            flex: 2,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'PARTICIPANTE',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white38,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '$_participantIds · Día 0',
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Separador
-          Container(
-            width: 1,
-            height: 38,
-            color: Colors.white12,
-          ),
-
-          const SizedBox(width: 20),
-
-          // ---------------------------------------------------------------
-          // ACTIVIDAD
-          // ---------------------------------------------------------------
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'ACTIVIDAD ACTUAL',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white38,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Text(
-                      _sessionActive || _sessionPaused
-                          ? 'Actividad $_activityIndex'
-                          : 'No iniciado',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 9,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF38BDF8).withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        _phaseName.toUpperCase(),
-                        style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF38BDF8),
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Separador
-          Container(
-            width: 1,
-            height: 38,
-            color: Colors.white12,
-          ),
-
-          const SizedBox(width: 20),
-
-          // ---------------------------------------------------------------
-          // ESTADO
-          // ---------------------------------------------------------------
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _StatusDot(
-                color: _sessionActive
-                    ? Colors.greenAccent
-                    : Colors.grey,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _sessionActive ? 'SESIÓN ACTIVA' : 'EN ESPERA',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  color: _sessionActive
-                      ? Colors.greenAccent
-                      : Colors.grey.shade400,
-                  letterSpacing: 0.5,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSyncButton() {
-    return ElevatedButton.icon(
-      onPressed: _syncAvailable ? _requestSyncWindow : null,
-      icon: const Icon(
-        Icons.sync_rounded,
-        size: 18,
-      ),
-      label: const Text(
-        'SINCRONIZAR',
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          fontSize: 12,
-        ),
-      ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF38BDF8),
-        foregroundColor: Colors.black,
-        disabledBackgroundColor: Colors.grey.shade300,
-        disabledForegroundColor: Colors.grey.shade600,
-        padding: const EdgeInsets.symmetric(
-          horizontal: 14,
-          vertical: 10,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
       ),
     );
   }
@@ -1971,26 +2399,6 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         ? minimumSeconds
         : totalSeconds;
   }
-
-  Future<String> _createTemporaryCsvFile(
-    String fileName,
-    String content,
-  ) async {
-    _sessionExportDirectory ??=
-        await Directory.systemTemp.createTemp(
-      'lab_protocol_timer_session_',
-    );
-
-    final file = File(
-      '${_sessionExportDirectory!.path}'
-      '${Platform.pathSeparator}'
-      '$fileName',
-    );
-
-    await file.writeAsString(content);
-
-    return file.path;
-  }
 }
 
 class _MonitorCard extends StatelessWidget {
@@ -2053,11 +2461,13 @@ class _DeviceStatusCard extends StatelessWidget {
   final DeviceStatus device;
   final void Function(String deviceId, String sensorId) onSensorTap;
   final VoidCallback? onDeviceAction;
+  final VoidCallback? onRetry;
 
   const _DeviceStatusCard({
     required this.device,
     required this.onSensorTap,
     this.onDeviceAction,
+    this.onRetry,
   });
 
   @override
@@ -2078,6 +2488,14 @@ class _DeviceStatusCard extends StatelessWidget {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+                if (onRetry != null) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    tooltip: 'Reintentar conexión',
+                    icon: const Icon(Icons.refresh_rounded, size: 20),
+                    onPressed: onRetry,
+                  ),
+                ],
                 if (onDeviceAction != null) ...[
                   const SizedBox(width: 8),
                   IconButton(
@@ -2093,7 +2511,41 @@ class _DeviceStatusCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            if (device.subtitle != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 2),
+                child: Text(
+                  device.subtitle!,
+                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                ),
+              ),
+            if (device.statusMessage != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 2),
+                child: Text(
+                  device.statusMessage!,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: device.connectionStatus ==
+                            DeviceConnectionStatus.error
+                        ? Colors.redAccent
+                        : Colors.orangeAccent,
+                  ),
+                ),
+              ),
+            if (device.note != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 32, top: 4),
+                child: Text(
+                  device.note!,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: Colors.white38,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ),
+            if (device.sensors.isNotEmpty) const SizedBox(height: 10),
             ...device.sensors.map(
               (sensor) => Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -2198,4 +2650,108 @@ class _StatusDot extends StatelessWidget {
       ),
     );
   }
+}
+/// A live Polar device of the session and the last seconds of each signal.
+class _LiveDevice {
+  DeviceConfiguration configuration;
+  final PolarBleService service = PolarBleService();
+  final VoidCallback onSamples;
+  final VoidCallback onStatusChanged;
+
+  // Windows of the live charts. The ECG strip is short so each beat is
+  // wide enough to read; heart rate and RR show the trend of two minutes.
+  final SignalBuffer hr = SignalBuffer(window: const Duration(minutes: 2), maxRateHz: 4);
+  final SignalBuffer rr = SignalBuffer(window: const Duration(minutes: 2), maxRateHz: 5);
+  final SignalBuffer ecg = SignalBuffer(window: const Duration(seconds: 6), maxRateHz: 140);
+  final SignalBuffer accX = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accY = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accZ = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer accVm = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+
+  final List<StreamSubscription<dynamic>> _subscriptions = [];
+
+  _LiveDevice(
+    this.configuration, {
+    required this.onSamples,
+    required this.onStatusChanged,
+  }) {
+    service.deviceType = configuration.type;
+    service.linkStatus.addListener(onStatusChanged);
+    _subscriptions.addAll([
+      service.hrStream.listen((bpm) {
+        if (bpm <= 0) return; // 0 = disconnected
+        hr.add(DateTime.now().toUtc(), bpm.toDouble());
+        onSamples();
+      }),
+      service.rrStream.listen((rrMs) {
+        rr.add(DateTime.now().toUtc(), rrMs.toDouble());
+        onSamples();
+      }),
+      // Every sample, with the sensor's own timestamps.
+      service.ecgStream.listen((sample) {
+        ecg.add(sample.timestamp, sample.microVolts.toDouble());
+        onSamples();
+      }),
+      service.accelerationStream.listen((sample) {
+        final t = sample.timestamp;
+        accX.add(t, sample.xMg);
+        accY.add(t, sample.yMg);
+        accZ.add(t, sample.zMg);
+        accVm.add(
+          t,
+          math.sqrt(sample.xMg * sample.xMg + sample.yMg * sample.yMg + sample.zMg * sample.zMg),
+        );
+        onSamples();
+      }),
+    ]);
+  }
+
+  /// Starts the signals of [configuration] one by one and returns those that
+  /// the device refused (e.g. ECG on a sensor without it).
+  Future<List<String>> startConfiguredSignals() async {
+    final failed = <String>[];
+    service.deviceType = configuration.type;
+    for (final (signal, start) in [
+      ('heart_rate', service.startHeartRate),
+      ('acc', service.startAcceleration),
+      ('ecg', service.startEcg),
+      ('ppg', service.startPpg),
+      ('ppi', service.startPpi),
+      ('gyro', service.startGyro),
+      ('mag', service.startMagnetometer),
+    ]) {
+      if (!configuration.hasSensor(signal)) continue;
+      try {
+        await start();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] ${configuration.deviceId}: $signal no iniciado: $e');
+        failed.add(signal == 'heart_rate' ? 'HR' : signal.toUpperCase());
+      }
+    }
+    for (final buffer in [hr, rr, ecg, accX, accY, accZ, accVm]) {
+      buffer.clear();
+    }
+    return failed;
+  }
+
+  void dispose() {
+    service.linkStatus.removeListener(onStatusChanged);
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    service.dispose();
+  }
+}
+
+/// A camera of the session.
+class _CameraDevice {
+  DeviceConfiguration configuration;
+  final VideoRecordingService service;
+  bool ready = false;
+
+  /// True while the camera is being reopened after an error or a retry.
+  bool recovering = false;
+
+  _CameraDevice(this.configuration)
+      : service = VideoRecordingService(cameraId: configuration.deviceId);
 }

@@ -1,0 +1,17 @@
+{
+  "protocol_id": "run4health_day0_example",
+  "protocol_version": "1",
+  "activities": [
+    { "name": "Tumbado en reposo", "compendium_code": "07011", "duration_seconds": 300 },
+    { "name": "Sentado en reposo", "compendium_code": "07021", "duration_seconds": 300 },
+    { "name": "De pie quieto", "compendium_code": "07040", "duration_seconds": 180 },
+    { "name": "Caminar en llano, ritmo moderado", "compendium_code": "17200", "duration_seconds": 240 },
+    { "name": "Trotar", "compendium_code": "12020", "duration_seconds": 240 }
+  ],
+  "offline_sensors": [
+    { "sensor_id": "ax3_wrist_nd", "device_name": "Axivity AX3", "placement": "non-dominant wrist", "timestamp_domain": "device_clock_local" },
+    { "sensor_id": "ax3_wrist_d", "device_name": "Axivity AX3", "placement": "dominant wrist", "timestamp_domain": "device_clock_local" },
+    { "sensor_id": "ax3_thigh", "device_name": "Axivity AX3", "placement": "right thigh", "timestamp_domain": "device_clock_local" },
+    { "sensor_id": "matrix_wrist_nd", "device_name": "Parmay Matrix", "placement": "non-dominant wrist", "timestamp_domain": "device_clock_utc" }
+  ]
+}

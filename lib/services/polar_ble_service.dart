@@ -1,10 +1,62 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import '../models/polar_hr_sample.dart';
 import '../models/device_configuration.dart';
+import 'pmd_clock.dart';
+
+/// Estado del enlace BLE con el sensor Polar, pensado para mostrarse en la UI.
+enum PolarLinkState {
+  disconnected,
+  connecting,
+  pairing,
+  configuring,
+  connected,
+  reconnecting,
+  error,
+}
+
+class PolarLinkStatus {
+  final PolarLinkState state;
+  final String message;
+
+  /// Número de intento durante una reconexión (0 si no aplica).
+  final int attempt;
+
+  const PolarLinkStatus(
+    this.state,
+    this.message, {
+    this.attempt = 0,
+  });
+
+  bool get isBusy =>
+      state == PolarLinkState.connecting ||
+      state == PolarLinkState.pairing ||
+      state == PolarLinkState.configuring ||
+      state == PolarLinkState.reconnecting;
+}
+
+/// Evento de conexión registrado para poder localizar huecos en los datos.
+class PolarConnectionEvent {
+  final DateTime timestamp;
+  final String event;
+  final String detail;
+
+  PolarConnectionEvent(
+    this.event, [
+    this.detail = '',
+  ]) : timestamp = DateTime.now().toUtc();
+
+  static const String csvHeader = 'timestamp_utc,event,detail';
+
+  String toCsvRow() {
+    final escapedDetail = detail.replaceAll('"', "'");
+    return '${timestamp.toIso8601String()},$event,"$escapedDetail"';
+  }
+}
 
 class PolarBleService {
   // ===========================================================================
@@ -73,23 +125,18 @@ class PolarBleService {
   // TIME CALIBRATION
   // ===========================================================================
   
-  // Diferencia calculada: (Host UTC Microseconds) - (Polar Timestamp Microseconds)
-  int? _sensorToHostEpochOffsetMicros;
+  /// Sensor clock to host clock, from every PMD frame (see [PmdClockMapper]).
+  final PmdClockMapper _clock = PmdClockMapper();
+
+  /// One row per PMD frame: arrival, sensor time of its last sample and the
+  /// offset in use, so SAVES can check or redo the mapping.
+  final List<PmdClockObservation> clockObservations = [];
 
   void _resetClockSync() {
-    _sensorToHostEpochOffsetMicros = null;
+    _clock.reset();
   }
 
-  DateTime _convertPmdTimestampToHostUtc(int timestampNs) {
-    final sampleMicrosFromPolar = timestampNs ~/ 1000;
-    final nowHostMicros = DateTime.now().toUtc().microsecondsSinceEpoch;
-
-    // Se calibra con el primer paquete recibido en la sesión
-    _sensorToHostEpochOffsetMicros ??= (nowHostMicros - sampleMicrosFromPolar);
-
-    final synchronizedMicros = sampleMicrosFromPolar + _sensorToHostEpochOffsetMicros!;
-    return DateTime.fromMicrosecondsSinceEpoch(synchronizedMicros, isUtc: true);
-  }
+  DateTime _convertPmdTimestampToHostUtc(int timestampNs) => _clock.toHostUtc(timestampNs);
 
   // ===========================================================================
   // ACC SETTINGS
@@ -117,6 +164,38 @@ class PolarBleService {
   // ===========================================================================
 
   static const int ecgSampleRateHz = 130;
+
+  // ===========================================================================
+  // VERITY SENSE STREAMS (PPG, PPI, GYRO, MAGNETOMETER)
+  // ===========================================================================
+
+  /// Rates asked to the Verity Sense when it offers them: its defaults
+  /// outside SDK mode are PPG 55 Hz and gyro 52 Hz at ±2000 dps; of the
+  /// 10-100 Hz the magnetometer offers (±50 gauss), 50 Hz.
+  static const int defaultPpgSampleRateHz = 55;
+  static const int defaultGyroSampleRateHz = 52;
+  static const int defaultMagSampleRateHz = 50;
+  static const int preferredGyroRangeDps = 2000;
+
+  /// Name of each PMD stream in the device configuration, the session files
+  /// (`polar_<name>_<device>_<stamp>.csv`) and the clock log.
+  static const Map<int, String> pmdStreamNames = {
+    pmdTypeEcg: 'ecg',
+    pmdTypeAcc: 'acc',
+    pmdTypePpg: 'ppg',
+    pmdTypePpi: 'ppi',
+    pmdTypeGyro: 'gyro',
+    pmdTypeMagnetometer: 'mag',
+  };
+
+  /// Sample rate and factor the sensor reported when each of those streams
+  /// started (ACC keeps [_accSampleRateHz] and [_accFactor]).
+  final Map<int, int> _pmdSampleRateHz = {};
+  final Map<int, double> _pmdFactor = {};
+
+  int get ppgSampleRateHz => _pmdSampleRateHz[pmdTypePpg] ?? defaultPpgSampleRateHz;
+  int get gyroSampleRateHz => _pmdSampleRateHz[pmdTypeGyro] ?? defaultGyroSampleRateHz;
+  int get magSampleRateHz => _pmdSampleRateHz[pmdTypeMagnetometer] ?? defaultMagSampleRateHz;
 
   // ===========================================================================
   // POLAR PSFTP / PFTP
@@ -171,6 +250,14 @@ class PolarBleService {
 
   final List<PolarEcgSample> recordedEcgSamples = [];
 
+  final List<PolarPpgSample> recordedPpgSamples = [];
+
+  final List<PolarPpiSample> recordedPpiSamples = [];
+
+  final List<PolarGyroSample> recordedGyroSamples = [];
+
+  final List<PolarMagSample> recordedMagSamples = [];
+
   int currentHeartRate = 0;
 
   List<int> currentRrIntervals = [];
@@ -197,13 +284,7 @@ class PolarBleService {
   Stream<PolarEcgSample> get ecgStream =>
       _ecgStreamController.stream;
 
-  final _ecgUiStreamController =
-      StreamController<PolarEcgSample>.broadcast();
 
-  Stream<PolarEcgSample> get ecgUiStream =>
-      _ecgUiStreamController.stream;
-
-  int _lastEcgUiEmitMillis = 0;
 
   // ===========================================================================
   // ACC
@@ -215,13 +296,27 @@ class PolarBleService {
   Stream<PolarAccelerationSample> get accelerationStream =>
       _accStreamController.stream;
 
-  final _accUiStreamController =
-      StreamController<PolarAccelerationSample>.broadcast();
+  // ===========================================================================
+  // PPG, PPI, GYRO, MAGNETOMETER (VERITY SENSE)
+  // ===========================================================================
 
-  Stream<PolarAccelerationSample> get accelerationUiStream =>
-      _accUiStreamController.stream;
+  final _ppgStreamController = StreamController<PolarPpgSample>.broadcast();
 
-  int _lastUiEmitMillis = 0;
+  Stream<PolarPpgSample> get ppgStream => _ppgStreamController.stream;
+
+  final _ppiStreamController = StreamController<PolarPpiSample>.broadcast();
+
+  Stream<PolarPpiSample> get ppiStream => _ppiStreamController.stream;
+
+  final _gyroStreamController = StreamController<PolarGyroSample>.broadcast();
+
+  Stream<PolarGyroSample> get gyroStream => _gyroStreamController.stream;
+
+  final _magStreamController = StreamController<PolarMagSample>.broadcast();
+
+  Stream<PolarMagSample> get magStream => _magStreamController.stream;
+
+
 
   // ===========================================================================
   // PROTOCOL CONTEXT FOR ACC / ECG
@@ -230,6 +325,14 @@ class PolarBleService {
   String currentParticipantId = '';
   int currentActivityIndex = 1;
   String currentPhaseName = 'idle';
+
+  /// Type of the device in the session (`polar_h10`, `verity_sense`), set by
+  /// the Research Monitor; it names the source of the heart rate in the files.
+  String deviceType = '';
+
+  /// Where the heart rate of [recordedSamples] comes from, see
+  /// [PolarHrSample.sourceFor].
+  String get hrSource => PolarHrSample.sourceFor(deviceType: deviceType, deviceName: _lastDeviceName);
 
   void updateProtocolContext({
     required String participantId,
@@ -257,6 +360,103 @@ class PolarBleService {
       _connectedDevice != null;
 
   // ===========================================================================
+  // LINK STATUS, RECONNECTION AND WATCHDOG
+  // ===========================================================================
+
+  final ValueNotifier<PolarLinkStatus> linkStatus = ValueNotifier(
+    const PolarLinkStatus(PolarLinkState.disconnected, 'Desconectado'),
+  );
+
+  final List<PolarConnectionEvent> connectionEvents = [];
+
+  /// Reintenta automáticamente cuando se pierde la conexión o dejan de
+  /// llegar datos.
+  bool autoReconnectEnabled = true;
+
+  /// Sin datos durante este tiempo con un flujo activo se considera pérdida
+  /// de recepción y se fuerza la reconexión.
+  static const Duration dataLossTimeout = Duration(seconds: 6);
+
+  static const List<Duration> _reconnectBackoff = [
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+  ];
+
+  BleDevice? _lastDevice;
+  String _lastDeviceName = 'Polar';
+
+  /// Sensores que estaban activos y deben reanudarse tras reconectar.
+  final Set<String> _sensorsToRestore = {};
+
+  /// Signals asked for since the user connected, even if they could not
+  /// start (ACC and ECG while Windows refuses PMD). A reconnection brings
+  /// them back too, so pairing the sensor afterwards starts the ACC.
+  final Set<String> _requestedSensors = {};
+
+  bool _userRequestedDisconnect = false;
+  bool _reconnectLoopRunning = false;
+  int _connectGeneration = 0;
+
+  Timer? _watchdogTimer;
+  DateTime? _lastHrDataAt;
+  DateTime? _lastPmdDataAt;
+
+  /// Tipos de medida PMD que anuncia el sensor (ECG, ACC, PPG...).
+  /// Vacío si no se pudo leer; en ese caso se intenta todo lo configurado.
+  Set<int> _supportedPmdTypes = {};
+
+  bool get hasLastDevice => _lastDevice != null;
+  String get lastDeviceName => _lastDeviceName;
+
+  bool get supportsEcg =>
+      _supportedPmdTypes.isEmpty ||
+      _supportedPmdTypes.contains(pmdTypeEcg);
+
+  bool get supportsAcc =>
+      _supportedPmdTypes.isEmpty ||
+      _supportedPmdTypes.contains(pmdTypeAcc);
+
+  bool _supportsPmd(int type) => _supportedPmdTypes.isEmpty || _supportedPmdTypes.contains(type);
+
+  bool get supportsPpg => _supportsPmd(pmdTypePpg);
+  bool get supportsPpi => _supportsPmd(pmdTypePpi);
+  bool get supportsGyro => _supportsPmd(pmdTypeGyro);
+  bool get supportsMagnetometer => _supportsPmd(pmdTypeMagnetometer);
+
+  void _setStatus(
+    PolarLinkState state,
+    String message, {
+    int attempt = 0,
+  }) {
+    debugPrint('[POLAR LINK] ${state.name}: $message');
+    linkStatus.value = PolarLinkStatus(state, message, attempt: attempt);
+  }
+
+  void _logEvent(String event, [String detail = '']) {
+    connectionEvents.add(PolarConnectionEvent(event, detail));
+  }
+
+  String exportConnectionEventsCsv() {
+    final buffer = StringBuffer()..writeln(PolarConnectionEvent.csvHeader);
+    for (final event in connectionEvents) {
+      buffer.writeln(event.toCsvRow());
+    }
+    return buffer.toString();
+  }
+
+  static String _displayName(BleDevice device) {
+    final name = device.name;
+    return name != null && name.isNotEmpty ? name : device.deviceId;
+  }
+
+  static bool get _isWindows =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
+
+  // ===========================================================================
   // STATE
   // ===========================================================================
 
@@ -271,6 +471,43 @@ class PolarBleService {
   bool get isRrStreaming => _rrStreaming;
   bool get isEcgStreaming => _ecgStreaming;
   bool get isAccelerationStreaming => _accStreaming;
+
+  bool _ppgStreaming = false;
+  bool _ppiStreaming = false;
+  bool _gyroStreaming = false;
+  bool _magStreaming = false;
+
+  bool get isPpgStreaming => _ppgStreaming;
+  bool get isPpiStreaming => _ppiStreaming;
+  bool get isGyroStreaming => _gyroStreaming;
+  bool get isMagnetometerStreaming => _magStreaming;
+
+  /// Whether the stream [name] (`heart_rate`, `rr` or a [pmdStreamNames]
+  /// value) is running.
+  bool isStreaming(String name) => switch (name) {
+        'heart_rate' => _hrStreaming,
+        'rr' => _rrStreaming,
+        'acc' => _accStreaming,
+        'ecg' => _ecgStreaming,
+        'ppg' => _ppgStreaming,
+        'ppi' => _ppiStreaming,
+        'gyro' => _gyroStreaming,
+        'mag' => _magStreaming,
+        _ => false,
+      };
+
+  void _setStreaming(int type, bool value) {
+    switch (type) {
+      case pmdTypePpg:
+        _ppgStreaming = value;
+      case pmdTypePpi:
+        _ppiStreaming = value;
+      case pmdTypeGyro:
+        _gyroStreaming = value;
+      case pmdTypeMagnetometer:
+        _magStreaming = value;
+    }
+  }
 
   // ===========================================================================
   // PMD CONTROL POINT STATE
@@ -322,51 +559,43 @@ class PolarBleService {
   // CONSTRUCTOR
   // ===========================================================================
 
-  PolarBleService() {
+  // Several services can run at once (Polar H10 and Verity Sense), so each
+  // one listens to the connection state of its own device instead of the
+  // global UniversalBle callbacks, which keep only the last one set.
+  StreamSubscription<bool>? _connectionSubscription;
 
-    UniversalBle.onValueChange = (
-      deviceId,
-      characteristicId,
-      value,
-      timestamp,
-    ) {
+  void _watchConnection(BleDevice device) {
+    _connectionSubscription?.cancel();
+    _connectionSubscription =
+        UniversalBle.connectionStream(device.deviceId).listen((isConnected) {
       debugPrint(
-        '[BLE GLOBAL] device=$deviceId '
-        'characteristic=$characteristicId '
-        'bytes=${value.length} '
-        'timestamp=$timestamp',
+        '[BLE CONNECTION] device=${device.deviceId} '
+        'isConnected=$isConnected',
       );
-    };
-
-    UniversalBle.onConnectionChange = (
-      deviceId,
-      isConnected,
-      error,
-    ) {
-      debugPrint(
-        '[BLE CONNECTION] '
-        'device=$deviceId '
-        'isConnected=$isConnected '
-        'error=$error '
-        'currentDevice=${_connectedDevice?.deviceId}',
-      );
-
       if (!isConnected &&
-          deviceId == _connectedDevice?.deviceId) {
-        debugPrint(
-          '[BLE CONNECTION] → Ejecutando _handleUnexpectedDisconnect()',
-        );
-
+          !_establishing &&
+          !_tearingDown &&
+          device.deviceId == _connectedDevice?.deviceId) {
         _handleUnexpectedDisconnect();
       }
-    };
+    });
   }
+
+  /// Name advertised by the connected device (e.g. `Polar H10 ABCD1234`).
+  String? get connectedDeviceName => _connectedDevice?.name;
+
+  String? get connectedDeviceId => _connectedDevice?.deviceId;
+
+  /// ACC sampling rate in use (negotiated with the device when it started).
+  int get accSampleRateHz => _accSampleRateHz;
 
   // ===========================================================================
   // UNEXPECTED DISCONNECT
   // ===========================================================================
 
   void _handleUnexpectedDisconnect() {
+    final wasStreaming = _rememberActiveSensors();
+
     _connectedDevice = null;
 
     _hrCharacteristic = null;
@@ -394,6 +623,247 @@ class PolarBleService {
     if (!_hrStreamController.isClosed) {
       _hrStreamController.add(0);
     }
+
+    _logEvent('disconnected_unexpectedly', _lastDeviceName);
+    _scheduleReconnect(
+      reason: 'Conexión perdida',
+      restoreSensors: wasStreaming,
+    );
+  }
+
+  /// Guarda qué sensores estaban activos. Devuelve true si había alguno.
+  bool _rememberActiveSensors() {
+    if (_hrStreaming) _sensorsToRestore.add('heart_rate');
+    if (_accStreaming) _sensorsToRestore.add('acc');
+    if (_ecgStreaming) _sensorsToRestore.add('ecg');
+    for (final name in const ['ppg', 'ppi', 'gyro', 'mag']) {
+      if (isStreaming(name)) _sensorsToRestore.add(name);
+    }
+    _sensorsToRestore.addAll(_requestedSensors);
+    return _sensorsToRestore.isNotEmpty;
+  }
+
+  // ===========================================================================
+  // DATA-LOSS WATCHDOG
+  // ===========================================================================
+
+  void _startWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _checkDataFlow(),
+    );
+  }
+
+  void _stopWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+  }
+
+  void _checkDataFlow() {
+    if (_connectedDevice == null || linkStatus.value.isBusy) {
+      return;
+    }
+
+    final now = DateTime.now();
+    DateTime? lastData;
+    String stream;
+
+    Duration timeout;
+
+    if (_accStreaming || _ecgStreaming) {
+      lastData = _lastPmdDataAt;
+      stream = 'PMD (ACC/ECG)';
+      timeout = dataLossTimeout;
+    } else if (_hrStreaming) {
+      // HR puede pausarse si la banda pierde contacto con la piel, así que
+      // se da más margen antes de considerarlo una pérdida de conexión.
+      lastData = _lastHrDataAt;
+      stream = 'HR';
+      timeout = dataLossTimeout * 2.5;
+    } else {
+      return;
+    }
+
+    if (lastData == null || now.difference(lastData) < timeout) {
+      return;
+    }
+
+    debugPrint(
+      '[POLAR LINK] Sin datos de $stream desde '
+      '${now.difference(lastData).inSeconds} s; forzando reconexión.',
+    );
+
+    _logEvent(
+      'data_loss',
+      'Sin datos de $stream durante ${now.difference(lastData).inSeconds} s',
+    );
+
+    _rememberActiveSensors();
+    _stopWatchdog();
+
+    unawaited(() async {
+      await _teardownConnection();
+      _scheduleReconnect(
+        reason: 'Sin datos del sensor',
+        restoreSensors: true,
+      );
+    }());
+  }
+
+  // ===========================================================================
+  // RECONNECTION
+  // ===========================================================================
+
+  void _scheduleReconnect({
+    required String reason,
+    required bool restoreSensors,
+  }) {
+    if (_userRequestedDisconnect ||
+        !autoReconnectEnabled ||
+        _lastDevice == null) {
+      _setStatus(PolarLinkState.disconnected, reason);
+      return;
+    }
+
+    if (!restoreSensors) {
+      _sensorsToRestore.clear();
+    }
+
+    unawaited(_runReconnectLoop(reason));
+  }
+
+  /// Reintento manual desde la UI. Reanuda los sensores que estuvieran
+  /// activos o, si no había ninguno, los indicados en [configuration].
+  Future<bool> retryConnection({
+    DeviceConfiguration? configuration,
+  }) async {
+    final device = _lastDevice;
+    if (device == null) {
+      return false;
+    }
+
+    if (_sensorsToRestore.isEmpty && configuration != null) {
+      _sensorsToRestore.addAll(configuration.sensors);
+    }
+
+    _userRequestedDisconnect = false;
+    _logEvent('manual_retry', _lastDeviceName);
+
+    _rememberActiveSensors();
+    await _teardownConnection();
+
+    final ok = await _connectAndRestore(device, attempt: 1);
+
+    // Si ya hay un bucle automático en marcha, sigue él; si no, se arranca.
+    if (!ok && autoReconnectEnabled) {
+      unawaited(_runReconnectLoop('Reintento fallido'));
+    }
+
+    return ok;
+  }
+
+  Future<void> _runReconnectLoop(String reason) async {
+    if (_reconnectLoopRunning) {
+      return;
+    }
+
+    _reconnectLoopRunning = true;
+    final generation = ++_connectGeneration;
+
+    try {
+      var attempt = 0;
+
+      while (!_userRequestedDisconnect &&
+          autoReconnectEnabled &&
+          generation == _connectGeneration &&
+          _connectedDevice == null) {
+        final device = _lastDevice;
+        if (device == null) break;
+
+        final wait = _reconnectBackoff[
+            math.min(attempt, _reconnectBackoff.length - 1)];
+        attempt++;
+
+        _setStatus(
+          PolarLinkState.reconnecting,
+          '$reason. Reintentando en ${wait.inSeconds} s '
+          '(intento $attempt)...',
+          attempt: attempt,
+        );
+
+        await Future.delayed(wait);
+
+        if (_userRequestedDisconnect ||
+            generation != _connectGeneration ||
+            _connectedDevice != null) {
+          break;
+        }
+
+        _logEvent('reconnect_attempt', 'intento $attempt');
+
+        final ok = await _connectAndRestore(device, attempt: attempt);
+        if (ok) break;
+      }
+    } finally {
+      _reconnectLoopRunning = false;
+    }
+  }
+
+  bool _attemptInProgress = false;
+
+  Future<bool> _connectAndRestore(
+    BleDevice device, {
+    required int attempt,
+  }) async {
+    if (_attemptInProgress) {
+      return false;
+    }
+
+    _attemptInProgress = true;
+    try {
+      return await _connectAndRestoreInner(device, attempt: attempt);
+    } finally {
+      _attemptInProgress = false;
+    }
+  }
+
+  Future<bool> _connectAndRestoreInner(
+    BleDevice device, {
+    required int attempt,
+  }) async {
+    final ok = await _establishConnection(device, attempt: attempt);
+    if (!ok) {
+      return false;
+    }
+
+    final sensors = Set<String>.from(_sensorsToRestore);
+    if (sensors.isNotEmpty) {
+      _setStatus(
+        PolarLinkState.configuring,
+        'Reanudando sensores (${sensors.join(', ')})...',
+        attempt: attempt,
+      );
+
+      await startConfiguredSensors(
+        DeviceConfiguration(
+          deviceId: 'polar',
+          deviceName: _lastDeviceName,
+          sensors: sensors,
+        ),
+      );
+    }
+
+    // La conexión puede haberse vuelto a caer mientras se reanudaban.
+    if (_connectedDevice == null) {
+      return false;
+    }
+
+    _sensorsToRestore.clear();
+    _logEvent('reconnected', _lastDeviceName);
+    _setStatus(PolarLinkState.connected, 'Conectado a $_lastDeviceName');
+    _startWatchdog();
+    return true;
   }
 
   // ===========================================================================
@@ -431,112 +901,374 @@ class PolarBleService {
   // CONNECT
   // ===========================================================================
 
+  /// Conexión iniciada por el usuario desde el diálogo de búsqueda.
   Future<bool> connectToDevice(
     BleDevice device,
   ) async {
-    try {
-      if (_connectedDevice != null) {
-        await disconnect();
-      }
+    _userRequestedDisconnect = false;
+    _connectGeneration++;
+    _sensorsToRestore.clear();
+    _requestedSensors.clear();
+    _stopPairingWatch();
+    _stopWatchdog();
 
+    if (_connectedDevice != null) {
+      await _teardownConnection();
+    }
+
+    _lastDevice = device;
+    _lastDeviceName = _displayName(device);
+    _logEvent('connect_requested', _lastDeviceName);
+
+    final ok = await _establishConnection(device);
+
+    if (ok) {
+      _logEvent('connected', _lastDeviceName);
+      _setStatus(PolarLinkState.connected, 'Conectado a $_lastDeviceName');
+      _startWatchdog();
+    }
+
+    return ok;
+  }
+
+  /// Cancela una conexión en curso (por ejemplo, si se queda esperando al
+  /// emparejamiento de Windows).
+  Future<void> cancelConnection() async {
+    _connectGeneration++;
+    _userRequestedDisconnect = true;
+    _logEvent('connect_cancelled', _lastDeviceName);
+    await _teardownConnection();
+    final device = _lastDevice;
+    if (device != null) {
+      try {
+        await device.disconnect(timeout: const Duration(seconds: 5));
+      } catch (_) {}
+    }
+    _setStatus(PolarLinkState.disconnected, 'Conexión cancelada');
+  }
+
+  bool _establishing = false;
+
+  Future<bool> _establishConnection(
+    BleDevice device, {
+    int attempt = 0,
+  }) async {
+    final generation = _connectGeneration;
+    final name = _displayName(device);
+    var linkWasUp = false;
+    var clearedBond = false;
+
+    _establishing = true;
+
+    try {
       await stopScan();
 
-      await device.connect(
-        timeout: const Duration(seconds: 30),
-      );
+      for (var pass = 0; pass < 2; pass++) {
+        try {
+          _setStatus(
+            attempt > 0
+                ? PolarLinkState.reconnecting
+                : PolarLinkState.connecting,
+            'Conectando con $name...',
+            attempt: attempt,
+          );
 
-      _connectedDevice = device;
-
-      final services =
-          await device.discoverServices();
-
-      for (final service in services) {
-        for (final characteristic
-            in service.characteristics) {
-          final uuid =
-              characteristic.uuid.toLowerCase();
-
-          if (uuid == psftp51Uuid) {
-            _psftp51 = characteristic;
-          } else if (uuid == psftp52Uuid) {
-            _psftp52 = characteristic;
-          } else if (uuid == psftp53Uuid) {
-            _psftp53 = characteristic;
+          if (!await device.isConnected) {
+            await device.connect(
+              timeout: const Duration(seconds: 20),
+            );
           }
+
+          linkWasUp = true;
+
+          // Windows sigue descubriendo servicios justo después de conectar.
+          // No se empareja: la Verity Sense funciona sin emparejar, y el
+          // diálogo de emparejamiento de Windows 11 se queda bloqueado.
+          await Future.delayed(const Duration(milliseconds: 600));
+          _checkNotCancelled(generation);
+
+          _setStatus(
+            PolarLinkState.configuring,
+            'Configurando $name...',
+            attempt: attempt,
+          );
+
+          await _configureConnectedDevice(device);
+          _checkNotCancelled(generation);
+
+          return true;
+        } catch (e, stack) {
+          debugPrint('[POLAR DEBUG] Error conectando (pasada $pass): $e');
+          debugPrint('[POLAR DEBUG] $stack');
+
+          await _teardownConnection();
+          try {
+            await device.disconnect(timeout: const Duration(seconds: 5));
+          } catch (_) {}
+
+          if (e is _ConnectCancelled) {
+            return false;
+          }
+
+          // Segunda pasada solo en Windows, si llegó a conectar (el fallo fue
+          // al configurar, típico de falta de emparejamiento) y si aún no
+          // se ha intentado emparejar.
+          // "Requiere autenticación" en Windows suele venir de un
+          // emparejamiento a medias que quedó guardado. Se borra y se
+          // vuelve a intentar sin emparejar.
+          final authError = _isAuthenticationError(e);
+          if (pass == 0 && _isWindows && linkWasUp && authError) {
+            clearedBond = await _clearStaleBond(device, name);
+            continue;
+          }
+
+          _logEvent('connect_failed', '$e');
+          _setStatus(
+            PolarLinkState.error,
+            authError
+                ? 'Windows pide autenticación a $name'
+                    '${clearedBond ? ' tras borrar el emparejamiento' : ''}. '
+                    'Quítalo en Configuración > Bluetooth y dispositivos '
+                    '(Quitar dispositivo), cierra otras apps que lo usen y '
+                    'vuelve a pulsar Conectar.'
+                : 'No se pudo conectar con $name: ${_shortError(e)}',
+            attempt: attempt,
+          );
+          return false;
         }
       }
 
-      debugPrint(
-        '[PSFTP] FB005C51: '
-        '${_psftp51 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      debugPrint(
-        '[PSFTP] FB005C52: '
-        '${_psftp52 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      debugPrint(
-        '[PSFTP] FB005C53: '
-        '${_psftp53 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
-      );
-
-      if (_psftp51 != null) {
-        debugPrint(
-          '[PSFTP] 51 properties: '
-          '${_psftp51!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      if (_psftp52 != null) {
-        debugPrint(
-          '[PSFTP] 52 properties: '
-          '${_psftp52!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      if (_psftp53 != null) {
-        debugPrint(
-          '[PSFTP] 53 properties: '
-          '${_psftp53!.properties.map((p) => p.toString()).join(", ")}',
-        );
-      }
-
-      final state =
-          await device.connectionState;
-
-      if (state !=
-          BleConnectionState.connected) {
-        throw Exception(
-          'Dispositivo no conectado: $state',
-        );
-      }
-
-      // -----------------------------------------------------------------------
-      // HR
-      // -----------------------------------------------------------------------
-
-      await _prepareHeartRate(device);
-
-      // -----------------------------------------------------------------------
-      // PMD
-      // -----------------------------------------------------------------------
-
-      await _setupPmd(device);
-
-      return true;
-    } catch (e, stack) {
-      debugPrint(
-        '[POLAR DEBUG] Error conectando: $e',
-      );
-
-      debugPrint(
-        '[POLAR DEBUG] $stack',
-      );
-
-      await disconnect();
-
       return false;
+    } finally {
+      _establishing = false;
+    }
+  }
+
+  void _checkNotCancelled(int generation) {
+    if (generation != _connectGeneration) {
+      throw const _ConnectCancelled();
+    }
+  }
+
+  static bool _isAuthenticationError(Object e) {
+    final text = e.toString().toLowerCase();
+    return text.contains('autentic') ||
+        text.contains('authenticat') ||
+        text.contains('insufficient') ||
+        text.contains('cifrado') ||
+        text.contains('encrypt');
+  }
+
+  static String _shortError(Object e) {
+    final text = e.toString();
+    return text.length > 160 ? '${text.substring(0, 160)}...' : text;
+  }
+
+  /// Borra un emparejamiento guardado en Windows. Devuelve true si había
+  /// uno y se quitó.
+  Future<bool> _clearStaleBond(BleDevice device, String name) async {
+    _setStatus(
+      PolarLinkState.connecting,
+      'Borrando un emparejamiento antiguo de $name y reintentando...',
+    );
+    try {
+      final paired = await device.isPaired(
+        timeout: const Duration(seconds: 5),
+      );
+      if (paired != true) {
+        _logEvent('stale_bond_none', name);
+        return false;
+      }
+      await device.unpair(timeout: const Duration(seconds: 10));
+      _logEvent('stale_bond_removed', name);
+      await Future.delayed(const Duration(seconds: 1));
+      return true;
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] No se pudo borrar el emparejamiento: $e');
+      _logEvent('stale_bond_failed', '$e');
+      return false;
+    }
+  }
+
+  /// Repite una operación GATT que en Windows falla a menudo de forma
+  /// pasajera ("Connection already in progress"). Los errores de
+  /// autenticación no se repiten.
+  Future<T> _gattRetry<T>(
+    String label,
+    Future<T> Function() action, {
+    int tries = 4,
+  }) async {
+    Object? last;
+    for (var i = 1; i <= tries; i++) {
+      try {
+        return await action();
+      } catch (e) {
+        last = e;
+        if (_isAuthenticationError(e) || i == tries) rethrow;
+        debugPrint('[POLAR DEBUG] $label: intento $i/$tries fallido ($e)');
+        await Future.delayed(Duration(milliseconds: 500 * i));
+      }
+    }
+    throw last!;
+  }
+
+  Future<void> _configureConnectedDevice(BleDevice device) async {
+    _connectedDevice = device;
+    _watchConnection(device);
+
+    final services = await device.discoverServices(
+      timeout: const Duration(seconds: 15),
+    );
+
+    for (final service in services) {
+      for (final characteristic in service.characteristics) {
+        final uuid = characteristic.uuid.toLowerCase();
+
+        if (uuid == psftp51Uuid) {
+          _psftp51 = characteristic;
+        } else if (uuid == psftp52Uuid) {
+          _psftp52 = characteristic;
+        } else if (uuid == psftp53Uuid) {
+          _psftp53 = characteristic;
+        }
+      }
+    }
+
+    debugPrint(
+      '[PSFTP] FB005C51: '
+      '${_psftp51 != null ? "ENCONTRADA" : "NO ENCONTRADA"}, '
+      'FB005C52: '
+      '${_psftp52 != null ? "ENCONTRADA" : "NO ENCONTRADA"}, '
+      'FB005C53: '
+      '${_psftp53 != null ? "ENCONTRADA" : "NO ENCONTRADA"}',
+    );
+
+    final state = await device.connectionState;
+
+    if (state != BleConnectionState.connected) {
+      throw Exception(
+        'Dispositivo no conectado: $state',
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // HR
+    // -------------------------------------------------------------------------
+
+    await _prepareHeartRate(device);
+
+    // -------------------------------------------------------------------------
+    // PMD
+    // -------------------------------------------------------------------------
+
+    // If Windows refuses PMD (ACC, ECG) for lack of pairing, stay connected
+    // with heart rate only, as the web app does («Conectado (solo FC)»),
+    // instead of dropping the whole device.
+    pmdProblem = null;
+    try {
+      await _setupPmd(device);
+      await _readPmdFeatures();
+    } catch (e) {
+      if (!_isAuthenticationError(e)) rethrow;
+      debugPrint('[POLAR DEBUG] PMD pide autenticación; solo FC: $e');
+      _logEvent('pmd_needs_pairing', '$e');
+      try {
+        await _pmdDataSubscription?.cancel();
+        await _pmdControlSubscription?.cancel();
+      } catch (_) {}
+      _pmdDataSubscription = null;
+      _pmdControlSubscription = null;
+      _pmdControlPoint = null;
+      _pmdData = null;
+      pmdProblem = 'Windows no deja usar el acelerómetro ni el ECG sin '
+          'emparejar el sensor (solo FC). Si Windows pide «Permitir», '
+          'acéptalo: el acelerómetro se activará solo';
+      _startPairingWatch(device);
+    }
+  }
+
+  // While only heart rate works, watch whether Windows finishes pairing the
+  // sensor (the «Permitir» prompt) and then reconnect, which starts the ACC.
+  Timer? _pairingWatchTimer;
+
+  void _startPairingWatch(BleDevice device) {
+    _stopPairingWatch();
+    var ticks = 0;
+    _pairingWatchTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      ticks++;
+      if (ticks > 100 || _userRequestedDisconnect) {
+        _stopPairingWatch();
+        return;
+      }
+      if (_establishing || _attemptInProgress || _tearingDown) return;
+      if (_connectedDevice != null && hasPmd) {
+        _stopPairingWatch();
+        return;
+      }
+      bool? paired;
+      try {
+        paired = await device.isPaired(timeout: const Duration(seconds: 3));
+      } catch (_) {
+        return;
+      }
+      if (paired != true || _pairingWatchTimer == null) return;
+      _stopPairingWatch();
+      debugPrint('[POLAR DEBUG] Sensor emparejado: reconectando para el ACC');
+      _logEvent('paired_reconnect', _lastDeviceName);
+      try {
+        await retryConnection();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Reconexión tras emparejar fallida: $e');
+      }
+    });
+  }
+
+  void _stopPairingWatch() {
+    _pairingWatchTimer?.cancel();
+    _pairingWatchTimer = null;
+  }
+
+  /// PMD (ACC, ECG) is available on the connected device.
+  bool get hasPmd => _pmdControlPoint != null && _pmdData != null;
+
+  /// Why PMD (ACC, ECG) is not available on the connected device, or null.
+  String? pmdProblem;
+
+  // ===========================================================================
+  // PMD FEATURES
+  // ===========================================================================
+
+  /// Lee el Control Point PMD: el primer byte es 0x0F y los siguientes son
+  /// una máscara de bits con los tipos de medida soportados.
+  Future<void> _readPmdFeatures() async {
+    _supportedPmdTypes = {};
+
+    final controlPoint = _pmdControlPoint;
+    if (controlPoint == null) return;
+
+    try {
+      final data = await controlPoint.read(
+        timeout: const Duration(seconds: 10),
+      );
+
+      if (data.length >= 2 && data[0] == 0x0F) {
+        final features = <int>{};
+        for (var byteIndex = 1; byteIndex < data.length; byteIndex++) {
+          for (var bit = 0; bit < 8; bit++) {
+            if ((data[byteIndex] >> bit) & 0x01 == 1) {
+              features.add((byteIndex - 1) * 8 + bit);
+            }
+          }
+        }
+        _supportedPmdTypes = features;
+      }
+
+      debugPrint(
+        '[POLAR DEBUG] PMD features: ${_hex(data)} -> '
+        'tipos $_supportedPmdTypes',
+      );
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] No se pudieron leer las PMD features: $e');
     }
   }
 
@@ -551,7 +1283,7 @@ class PolarBleService {
         await device.getCharacteristic(
       hrMeasurementUuid,
       service: hrServiceUuid,
-      preferCached: false,
+      timeout: const Duration(seconds: 15),
     );
 
     _hrCharacteristic =
@@ -580,65 +1312,28 @@ class PolarBleService {
         await device.getCharacteristic(
       pmdControlPointUuid,
       service: pmdServiceUuid,
-      preferCached: false,
+      timeout: const Duration(seconds: 15),
     );
 
     _pmdData =
         await device.getCharacteristic(
       pmdDataUuid,
       service: pmdServiceUuid,
-      preferCached: false,
-    );
-
-    // -------------------------------------------------------------------------
-    // PMD DATA NOTIFICATIONS
-    // -------------------------------------------------------------------------
-
-    if (!_pmdData!
-        .notifications.isSupported) {
-      throw Exception(
-        'PMD Data no soporta notifications',
-      );
-    }
-
-    await _pmdDataSubscription?.cancel();
-
-    _pmdDataSubscription =
-        _pmdData!.onValueReceived.listen(
-      (value) {
-        debugPrint(
-          '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
-        );
-
-        _handlePmdData(value);
-      },
-      onError: (error, stack) {
-        debugPrint(
-          '[POLAR DEBUG] ERROR PMD DATA: $error',
-        );
-      },
-    );
-
-    debugPrint(
-      '[POLAR DEBUG] Suscribiendo PMD Data...',
-    );
-
-    await _pmdData!
-        .notifications
-        .subscribe();
-
-    debugPrint(
-      '[POLAR DEBUG] PMD Data SUSCRITO',
+      timeout: const Duration(seconds: 15),
     );
 
     // -------------------------------------------------------------------------
     // PMD CONTROL POINT INDICATIONS
     // -------------------------------------------------------------------------
 
-    if (!_pmdControlPoint!
-        .indications.isSupported) {
+    // Indications (H10) or notifications, whichever the device offers, as
+    // Web Bluetooth's startNotifications() does.
+    final controlUsesIndications =
+        _pmdControlPoint!.indications.isSupported;
+    if (!controlUsesIndications &&
+        !_pmdControlPoint!.notifications.isSupported) {
       throw Exception(
-        'PMD Control Point no soporta indications',
+        'PMD Control Point no admite indications ni notifications',
       );
     }
 
@@ -666,12 +1361,63 @@ class PolarBleService {
       '[POLAR DEBUG] Suscribiendo PMD Control indications...',
     );
 
-    await _pmdControlPoint!
-        .indications
-        .subscribe();
+    await _gattRetry(
+      'PMD Control',
+      () => controlUsesIndications
+          ? _pmdControlPoint!.indications
+              .subscribe(timeout: const Duration(seconds: 15))
+          : _pmdControlPoint!.notifications
+              .subscribe(timeout: const Duration(seconds: 15)),
+    );
 
     debugPrint(
       '[POLAR DEBUG] PMD Control indications SUSCRITAS',
+    );
+
+    // -------------------------------------------------------------------------
+    // PMD DATA NOTIFICATIONS
+    // -------------------------------------------------------------------------
+
+    if (!_pmdData!
+        .notifications.isSupported) {
+      throw Exception(
+        'PMD Data no soporta notifications',
+      );
+    }
+
+    await _pmdDataSubscription?.cancel();
+
+    _pmdDataSubscription =
+        _pmdData!.onValueReceived.listen(
+      (value) {
+        if (debugPmdFrames) {
+          debugPrint(
+            '[POLAR DEBUG] PMD CALLBACK RECIBIDO: ${value.length} bytes',
+          );
+        }
+
+        _handlePmdData(value);
+      },
+      onError: (error, stack) {
+        debugPrint(
+          '[POLAR DEBUG] ERROR PMD DATA: $error',
+        );
+      },
+    );
+
+    debugPrint(
+      '[POLAR DEBUG] Suscribiendo PMD Data...',
+    );
+
+    await _gattRetry(
+      'PMD Data',
+      () => _pmdData!
+          .notifications
+          .subscribe(timeout: const Duration(seconds: 15)),
+    );
+
+    debugPrint(
+      '[POLAR DEBUG] PMD Data SUSCRITO',
     );
   }
 
@@ -680,6 +1426,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startEcg() async {
+    _requestedSensors.add('ecg');
     if (_pmdControlPoint == null) {
       throw Exception(
         'PMD no está conectado',
@@ -719,11 +1466,7 @@ class PolarBleService {
     ]);
 
     final response =
-        await _sendPmdCommandAndWaitForResponse(
-      command,
-      expectedOpcode: pmdOpStartMeasurement,
-      expectedMeasurementType: pmdTypeEcg,
-    );
+        await _startMeasurement(command, pmdTypeEcg);
 
     if (!response.isSuccess) {
       throw Exception(
@@ -732,6 +1475,7 @@ class PolarBleService {
       );
     }
 
+    _lastPmdDataAt = DateTime.now();
     _ecgStreaming = true;
 
     debugPrint(
@@ -744,6 +1488,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startAcceleration() async {
+    _requestedSensors.add('acc');
     if (_pmdControlPoint == null) {
       throw Exception(
         'PMD no está conectado',
@@ -754,50 +1499,18 @@ class PolarBleService {
       return;
     }
 
-    // H10 ACC:
-    //
-    // measurement type = 0x02
-    // sample rate      = 200 Hz
-    // resolution       = 16 bit
-    // range            = 8 G
-    //
-    // Setting 0x00 = sample rate
-    // Setting 0x01 = resolution
-    // Setting 0x02 = range
-    //
-    // 200 Hz = C8 00
-    // 16 bit = 10 00
-    // 8 G    = 08 00
-
-    final command =
-        Uint8List.fromList([
-      0x02,
-      pmdTypeAcc,
-      0x00,
-      0x01,
-      0xC8,
-      0x00,
-      0x01,
-      0x01,
-      0x10,
-      0x00,
-      0x02,
-      0x01,
-      0x08,
-      0x00,
-    ]);
-
+    // The settings are asked to the device first (opcode 0x01), as the
+    // Polar SDK does: the H10 offers 25-200 Hz and ±2/4/8 G; the Verity Sense
+    // 52 Hz, ±8 G and 3 channels. Without an answer, the H10 settings are
+    // requested (200 Hz, 16 bit, ±8 G).
+    final command = await _accStartCommand();
     debugPrint(
       '[POLAR DEBUG] ACC START TX: '
       '${_hex(command)}',
     );
 
     final response =
-        await _sendPmdCommandAndWaitForResponse(
-      command,
-      expectedOpcode: pmdOpStartMeasurement,
-      expectedMeasurementType: pmdTypeAcc,
-    );
+        await _startMeasurement(command, pmdTypeAcc);
 
     debugPrint(
       '[POLAR DEBUG] ACC START RESPONSE PAYLOAD: '
@@ -821,6 +1534,7 @@ class PolarBleService {
 
     _resetPmdTimingState();
 
+    _lastPmdDataAt = DateTime.now();
     _accStreaming = true;
 
     debugPrint(
@@ -828,6 +1542,131 @@ class PolarBleService {
       'sampleRate=$_accSampleRateHz Hz; '
       'factor=$_accFactor',
     );
+  }
+
+  // ===========================================================================
+  // VERITY SENSE STREAMS: PPG, PPI, GYRO, MAGNETOMETER
+  // ===========================================================================
+
+  /// Raw PPG of the Verity Sense: three green channels and the ambient light
+  /// (22 bit, 55 Hz).
+  Future<void> startPpg() => _startPmdStream(pmdTypePpg, preferredRateHz: defaultPpgSampleRateHz);
+
+  /// Pulse-to-pulse intervals from Polar's PPI algorithm. The first batch
+  /// comes about 25 s after the start and, while it runs, the sensor updates
+  /// the heart rate of the HR service only every 5 s.
+  Future<void> startPpi() => _startPmdStream(pmdTypePpi);
+
+  Future<void> startGyro() => _startPmdStream(
+        pmdTypeGyro,
+        preferredRateHz: defaultGyroSampleRateHz,
+        preferredRange: preferredGyroRangeDps,
+      );
+
+  Future<void> startMagnetometer() =>
+      _startPmdStream(pmdTypeMagnetometer, preferredRateHz: defaultMagSampleRateHz);
+
+  Future<void> stopPpg() => _stopPmdStream(pmdTypePpg);
+  Future<void> stopPpi() => _stopPmdStream(pmdTypePpi);
+  Future<void> stopGyro() => _stopPmdStream(pmdTypeGyro);
+  Future<void> stopMagnetometer() => _stopPmdStream(pmdTypeMagnetometer);
+
+  /// Starts a PMD stream the way the Polar SDK does: the settings are asked
+  /// to the sensor and the start command is built from them
+  /// ([startCommandFor]); PPI has no settings. The rate and factor the
+  /// sensor answers with are kept for its frames.
+  Future<void> _startPmdStream(int type, {int? preferredRateHz, int? preferredRange}) async {
+    final name = pmdStreamNames[type]!;
+    _requestedSensors.add(name);
+    if (_pmdControlPoint == null) {
+      throw Exception('PMD no está conectado');
+    }
+    if (isStreaming(name)) return;
+
+    final Uint8List command;
+    var offeredRates = const <int>[];
+    if (type == pmdTypePpi) {
+      command = Uint8List.fromList([pmdOpStartMeasurement, pmdTypePpi]);
+    } else {
+      final options = await _settingsOffered(type);
+      offeredRates = options[pmdSettingSampleRate] ?? const [];
+      if (offeredRates.isEmpty) {
+        throw Exception('El sensor no ofrece ajustes de ${name.toUpperCase()}');
+      }
+      command = startCommandFor(type, options, preferredRateHz: preferredRateHz, preferredRange: preferredRange);
+    }
+    debugPrint('[POLAR DEBUG] ${name.toUpperCase()} START TX: ${_hex(command)}');
+
+    final response = await _startMeasurement(command, type);
+    if (!response.isSuccess) {
+      throw Exception('${name.toUpperCase()} START rechazado por PMD: ${response.errorCode}');
+    }
+    _updatePmdSettingsFromResponse(response.payload, measurementType: type);
+    if (offeredRates.isNotEmpty && type != pmdTypeAcc) {
+      // The start response echoes the settings; without them, the rate asked
+      // for is the one in force. Older Verity Sense firmware reports a PPG
+      // rate it does not sample at, and the timestamps need the real one.
+      final reported = _pmdSampleRateHz[type] ?? pickSetting(offeredRates, preferredRateHz);
+      final corrected = type == pmdTypePpg
+          ? correctedPpgRate(
+              offeredRates: offeredRates,
+              reportedRateHz: reported,
+              deviceName: _lastDeviceName,
+              deviceType: deviceType,
+            )
+          : null;
+      _pmdSampleRateHz[type] = corrected ?? reported;
+      if (corrected != null) {
+        _logEvent(
+          'ppg_rate_corrected',
+          'el sensor dice $reported Hz pero muestrea a $corrected Hz (problema conocido del firmware)',
+        );
+      }
+    }
+    _removePmdTimingKeys(measurementType: type);
+    _lastPmdDataAt = DateTime.now();
+    _setStreaming(type, true);
+    debugPrint(
+      '[POLAR DEBUG] ${name.toUpperCase()} START aceptado por PMD; '
+      'sampleRate=${_pmdSampleRateHz[type]} Hz; factor=${_pmdFactor[type]}',
+    );
+  }
+
+  Future<void> _stopPmdStream(int type) async {
+    final name = pmdStreamNames[type]!;
+    if (_pmdControlPoint == null || !isStreaming(name)) return;
+    try {
+      final response = await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpStopMeasurement, type]),
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: type,
+      );
+      if (!response.isSuccess) {
+        debugPrint('[POLAR DEBUG] ${name.toUpperCase()} STOP rechazado: ${response.errorCode}');
+      }
+    } finally {
+      _setStreaming(type, false);
+      _removePmdTimingKeys(measurementType: type);
+    }
+  }
+
+  /// Settings the sensor offers for [type] (empty when it answers nothing).
+  Future<Map<int, List<int>>> _settingsOffered(int type) async {
+    try {
+      final response = await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpGetMeasurementSettings, type]),
+        expectedOpcode: pmdOpGetMeasurementSettings,
+        expectedMeasurementType: type,
+      );
+      if (response.isSuccess) {
+        final options = parsePmdSettingOptions(_pmdParameters(response.payload));
+        debugPrint('[POLAR DEBUG] ${pmdStreamNames[type]} settings offered: $options');
+        return options;
+      }
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] ${pmdStreamNames[type]} settings not available: $e');
+    }
+    return const {};
   }
 
   // ===========================================================================
@@ -935,6 +1774,7 @@ class PolarBleService {
     final completer =
         Completer<_PmdControlResponse>();
 
+    _pendingPmdParameters.clear();
     _pendingPmdResponse = completer;
 
     try {
@@ -1031,9 +1871,66 @@ class PolarBleService {
       );
     }
 
+    // A long answer (e.g. the settings of a Verity Sense) can come in several
+    // parts: while the "more" byte is set, keep the parameters and wait for
+    // the next one (as the Polar SDK and the web app do).
+    if (response.errorCode == 0 && response.payload.isNotEmpty) {
+      _pendingPmdParameters.addAll(_pmdParameters(response.payload));
+      if (response.payload[0] != 0) return;
+      final parameters = Uint8List.fromList(_pendingPmdParameters);
+      _pendingPmdParameters.clear();
+      _completePendingPmdResponse(
+        response: _PmdControlResponse(
+          raw: response.raw,
+          opcode: response.opcode,
+          measurementType: response.measurementType,
+          errorCode: 0,
+          payload: Uint8List.fromList([0, ...parameters]),
+        ),
+      );
+      return;
+    }
+    _pendingPmdParameters.clear();
+
     _completePendingPmdResponse(
       response: response,
     );
+  }
+
+  final List<int> _pendingPmdParameters = [];
+
+  /// Error code of a PMD start rejected because the measurement was already
+  /// running (e.g. left on by another app).
+  static const int pmdErrorAlreadyInState = 6;
+
+  /// Sends a start command; if the sensor says the measurement is already
+  /// running, stops it and starts it again with these settings.
+  Future<_PmdControlResponse> _startMeasurement(
+    Uint8List command,
+    int measurementType,
+  ) async {
+    var response = await _sendPmdCommandAndWaitForResponse(
+      command,
+      expectedOpcode: pmdOpStartMeasurement,
+      expectedMeasurementType: measurementType,
+    );
+    if (response.errorCode == pmdErrorAlreadyInState) {
+      debugPrint(
+        '[POLAR DEBUG] Medida 0x${measurementType.toRadixString(16)} ya '
+        'activa: se para y se vuelve a iniciar.',
+      );
+      await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpStopMeasurement, measurementType]),
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: measurementType,
+      );
+      response = await _sendPmdCommandAndWaitForResponse(
+        command,
+        expectedOpcode: pmdOpStartMeasurement,
+        expectedMeasurementType: measurementType,
+      );
+    }
+    return response;
   }
 
   _PmdControlResponse?
@@ -1102,36 +1999,32 @@ class PolarBleService {
 
     try {
       final settings =
-          _parsePmdSettings(payload);
+          _parsePmdSettings(_pmdParameters(payload));
 
-      final sampleRate =
-          settings[pmdSettingSampleRate];
-
-      if (sampleRate != null) {
-        if (measurementType == pmdTypeAcc &&
-            sampleRate > 0) {
-          _accSampleRateHz =
-              sampleRate;
-
-          debugPrint(
-            '[POLAR DEBUG] PMD ACC sample rate '
-            'reported by sensor: '
-            '$_accSampleRateHz Hz',
-          );
+      final sampleRate = settings[pmdSettingSampleRate];
+      if (sampleRate != null && sampleRate > 0) {
+        if (measurementType == pmdTypeAcc) {
+          _accSampleRateHz = sampleRate;
+        } else {
+          _pmdSampleRateHz[measurementType] = sampleRate;
         }
+        debugPrint(
+          '[POLAR DEBUG] PMD ${pmdStreamNames[measurementType]} sample rate '
+          'reported by sensor: $sampleRate Hz',
+        );
       }
 
-      final factor =
-          settings[pmdSettingFactor];
-
+      final factor = settings[pmdSettingFactor];
       if (factor != null) {
-        _accFactor =
-            _uint32ToDouble(factor);
-
+        final value = _uint32ToDouble(factor);
+        if (measurementType == pmdTypeAcc) {
+          _accFactor = value;
+        } else {
+          _pmdFactor[measurementType] = value;
+        }
         debugPrint(
-          '[POLAR DEBUG] PMD ACC factor '
-          'reported by sensor: '
-          '$_accFactor',
+          '[POLAR DEBUG] PMD ${pmdStreamNames[measurementType]} factor '
+          'reported by sensor: $value',
         );
       }
     } catch (e) {
@@ -1140,6 +2033,126 @@ class PolarBleService {
         'from response: $e',
       );
     }
+  }
+
+  // ===========================================================================
+  // ACC SETTINGS NEGOTIATION
+  // ===========================================================================
+
+  /// Parameters of a PMD control-point response. The first payload byte
+  /// (after the error code) is the "more" flag, not a setting
+  /// (PmdControlPointResponse in the Polar BLE SDK).
+  static Uint8List _pmdParameters(Uint8List payload) =>
+      payload.length > 1 ? Uint8List.sublistView(payload, 1) : Uint8List(0);
+
+  /// Every value offered for each setting type.
+  static Map<int, List<int>> parsePmdSettingOptions(Uint8List data) {
+    final result = <int, List<int>>{};
+    var offset = 0;
+    while (offset + 2 <= data.length) {
+      final settingType = data[offset];
+      final count = data[offset + 1];
+      offset += 2;
+      final fieldSize = _pmdSettingFieldSize(settingType);
+      if (fieldSize <= 0) break;
+      for (var i = 0; i < count; i++) {
+        if (offset + fieldSize > data.length) {
+          throw StateError('Truncated PMD setting type=$settingType');
+        }
+        var value = 0;
+        for (var b = 0; b < fieldSize; b++) {
+          value |= data[offset + b] << (8 * b);
+        }
+        result.putIfAbsent(settingType, () => []).add(value);
+        offset += fieldSize;
+      }
+    }
+    return result;
+  }
+
+  /// Start command for ACC from the offered settings: [preferredRateHz] if
+  /// offered (else the highest rate), the highest resolution, ±8 G if
+  /// offered (else the highest range) and the most channels.
+  static Uint8List accStartCommandFor(
+    Map<int, List<int>> options, {
+    int preferredRateHz = defaultAccSampleRateHz,
+    int preferredRangeG = 8,
+  }) =>
+      startCommandFor(pmdTypeAcc, options, preferredRateHz: preferredRateHz, preferredRange: preferredRangeG);
+
+  /// Start command for a PMD stream from the settings the sensor offers: the
+  /// preferred rate and range when offered (else the highest), the highest
+  /// resolution and the most channels, as the Polar SDK's `maxSettings`.
+  /// The value asked to the sensor among the [values] it offers: [preferred]
+  /// when offered, otherwise the highest.
+  static int pickSetting(List<int> values, int? preferred) =>
+      preferred != null && values.contains(preferred)
+          ? preferred
+          : values.reduce((a, b) => a > b ? a : b);
+
+  /// Polar's known PPG issue (polar-ble-sdk, KnownIssues.md): in normal mode
+  /// the Verity Sense with firmware 1.1.5 to 2.1.0 offers a single PPG rate,
+  /// 135 Hz, but samples at 55 Hz; the OH1 offers 130 Hz but samples at
+  /// 135 Hz. The sample timestamps need the real rate, so this returns it, or
+  /// null when the sensor is right. Several offered rates mean SDK mode,
+  /// where the sensor reports them correctly.
+  static int? correctedPpgRate({
+    required List<int> offeredRates,
+    required int reportedRateHz,
+    String deviceName = '',
+    String deviceType = '',
+  }) {
+    if (offeredRates.length != 1) return null;
+    final name = deviceName.toLowerCase();
+    if (name.contains('oh1')) return reportedRateHz == 130 ? 135 : null;
+    final verity = deviceType == 'verity_sense' || name.contains('sense');
+    if (verity && reportedRateHz == 135) return 55;
+    return null;
+  }
+
+  static Uint8List startCommandFor(
+    int type,
+    Map<int, List<int>> options, {
+    int? preferredRateHz,
+    int? preferredRange,
+  }) {
+    final bytes = <int>[pmdOpStartMeasurement, type];
+    void add(int settingType, int value) {
+      final size = _pmdSettingFieldSize(settingType);
+      bytes..add(settingType)..add(1);
+      for (var b = 0; b < size; b++) {
+        bytes.add((value >> (8 * b)) & 0xFF);
+      }
+    }
+
+    for (final (settingType, preferred) in [
+      (pmdSettingSampleRate, preferredRateHz),
+      (pmdSettingResolution, null),
+      (pmdSettingRange, preferredRange),
+      (pmdSettingRangeMilliUnit, null),
+      (pmdSettingChannels, null),
+    ]) {
+      final values = options[settingType];
+      if (values != null && values.isNotEmpty) {
+        add(settingType, pickSetting(values, preferred));
+      }
+    }
+    return Uint8List.fromList(bytes);
+  }
+
+  static final Uint8List _h10AccStartCommand = Uint8List.fromList([
+    0x02, pmdTypeAcc, //
+    0x00, 0x01, 0xC8, 0x00, // 200 Hz
+    0x01, 0x01, 0x10, 0x00, // 16 bit
+    0x02, 0x01, 0x08, 0x00, // 8 G
+  ]);
+
+  Future<Uint8List> _accStartCommand() async {
+    final options = await _settingsOffered(pmdTypeAcc);
+    if (options[pmdSettingSampleRate]?.isNotEmpty == true) {
+      return accStartCommandFor(options);
+    }
+    return _h10AccStartCommand;
   }
 
   // ===========================================================================
@@ -1268,9 +2281,29 @@ class PolarBleService {
       );
     }
 
+    _lastPmdDataAt = DateTime.now();
+
     // PMD measurement type occupies the lower 6 bits.
     final measurementType =
         data[0] & 0x3F;
+
+    // Bytes 1..8: sensor time of the last sample of the frame. PPI frames
+    // are held back by the sensor for tens of seconds, so they say nothing
+    // about the clocks; a frame without a time (0) neither.
+    if (data.length >= 10 &&
+        measurementType != pmdTypePpi &&
+        pmdStreamNames.containsKey(measurementType) &&
+        _readUint64LittleEndian(data, 1) != 0) {
+      final arrival = DateTime.now().toUtc().microsecondsSinceEpoch;
+      final frameNs = _readUint64LittleEndian(data, 1);
+      _clock.observe(arrivalHostMicros: arrival, lastSampleSensorMicros: frameNs ~/ 1000);
+      clockObservations.add(PmdClockObservation(
+        measurementType: measurementType,
+        arrivalHostMicros: arrival,
+        frameSensorNs: frameNs,
+        offsetMicros: _clock.offsetMicros ?? 0,
+      ));
+    }
 
     switch (measurementType) {
       case pmdTypeEcg:
@@ -1281,8 +2314,238 @@ class PolarBleService {
         _parseAccelerationFrame(data);
         break;
 
+      case pmdTypePpg:
+        _parsePpgFrame(data);
+        break;
+
+      case pmdTypePpi:
+        _parsePpiFrame(data);
+        break;
+
+      case pmdTypeGyro:
+      case pmdTypeMagnetometer:
+        _parseThreeAxisFrame(measurementType, data);
+        break;
+
       default:
         break;
+    }
+  }
+
+  // ===========================================================================
+  // PPG, PPI, GYRO AND MAGNETOMETER FRAMES (VERITY SENSE)
+  // ===========================================================================
+
+  /// Sensor time of every sample of a frame whose last sample is at
+  /// [timestampNs], as [_buildPmdTimestamps] does for ACC and ECG.
+  List<int> _frameTimestamps({
+    required int measurementType,
+    required bool compressed,
+    required int frameType,
+    required int timestampNs,
+    required int sampleCount,
+    required int sampleRateHz,
+  }) {
+    final key = _pmdTimestampKey(
+      measurementType: measurementType,
+      compressed: compressed,
+      frameType: frameType,
+    );
+    final timestamps = _buildPmdTimestamps(
+      timestampNs: timestampNs,
+      previousTimestampNs: _lastPmdFrameTimestampNs[key],
+      sampleCount: sampleCount,
+      sampleRateHz: sampleRateHz,
+    );
+    _lastPmdFrameTimestampNs[key] = timestampNs;
+    return timestamps;
+  }
+
+  /// PPG frame type 0 of the Verity Sense: four channels (three green PPG
+  /// and the ambient light) of 22 bits, raw (3 bytes each) or delta coded,
+  /// as PpgData in the Polar BLE SDK.
+  void _parsePpgFrame(Uint8List data) {
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (frameType != 0) {
+      debugPrint('[POLAR DEBUG] PPG frame type no soportado: $frameType');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    const channels = 4;
+    final List<List<int>> samples;
+    if (compressed) {
+      samples = _parsePolarDeltaFramesToSamples(content, channels: channels, resolution: 22);
+    } else {
+      const bytesPerSample = 3 * channels;
+      if (content.isEmpty || content.length % bytesPerSample != 0) {
+        debugPrint('[POLAR DEBUG] PPG raw payload inválido: ${content.length} bytes');
+        return;
+      }
+      samples = [
+        for (var offset = 0; offset < content.length; offset += bytesPerSample)
+          [for (var c = 0; c < channels; c++) _readSigned24LittleEndian(content, offset + 3 * c)],
+      ];
+    }
+    if (samples.isEmpty) return;
+    final timestamps = _frameTimestamps(
+      measurementType: pmdTypePpg,
+      compressed: compressed,
+      frameType: frameType,
+      timestampNs: timestampNs,
+      sampleCount: samples.length,
+      sampleRateHz: ppgSampleRateHz,
+    );
+    final factor = _pmdFactor[pmdTypePpg] ?? 1.0;
+    int scaled(int raw) => factor == 1.0 ? raw : (raw * factor).round();
+    for (var i = 0; i < samples.length; i++) {
+      final s = samples[i];
+      final sample = PolarPpgSample(
+        timestamp: _convertPmdTimestampToHostUtc(timestamps[i]),
+        participantId: currentParticipantId,
+        activityIndex: currentActivityIndex,
+        phaseName: currentPhaseName,
+        ppg0: scaled(s[0]),
+        ppg1: scaled(s[1]),
+        ppg2: scaled(s[2]),
+        ambient: scaled(s[3]),
+        sensorTimeNs: timestamps[i],
+      );
+      recordedPpgSamples.add(sample);
+      if (!_ppgStreamController.isClosed) _ppgStreamController.add(sample);
+    }
+  }
+
+  /// Gyroscope and magnetometer frames, always delta coded. Type 0 carries
+  /// three 16-bit axes times the factor the sensor reported (degrees per
+  /// second, gauss); type 1 three float32 axes (gyro) or four 16-bit values
+  /// in milligauss plus the calibration status (magnetometer), as GyrData
+  /// and MagData in the Polar BLE SDK.
+  void _parseThreeAxisFrame(int measurementType, Uint8List data) {
+    final name = pmdStreamNames[measurementType]!.toUpperCase();
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (!compressed || frameType > 1) {
+      debugPrint('[POLAR DEBUG] $name frame ${compressed ? 'delta' : 'raw'} type $frameType no soportado');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    final isMag = measurementType == pmdTypeMagnetometer;
+    final channels = frameType == 1 && isMag ? 4 : 3;
+    final resolution = frameType == 1 && !isMag ? 32 : 16;
+    final samples = _parsePolarDeltaFramesToSamples(content, channels: channels, resolution: resolution);
+    if (samples.isEmpty) return;
+    final timestamps = _frameTimestamps(
+      measurementType: measurementType,
+      compressed: true,
+      frameType: frameType,
+      timestampNs: timestampNs,
+      sampleCount: samples.length,
+      sampleRateHz: isMag ? magSampleRateHz : gyroSampleRateHz,
+    );
+    final factor = _pmdFactor[measurementType] ?? 1.0;
+    double value(int raw) {
+      final base = resolution == 32 ? _int32BitsToFloat(raw) : raw.toDouble();
+      final scaled = factor != 1.0 ? base * factor : base;
+      return frameType == 1 && isMag ? scaled / 1000.0 : scaled;
+    }
+
+    for (var i = 0; i < samples.length; i++) {
+      final s = samples[i];
+      final t = _convertPmdTimestampToHostUtc(timestamps[i]);
+      if (isMag) {
+        final sample = PolarMagSample(
+          timestamp: t,
+          participantId: currentParticipantId,
+          activityIndex: currentActivityIndex,
+          phaseName: currentPhaseName,
+          xGauss: value(s[0]),
+          yGauss: value(s[1]),
+          zGauss: value(s[2]),
+          sensorTimeNs: timestamps[i],
+        );
+        recordedMagSamples.add(sample);
+        if (!_magStreamController.isClosed) _magStreamController.add(sample);
+      } else {
+        final sample = PolarGyroSample(
+          timestamp: t,
+          participantId: currentParticipantId,
+          activityIndex: currentActivityIndex,
+          phaseName: currentPhaseName,
+          xDps: value(s[0]),
+          yDps: value(s[1]),
+          zDps: value(s[2]),
+          sensorTimeNs: timestamps[i],
+        );
+        recordedGyroSamples.add(sample);
+        if (!_gyroStreamController.isClosed) _gyroStreamController.add(sample);
+      }
+    }
+  }
+
+  static double _int32BitsToFloat(int bits) =>
+      (ByteData(4)..setInt32(0, bits, Endian.little)).getFloat32(0, Endian.little);
+
+  /// PPI frame type 0 (Verity Sense): 6 bytes per pulse (heart rate, interval
+  /// in ms, error estimate in ms, flags). The sensor sends them in batches;
+  /// when the frame carries a sensor time it is that of the last pulse and
+  /// the earlier ones are placed back by their intervals (PpiData in the
+  /// Polar BLE SDK); otherwise the pulses share the arrival time of the
+  /// batch and [PolarPpiSample.indexInFrame] orders them. The activity and
+  /// phase of the rows are those at the arrival.
+  void _parsePpiFrame(Uint8List data) {
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (compressed || frameType != 0) {
+      debugPrint('[POLAR DEBUG] PPI frame type no soportado: $frameType');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    const bytesPerSample = 6;
+    if (content.isEmpty || content.length % bytesPerSample != 0) {
+      debugPrint('[POLAR DEBUG] PPI payload inválido: ${content.length} bytes');
+      return;
+    }
+    final count = content.length ~/ bytesPerSample;
+    final arrival = DateTime.now().toUtc();
+    final intervals = [
+      for (var i = 0; i < count; i++)
+        content[i * bytesPerSample + 1] | (content[i * bytesPerSample + 2] << 8),
+    ];
+    final sensorTimes = List<int?>.filled(count, null);
+    if (timestampNs != 0) {
+      var t = timestampNs;
+      for (var i = count - 1; i >= 0; i--) {
+        sensorTimes[i] = t;
+        t -= intervals[i] * 1000000;
+      }
+    }
+    for (var i = 0; i < count; i++) {
+      final o = i * bytesPerSample;
+      final flags = content[o + 5];
+      final sensorTime = sensorTimes[i];
+      final sample = PolarPpiSample(
+        timestamp: sensorTime == null ? arrival : _convertPmdTimestampToHostUtc(sensorTime),
+        participantId: currentParticipantId,
+        activityIndex: currentActivityIndex,
+        phaseName: currentPhaseName,
+        ppiMs: intervals[i],
+        heartRateBpm: content[o],
+        errorEstimateMs: content[o + 3] | (content[o + 4] << 8),
+        blocker: flags & 0x01 != 0,
+        skinContact: flags & 0x02 != 0,
+        skinContactSupported: flags & 0x04 != 0,
+        indexInFrame: i,
+        sensorTimeNs: sensorTime,
+      );
+      recordedPpiSamples.add(sample);
+      if (!_ppiStreamController.isClosed) _ppiStreamController.add(sample);
     }
   }
 
@@ -1410,6 +2673,8 @@ class PolarBleService {
             currentPhaseName,
         microVolts:
             rawUv,
+        sensorTimeNs:
+            timestamps[i],
       );
 
       recordedEcgSamples.add(
@@ -1422,22 +2687,6 @@ class PolarBleService {
         );
       }
 
-      final nowMs =
-          DateTime.now()
-              .millisecondsSinceEpoch;
-
-      if (nowMs -
-              _lastEcgUiEmitMillis >=
-          100) {
-        _lastEcgUiEmitMillis =
-            nowMs;
-
-        if (!_ecgUiStreamController
-            .isClosed) {
-          _ecgUiStreamController
-              .add(sample);
-        }
-      }
 
       offset +=
           bytesPerSample;
@@ -2401,6 +3650,7 @@ class PolarBleService {
       xMg: xMg,
       yMg: yMg,
       zMg: zMg,
+      sensorTimeNs: sampleNs,
     );
 
     recordedAccelerationSamples.add(
@@ -2413,23 +3663,6 @@ class PolarBleService {
       );
     }
 
-    final nowMs =
-        DateTime.now()
-            .millisecondsSinceEpoch;
-
-    if (nowMs -
-            _lastUiEmitMillis >=
-        100) {
-      _lastUiEmitMillis =
-          nowMs;
-
-      if (!_accUiStreamController
-          .isClosed) {
-        _accUiStreamController.add(
-          sample,
-        );
-      }
-    }
   }
 
   // ===========================================================================
@@ -2437,6 +3670,7 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> startHeartRate() async {
+    _requestedSensors.add('heart_rate');
     final characteristic = _hrCharacteristic;
 
     if (characteristic == null) {
@@ -2461,6 +3695,7 @@ class PolarBleService {
           '[POLAR DEBUG] HR CALLBACK RECIBIDO: ${value.length} bytes',
         );
 
+        _lastHrDataAt = DateTime.now();
         _parseHeartRateData(value);
 
         // Confirmamos que HR ya está recibiendo datos reales.
@@ -2476,8 +3711,14 @@ class PolarBleService {
       );
     }
 
-    await characteristic.notifications.subscribe();
+    await _gattRetry(
+      'HR',
+      () => characteristic.notifications.subscribe(
+        timeout: const Duration(seconds: 15),
+      ),
+    );
 
+    _lastHrDataAt = DateTime.now();
     _hrStreaming = true;
     _rrStreaming = true;
 
@@ -2592,6 +3833,22 @@ class PolarBleService {
       currentRrIntervals =
           rrList;
 
+      // One row per notification keeps every RR interval (a row per second
+      // taken from the last value lost the RR of skipped notifications).
+      if (bpm > 0 || rrList.isNotEmpty) {
+        recordedSamples.add(
+          PolarHrSample(
+            timestamp: DateTime.now().toUtc(),
+            participantId: currentParticipantId,
+            activityIndex: currentActivityIndex,
+            phaseName: currentPhaseName,
+            heartRateBpm: bpm,
+            rrIntervalsMs: rrList,
+            hrSource: hrSource,
+          ),
+        );
+      }
+
       if (!_hrStreamController.isClosed) {
         _hrStreamController.add(
           bpm,
@@ -2615,40 +3872,6 @@ class PolarBleService {
         '[POLAR DEBUG] $stack',
       );
     }
-  }
-
-  // ===========================================================================
-  // CAPTURE HR SAMPLE
-  // ===========================================================================
-
-  void captureSample({
-    required String participantId,
-    required int activityIndex,
-    required String phaseName,
-  }) {
-    if (!isConnected ||
-        currentHeartRate == 0) {
-      return;
-    }
-
-    recordedSamples.add(
-      PolarHrSample(
-        timestamp:
-            DateTime.now().toUtc(),
-        participantId:
-            participantId,
-        activityIndex:
-            activityIndex,
-        phaseName:
-            phaseName,
-        heartRateBpm:
-            currentHeartRate,
-        rrIntervalsMs:
-            List.from(
-          currentRrIntervals,
-        ),
-      ),
-    );
   }
 
   // ===========================================================================
@@ -2738,7 +3961,35 @@ class PolarBleService {
   // DISCONNECT
   // ===========================================================================
 
+  /// Desconexión pedida por el usuario: no se reintenta automáticamente.
   Future<void> disconnect() async {
+    _userRequestedDisconnect = true;
+    _connectGeneration++;
+    _sensorsToRestore.clear();
+    _requestedSensors.clear();
+    _stopPairingWatch();
+    _stopWatchdog();
+
+    if (_connectedDevice != null) {
+      _logEvent('disconnected_by_user', _lastDeviceName);
+    }
+
+    await _teardownConnection();
+    _setStatus(PolarLinkState.disconnected, 'Desconectado');
+  }
+
+  bool _tearingDown = false;
+
+  Future<void> _teardownConnection() async {
+    _tearingDown = true;
+    try {
+      await _teardownConnectionInner();
+    } finally {
+      _tearingDown = false;
+    }
+  }
+
+  Future<void> _teardownConnectionInner() async {
     final device =
         _connectedDevice;
 
@@ -2779,6 +4030,19 @@ class PolarBleService {
         '[POLAR DEBUG] Error deteniendo ACC: '
         '$e',
       );
+    }
+
+    for (final (type, stop) in [
+      (pmdTypePpg, stopPpg),
+      (pmdTypePpi, stopPpi),
+      (pmdTypeGyro, stopGyro),
+      (pmdTypeMagnetometer, stopMagnetometer),
+    ]) {
+      try {
+        if (isStreaming(pmdStreamNames[type]!)) await stop();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Error deteniendo ${pmdStreamNames[type]}: $e');
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -2829,7 +4093,7 @@ class PolarBleService {
       await device.disconnect(
         timeout:
             const Duration(
-          seconds: 30,
+          seconds: 10,
         ),
       );
     } catch (e) {
@@ -2896,6 +4160,9 @@ class PolarBleService {
   // ===========================================================================
 
   void _resetConnectionState() {
+    _lastHrDataAt = null;
+    _lastPmdDataAt = null;
+
     _completePendingPmdResponse(
       error: StateError(
         'PMD connection closed',
@@ -2917,6 +4184,12 @@ class PolarBleService {
     _rrStreaming = false;
     _ecgStreaming = false;
     _accStreaming = false;
+    _ppgStreaming = false;
+    _ppiStreaming = false;
+    _gyroStreaming = false;
+    _magStreaming = false;
+    _pmdSampleRateHz.clear();
+    _pmdFactor.clear();
 
     _resetPmdTimingState();
 
@@ -3030,13 +4303,18 @@ class PolarBleService {
   // ===========================================================================
 
   Future<void> dispose() async {
+    _stopPairingWatch();
     await disconnect();
+    linkStatus.dispose();
+    await _connectionSubscription?.cancel();
 
     await _hrStreamController.close();
     await _ecgStreamController.close();
-    await _ecgUiStreamController.close();
     await _accStreamController.close();
-    await _accUiStreamController.close();
+    await _ppgStreamController.close();
+    await _ppiStreamController.close();
+    await _gyroStreamController.close();
+    await _magStreamController.close();
     await _scanStreamController.close();
   }
 
@@ -3044,21 +4322,76 @@ class PolarBleService {
   // START CONFIGURED SENSORS
   // ===========================================================================
 
-  Future<void> startConfiguredSensors(
+  /// Inicia los sensores configurados que el dispositivo soporta. Un fallo
+  /// en uno no impide arrancar los demás. Devuelve los errores por sensor.
+  Future<Map<String, String>> startConfiguredSensors(
     DeviceConfiguration configuration,
   ) async {
+    final errors = <String, String>{};
+
+    Future<void> run(String sensor, Future<void> Function() start) async {
+      try {
+        await start();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Error iniciando $sensor: $e');
+        errors[sensor] = _shortError(e);
+        _logEvent('sensor_start_failed', '$sensor: $e');
+      }
+    }
+
     if (configuration.hasSensor('heart_rate')) {
-      await startHeartRate();
+      await run('heart_rate', startHeartRate);
     }
 
     if (configuration.hasSensor('acc')) {
-      await startAcceleration();
+      if (supportsAcc) {
+        await run('acc', startAcceleration);
+      } else {
+        errors['acc'] = 'No soportado por $_lastDeviceName';
+      }
     }
 
     if (configuration.hasSensor('ecg')) {
-      await startEcg();
+      if (supportsEcg) {
+        await run('ecg', startEcg);
+      } else {
+        errors['ecg'] = 'No soportado por $_lastDeviceName';
+      }
     }
+
+    for (final (name, supported, start) in [
+      ('ppg', supportsPpg, startPpg),
+      ('ppi', supportsPpi, startPpi),
+      ('gyro', supportsGyro, startGyro),
+      ('mag', supportsMagnetometer, startMagnetometer),
+    ]) {
+      if (!configuration.hasSensor(name)) continue;
+      if (supported) {
+        await run(name, start);
+      } else {
+        errors[name] = 'No soportado por $_lastDeviceName';
+      }
+    }
+
+    return errors;
   }
+
+  /// Feeds a PMD data notification as if the sensor had sent it (tests).
+  @visibleForTesting
+  void handlePmdDataForTest(Uint8List data) => _handlePmdData(data);
+
+  /// Applies the parameters of a PMD start response: sample rate and factor
+  /// of a stream (tests).
+  @visibleForTesting
+  void applyStartResponseForTest(int measurementType, Uint8List payload) =>
+      _updatePmdSettingsFromResponse(payload, measurementType: measurementType);
+}
+
+class _ConnectCancelled implements Exception {
+  const _ConnectCancelled();
+
+  @override
+  String toString() => 'Conexión cancelada';
 }
 
 // =============================================================================
@@ -3095,23 +4428,52 @@ class PolarEcgSample {
   final String phaseName;
   final int microVolts;
 
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
   const PolarEcgSample({
     required this.timestamp,
     required this.participantId,
     required this.activityIndex,
     required this.phaseName,
     required this.microVolts,
+    this.sensorTimeNs,
   });
 
   static const String csvHeader =
-      'timestamp_iso,participant_id,activity_index,phase_name,ecg_uv';
+      'timestamp_iso,participant_id,activity_index,phase_name,ecg_uv,sensor_time_ns';
 
   String toCsvRow() {
     return '${timestamp.toIso8601String()},'
         '$participantId,'
         '$activityIndex,'
         '$phaseName,'
-        '$microVolts';
+        '$microVolts,'
+        '${sensorTimeNs ?? ''}';
+  }
+}
+
+/// One PMD frame as received: see [PolarBleService.clockObservations].
+class PmdClockObservation {
+  final int measurementType;
+  final int arrivalHostMicros;
+  final int frameSensorNs;
+  final int offsetMicros;
+
+  const PmdClockObservation({
+    required this.measurementType,
+    required this.arrivalHostMicros,
+    required this.frameSensorNs,
+    required this.offsetMicros,
+  });
+
+  static const String csvHeader =
+      'arrival_utc,stream,frame_sensor_time_ns,offset_us';
+
+  String toCsvRow() {
+    final stream = PolarBleService.pmdStreamNames[measurementType] ?? '$measurementType';
+    final arrival = DateTime.fromMicrosecondsSinceEpoch(arrivalHostMicros, isUtc: true);
+    return '${arrival.toIso8601String()},$stream,$frameSensorNs,$offsetMicros';
   }
 }
 
@@ -3128,6 +4490,9 @@ class PolarAccelerationSample {
   final double yMg;
   final double zMg;
 
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
   const PolarAccelerationSample({
     required this.timestamp,
     required this.participantId,
@@ -3136,11 +4501,12 @@ class PolarAccelerationSample {
     required this.xMg,
     required this.yMg,
     required this.zMg,
+    this.sensorTimeNs,
   });
 
   static const String csvHeader =
       'timestamp_iso,participant_id,activity_index,phase_name,'
-      'acc_x_mg,acc_y_mg,acc_z_mg';
+      'acc_x_mg,acc_y_mg,acc_z_mg,sensor_time_ns';
 
   String toCsvRow() {
     return '${timestamp.toIso8601String()},'
@@ -3149,10 +4515,162 @@ class PolarAccelerationSample {
         '$phaseName,'
         '$xMg,'
         '$yMg,'
-        '$zMg';
+        '$zMg,'
+        '${sensorTimeNs ?? ''}';
   }
 }
 
+
+// =============================================================================
+// VERITY SENSE SAMPLES: PPG, PPI, GYRO, MAGNETOMETER
+// =============================================================================
+
+/// One PPG sample of the Verity Sense: raw 22-bit counts of its three green
+/// channels and of the ambient-light channel (PMD PPG frame type 0).
+class PolarPpgSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final int ppg0;
+  final int ppg1;
+  final int ppg2;
+  final int ambient;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarPpgSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.ppg0,
+    required this.ppg1,
+    required this.ppg2,
+    required this.ambient,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,ppg0,ppg1,ppg2,ambient,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$ppg0,$ppg1,$ppg2,$ambient,${sensorTimeNs ?? ''}';
+}
+
+/// One pulse of Polar's PPI algorithm (Verity Sense): the interval to the
+/// previous pulse, the heart rate the algorithm derives from it, its error
+/// estimate and the flags of the sensor.
+class PolarPpiSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final int ppiMs;
+  final int heartRateBpm;
+  final int errorEstimateMs;
+
+  /// Movement detected: the interval is not reliable.
+  final bool blocker;
+  final bool skinContact;
+  final bool skinContactSupported;
+
+  /// Position of the pulse in its batch, which orders the pulses of a batch
+  /// that shares one arrival time.
+  final int indexInFrame;
+
+  /// Sensor clock of the pulse (ns) when the frame carried one.
+  final int? sensorTimeNs;
+
+  const PolarPpiSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.ppiMs,
+    required this.heartRateBpm,
+    required this.errorEstimateMs,
+    required this.blocker,
+    required this.skinContact,
+    required this.skinContactSupported,
+    required this.indexInFrame,
+    this.sensorTimeNs,
+  });
+
+  /// Source of [heartRateBpm], see [PolarHrSample.hrSource].
+  static const String hrSource = 'verity_ppi_firmware';
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,ppi_ms,hr_bpm,error_estimate_ms,'
+      'blocker,skin_contact,skin_contact_supported,index_in_frame,sensor_time_ns,hr_source';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$ppiMs,$heartRateBpm,$errorEstimateMs,${blocker ? 1 : 0},${skinContact ? 1 : 0},'
+      '${skinContactSupported ? 1 : 0},$indexInFrame,${sensorTimeNs ?? ''},$hrSource';
+}
+
+/// One gyroscope sample of the Verity Sense, in degrees per second.
+class PolarGyroSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final double xDps;
+  final double yDps;
+  final double zDps;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarGyroSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.xDps,
+    required this.yDps,
+    required this.zDps,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,gyro_x_dps,gyro_y_dps,gyro_z_dps,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$xDps,$yDps,$zDps,${sensorTimeNs ?? ''}';
+}
+
+/// One magnetometer sample of the Verity Sense, in gauss.
+class PolarMagSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final double xGauss;
+  final double yGauss;
+  final double zGauss;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarMagSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.xGauss,
+    required this.yGauss,
+    required this.zGauss,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,mag_x_gauss,mag_y_gauss,mag_z_gauss,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$xGauss,$yGauss,$zGauss,${sensorTimeNs ?? ''}';
+}
 
 // ===========================================================================
 // POLAR BIT READER

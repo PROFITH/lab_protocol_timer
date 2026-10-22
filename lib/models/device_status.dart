@@ -53,6 +53,15 @@ class DeviceStatus {
   final IconData icon;
   final DeviceConnectionStatus connectionStatus;
 
+  /// Placement, serial or the connected device («Muñeca no dominante · n.º 1234»).
+  final String? subtitle;
+
+  /// Shown instead of the sensors (e.g. offline sensors).
+  final String? note;
+
+  /// Connection step in progress or last error («Reintentando en 4 s...»).
+  final String? statusMessage;
+
   final List<SensorStatus> sensors;
 
   const DeviceStatus({
@@ -60,6 +69,9 @@ class DeviceStatus {
     required this.name,
     required this.icon,
     required this.connectionStatus,
+    this.subtitle,
+    this.note,
+    this.statusMessage,
     this.sensors = const [],
   });
 }
