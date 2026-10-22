@@ -818,6 +818,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       if (hr > 0) '$hr lpm',
                       if (service.isAccelerationStreaming) 'ACC ${service.accSampleRateHz} Hz',
                       if (service.isEcgStreaming) 'ECG',
+                      if (service.isPpgStreaming) 'PPG',
+                      if (service.isPpiStreaming) 'PPI',
+                      if (service.isGyroStreaming) 'GYRO',
+                      if (service.isMagnetometerStreaming) 'MAG',
                     ], 'Conectado'),
         ));
         continue;
@@ -1565,6 +1569,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     'rr': ('RR', Icons.timeline_rounded),
     'acc': ('ACC', Icons.sensors_rounded),
     'ecg': ('ECG', Icons.show_chart_rounded),
+    'ppg': ('PPG', Icons.fingerprint_rounded),
+    'ppi': ('PPI', Icons.monitor_heart_outlined),
+    'gyro': ('GYRO', Icons.threesixty_rounded),
+    'mag': ('MAG', Icons.explore_rounded),
   };
 
   /// Every device of the session, in the order of the session setup.
@@ -1662,6 +1670,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       'acc' when service.isAccelerationStreaming =>
                         '${service.accSampleRateHz} Hz',
                       'ecg' => '${PolarBleService.ecgSampleRateHz} Hz',
+                      'ppg' when service.isPpgStreaming => '${service.ppgSampleRateHz} Hz',
+                      'gyro' when service.isGyroStreaming => '${service.gyroSampleRateHz} Hz',
+                      'mag' when service.isMagnetometerStreaming => '${service.magSampleRateHz} Hz',
+                      'ppi' when service.isPpiStreaming => 'por pulso, con retraso',
                       _ => null,
                     },
                   ),
@@ -1852,13 +1864,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     return chips;
   }
 
-  static bool _streaming(PolarBleService service, String sensor) => switch (sensor) {
-        'heart_rate' => service.isHeartRateStreaming,
-        'rr' => service.isRrStreaming,
-        'acc' => service.isAccelerationStreaming,
-        'ecg' => service.isEcgStreaming,
-        _ => false,
-      };
+  static bool _streaming(PolarBleService service, String sensor) => service.isStreaming(sensor);
 
   Widget _buildMonitoringArea() {
     return _MonitorCard(
@@ -2669,6 +2675,7 @@ class _LiveDevice {
     required this.onSamples,
     required this.onStatusChanged,
   }) {
+    service.deviceType = configuration.type;
     service.linkStatus.addListener(onStatusChanged);
     _subscriptions.addAll([
       service.hrStream.listen((bpm) {
@@ -2703,10 +2710,15 @@ class _LiveDevice {
   /// the device refused (e.g. ECG on a sensor without it).
   Future<List<String>> startConfiguredSignals() async {
     final failed = <String>[];
+    service.deviceType = configuration.type;
     for (final (signal, start) in [
       ('heart_rate', service.startHeartRate),
       ('acc', service.startAcceleration),
       ('ecg', service.startEcg),
+      ('ppg', service.startPpg),
+      ('ppi', service.startPpi),
+      ('gyro', service.startGyro),
+      ('mag', service.startMagnetometer),
     ]) {
       if (!configuration.hasSensor(signal)) continue;
       try {

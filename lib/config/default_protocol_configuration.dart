@@ -26,13 +26,17 @@ const defaultProtocolConfiguration = ProtocolConfiguration(
   ],
 );
 
-/// Signals the Research Monitor can show for each live device type.
+/// Signals recorded from each live device type: every signal the device
+/// offers over Bluetooth, so the algorithms can use all of them.
 ///
-/// The Verity Sense has no ECG, and its standard heart-rate service sends no
-/// RR intervals (it is an optical sensor).
+/// The H10 gives heart rate with RR intervals (from its ECG), ECG and ACC.
+/// The Verity Sense gives heart rate (from its PPG, without RR), ACC, the raw
+/// PPG, the pulse-to-pulse intervals of Polar's PPI algorithm, gyroscope and
+/// magnetometer. The Research Monitor charts HR, RR, ACC and ECG; the rest
+/// only go to the files.
 const liveCapabilitiesByType = <String, Set<String>>{
   'polar_h10': {'heart_rate', 'rr', 'acc', 'ecg'},
-  'verity_sense': {'heart_rate', 'acc'},
+  'verity_sense': {'heart_rate', 'acc', 'ppg', 'ppi', 'gyro', 'mag'},
 };
 
 /// Devices of the Research Monitor for a session: every sensor chosen in the

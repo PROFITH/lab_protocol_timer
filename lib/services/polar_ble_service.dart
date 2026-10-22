@@ -166,6 +166,38 @@ class PolarBleService {
   static const int ecgSampleRateHz = 130;
 
   // ===========================================================================
+  // VERITY SENSE STREAMS (PPG, PPI, GYRO, MAGNETOMETER)
+  // ===========================================================================
+
+  /// Rates asked to the Verity Sense when it offers them: its defaults
+  /// outside SDK mode are PPG 55 Hz and gyro 52 Hz at ±2000 dps; of the
+  /// 10-100 Hz the magnetometer offers (±50 gauss), 50 Hz.
+  static const int defaultPpgSampleRateHz = 55;
+  static const int defaultGyroSampleRateHz = 52;
+  static const int defaultMagSampleRateHz = 50;
+  static const int preferredGyroRangeDps = 2000;
+
+  /// Name of each PMD stream in the device configuration, the session files
+  /// (`polar_<name>_<device>_<stamp>.csv`) and the clock log.
+  static const Map<int, String> pmdStreamNames = {
+    pmdTypeEcg: 'ecg',
+    pmdTypeAcc: 'acc',
+    pmdTypePpg: 'ppg',
+    pmdTypePpi: 'ppi',
+    pmdTypeGyro: 'gyro',
+    pmdTypeMagnetometer: 'mag',
+  };
+
+  /// Sample rate and factor the sensor reported when each of those streams
+  /// started (ACC keeps [_accSampleRateHz] and [_accFactor]).
+  final Map<int, int> _pmdSampleRateHz = {};
+  final Map<int, double> _pmdFactor = {};
+
+  int get ppgSampleRateHz => _pmdSampleRateHz[pmdTypePpg] ?? defaultPpgSampleRateHz;
+  int get gyroSampleRateHz => _pmdSampleRateHz[pmdTypeGyro] ?? defaultGyroSampleRateHz;
+  int get magSampleRateHz => _pmdSampleRateHz[pmdTypeMagnetometer] ?? defaultMagSampleRateHz;
+
+  // ===========================================================================
   // POLAR PSFTP / PFTP
   // ===========================================================================
 
@@ -218,6 +250,14 @@ class PolarBleService {
 
   final List<PolarEcgSample> recordedEcgSamples = [];
 
+  final List<PolarPpgSample> recordedPpgSamples = [];
+
+  final List<PolarPpiSample> recordedPpiSamples = [];
+
+  final List<PolarGyroSample> recordedGyroSamples = [];
+
+  final List<PolarMagSample> recordedMagSamples = [];
+
   int currentHeartRate = 0;
 
   List<int> currentRrIntervals = [];
@@ -256,6 +296,26 @@ class PolarBleService {
   Stream<PolarAccelerationSample> get accelerationStream =>
       _accStreamController.stream;
 
+  // ===========================================================================
+  // PPG, PPI, GYRO, MAGNETOMETER (VERITY SENSE)
+  // ===========================================================================
+
+  final _ppgStreamController = StreamController<PolarPpgSample>.broadcast();
+
+  Stream<PolarPpgSample> get ppgStream => _ppgStreamController.stream;
+
+  final _ppiStreamController = StreamController<PolarPpiSample>.broadcast();
+
+  Stream<PolarPpiSample> get ppiStream => _ppiStreamController.stream;
+
+  final _gyroStreamController = StreamController<PolarGyroSample>.broadcast();
+
+  Stream<PolarGyroSample> get gyroStream => _gyroStreamController.stream;
+
+  final _magStreamController = StreamController<PolarMagSample>.broadcast();
+
+  Stream<PolarMagSample> get magStream => _magStreamController.stream;
+
 
 
   // ===========================================================================
@@ -265,6 +325,14 @@ class PolarBleService {
   String currentParticipantId = '';
   int currentActivityIndex = 1;
   String currentPhaseName = 'idle';
+
+  /// Type of the device in the session (`polar_h10`, `verity_sense`), set by
+  /// the Research Monitor; it names the source of the heart rate in the files.
+  String deviceType = '';
+
+  /// Where the heart rate of [recordedSamples] comes from, see
+  /// [PolarHrSample.sourceFor].
+  String get hrSource => PolarHrSample.sourceFor(deviceType: deviceType, deviceName: _lastDeviceName);
 
   void updateProtocolContext({
     required String participantId,
@@ -351,6 +419,13 @@ class PolarBleService {
       _supportedPmdTypes.isEmpty ||
       _supportedPmdTypes.contains(pmdTypeAcc);
 
+  bool _supportsPmd(int type) => _supportedPmdTypes.isEmpty || _supportedPmdTypes.contains(type);
+
+  bool get supportsPpg => _supportsPmd(pmdTypePpg);
+  bool get supportsPpi => _supportsPmd(pmdTypePpi);
+  bool get supportsGyro => _supportsPmd(pmdTypeGyro);
+  bool get supportsMagnetometer => _supportsPmd(pmdTypeMagnetometer);
+
   void _setStatus(
     PolarLinkState state,
     String message, {
@@ -396,6 +471,43 @@ class PolarBleService {
   bool get isRrStreaming => _rrStreaming;
   bool get isEcgStreaming => _ecgStreaming;
   bool get isAccelerationStreaming => _accStreaming;
+
+  bool _ppgStreaming = false;
+  bool _ppiStreaming = false;
+  bool _gyroStreaming = false;
+  bool _magStreaming = false;
+
+  bool get isPpgStreaming => _ppgStreaming;
+  bool get isPpiStreaming => _ppiStreaming;
+  bool get isGyroStreaming => _gyroStreaming;
+  bool get isMagnetometerStreaming => _magStreaming;
+
+  /// Whether the stream [name] (`heart_rate`, `rr` or a [pmdStreamNames]
+  /// value) is running.
+  bool isStreaming(String name) => switch (name) {
+        'heart_rate' => _hrStreaming,
+        'rr' => _rrStreaming,
+        'acc' => _accStreaming,
+        'ecg' => _ecgStreaming,
+        'ppg' => _ppgStreaming,
+        'ppi' => _ppiStreaming,
+        'gyro' => _gyroStreaming,
+        'mag' => _magStreaming,
+        _ => false,
+      };
+
+  void _setStreaming(int type, bool value) {
+    switch (type) {
+      case pmdTypePpg:
+        _ppgStreaming = value;
+      case pmdTypePpi:
+        _ppiStreaming = value;
+      case pmdTypeGyro:
+        _gyroStreaming = value;
+      case pmdTypeMagnetometer:
+        _magStreaming = value;
+    }
+  }
 
   // ===========================================================================
   // PMD CONTROL POINT STATE
@@ -524,6 +636,9 @@ class PolarBleService {
     if (_hrStreaming) _sensorsToRestore.add('heart_rate');
     if (_accStreaming) _sensorsToRestore.add('acc');
     if (_ecgStreaming) _sensorsToRestore.add('ecg');
+    for (final name in const ['ppg', 'ppi', 'gyro', 'mag']) {
+      if (isStreaming(name)) _sensorsToRestore.add(name);
+    }
     _sensorsToRestore.addAll(_requestedSensors);
     return _sensorsToRestore.isNotEmpty;
   }
@@ -1430,6 +1545,108 @@ class PolarBleService {
   }
 
   // ===========================================================================
+  // VERITY SENSE STREAMS: PPG, PPI, GYRO, MAGNETOMETER
+  // ===========================================================================
+
+  /// Raw PPG of the Verity Sense: three green channels and the ambient light
+  /// (22 bit, 55 Hz).
+  Future<void> startPpg() => _startPmdStream(pmdTypePpg, preferredRateHz: defaultPpgSampleRateHz);
+
+  /// Pulse-to-pulse intervals from Polar's PPI algorithm. The first batch
+  /// comes about 25 s after the start and, while it runs, the sensor updates
+  /// the heart rate of the HR service only every 5 s.
+  Future<void> startPpi() => _startPmdStream(pmdTypePpi);
+
+  Future<void> startGyro() => _startPmdStream(
+        pmdTypeGyro,
+        preferredRateHz: defaultGyroSampleRateHz,
+        preferredRange: preferredGyroRangeDps,
+      );
+
+  Future<void> startMagnetometer() =>
+      _startPmdStream(pmdTypeMagnetometer, preferredRateHz: defaultMagSampleRateHz);
+
+  Future<void> stopPpg() => _stopPmdStream(pmdTypePpg);
+  Future<void> stopPpi() => _stopPmdStream(pmdTypePpi);
+  Future<void> stopGyro() => _stopPmdStream(pmdTypeGyro);
+  Future<void> stopMagnetometer() => _stopPmdStream(pmdTypeMagnetometer);
+
+  /// Starts a PMD stream the way the Polar SDK does: the settings are asked
+  /// to the sensor and the start command is built from them
+  /// ([startCommandFor]); PPI has no settings. The rate and factor the
+  /// sensor answers with are kept for its frames.
+  Future<void> _startPmdStream(int type, {int? preferredRateHz, int? preferredRange}) async {
+    final name = pmdStreamNames[type]!;
+    _requestedSensors.add(name);
+    if (_pmdControlPoint == null) {
+      throw Exception('PMD no está conectado');
+    }
+    if (isStreaming(name)) return;
+
+    final Uint8List command;
+    if (type == pmdTypePpi) {
+      command = Uint8List.fromList([pmdOpStartMeasurement, pmdTypePpi]);
+    } else {
+      final options = await _settingsOffered(type);
+      if (options[pmdSettingSampleRate]?.isNotEmpty != true) {
+        throw Exception('El sensor no ofrece ajustes de ${name.toUpperCase()}');
+      }
+      command = startCommandFor(type, options, preferredRateHz: preferredRateHz, preferredRange: preferredRange);
+    }
+    debugPrint('[POLAR DEBUG] ${name.toUpperCase()} START TX: ${_hex(command)}');
+
+    final response = await _startMeasurement(command, type);
+    if (!response.isSuccess) {
+      throw Exception('${name.toUpperCase()} START rechazado por PMD: ${response.errorCode}');
+    }
+    _updatePmdSettingsFromResponse(response.payload, measurementType: type);
+    _removePmdTimingKeys(measurementType: type);
+    _lastPmdDataAt = DateTime.now();
+    _setStreaming(type, true);
+    debugPrint(
+      '[POLAR DEBUG] ${name.toUpperCase()} START aceptado por PMD; '
+      'sampleRate=${_pmdSampleRateHz[type]} Hz; factor=${_pmdFactor[type]}',
+    );
+  }
+
+  Future<void> _stopPmdStream(int type) async {
+    final name = pmdStreamNames[type]!;
+    if (_pmdControlPoint == null || !isStreaming(name)) return;
+    try {
+      final response = await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpStopMeasurement, type]),
+        expectedOpcode: pmdOpStopMeasurement,
+        expectedMeasurementType: type,
+      );
+      if (!response.isSuccess) {
+        debugPrint('[POLAR DEBUG] ${name.toUpperCase()} STOP rechazado: ${response.errorCode}');
+      }
+    } finally {
+      _setStreaming(type, false);
+      _removePmdTimingKeys(measurementType: type);
+    }
+  }
+
+  /// Settings the sensor offers for [type] (empty when it answers nothing).
+  Future<Map<int, List<int>>> _settingsOffered(int type) async {
+    try {
+      final response = await _sendPmdCommandAndWaitForResponse(
+        Uint8List.fromList([pmdOpGetMeasurementSettings, type]),
+        expectedOpcode: pmdOpGetMeasurementSettings,
+        expectedMeasurementType: type,
+      );
+      if (response.isSuccess) {
+        final options = parsePmdSettingOptions(_pmdParameters(response.payload));
+        debugPrint('[POLAR DEBUG] ${pmdStreamNames[type]} settings offered: $options');
+        return options;
+      }
+    } catch (e) {
+      debugPrint('[POLAR DEBUG] ${pmdStreamNames[type]} settings not available: $e');
+    }
+    return const {};
+  }
+
+  // ===========================================================================
   // STOP ECG
   // ===========================================================================
 
@@ -1761,34 +1978,30 @@ class PolarBleService {
       final settings =
           _parsePmdSettings(_pmdParameters(payload));
 
-      final sampleRate =
-          settings[pmdSettingSampleRate];
-
-      if (sampleRate != null) {
-        if (measurementType == pmdTypeAcc &&
-            sampleRate > 0) {
-          _accSampleRateHz =
-              sampleRate;
-
-          debugPrint(
-            '[POLAR DEBUG] PMD ACC sample rate '
-            'reported by sensor: '
-            '$_accSampleRateHz Hz',
-          );
+      final sampleRate = settings[pmdSettingSampleRate];
+      if (sampleRate != null && sampleRate > 0) {
+        if (measurementType == pmdTypeAcc) {
+          _accSampleRateHz = sampleRate;
+        } else {
+          _pmdSampleRateHz[measurementType] = sampleRate;
         }
+        debugPrint(
+          '[POLAR DEBUG] PMD ${pmdStreamNames[measurementType]} sample rate '
+          'reported by sensor: $sampleRate Hz',
+        );
       }
 
-      final factor =
-          settings[pmdSettingFactor];
-
+      final factor = settings[pmdSettingFactor];
       if (factor != null) {
-        _accFactor =
-            _uint32ToDouble(factor);
-
+        final value = _uint32ToDouble(factor);
+        if (measurementType == pmdTypeAcc) {
+          _accFactor = value;
+        } else {
+          _pmdFactor[measurementType] = value;
+        }
         debugPrint(
-          '[POLAR DEBUG] PMD ACC factor '
-          'reported by sensor: '
-          '$_accFactor',
+          '[POLAR DEBUG] PMD ${pmdStreamNames[measurementType]} factor '
+          'reported by sensor: $value',
         );
       }
     } catch (e) {
@@ -1841,30 +2054,42 @@ class PolarBleService {
     Map<int, List<int>> options, {
     int preferredRateHz = defaultAccSampleRateHz,
     int preferredRangeG = 8,
+  }) =>
+      startCommandFor(pmdTypeAcc, options, preferredRateHz: preferredRateHz, preferredRange: preferredRangeG);
+
+  /// Start command for a PMD stream from the settings the sensor offers: the
+  /// preferred rate and range when offered (else the highest), the highest
+  /// resolution and the most channels, as the Polar SDK's `maxSettings`.
+  static Uint8List startCommandFor(
+    int type,
+    Map<int, List<int>> options, {
+    int? preferredRateHz,
+    int? preferredRange,
   }) {
     int pick(List<int> values, int? preferred) =>
         preferred != null && values.contains(preferred)
             ? preferred
             : values.reduce((a, b) => a > b ? a : b);
 
-    final bytes = <int>[pmdOpStartMeasurement, pmdTypeAcc];
-    void add(int type, int value) {
-      final size = _pmdSettingFieldSize(type);
-      bytes..add(type)..add(1);
+    final bytes = <int>[pmdOpStartMeasurement, type];
+    void add(int settingType, int value) {
+      final size = _pmdSettingFieldSize(settingType);
+      bytes..add(settingType)..add(1);
       for (var b = 0; b < size; b++) {
         bytes.add((value >> (8 * b)) & 0xFF);
       }
     }
 
-    for (final (type, preferred) in [
+    for (final (settingType, preferred) in [
       (pmdSettingSampleRate, preferredRateHz),
       (pmdSettingResolution, null),
-      (pmdSettingRange, preferredRangeG),
+      (pmdSettingRange, preferredRange),
+      (pmdSettingRangeMilliUnit, null),
       (pmdSettingChannels, null),
     ]) {
-      final values = options[type];
+      final values = options[settingType];
       if (values != null && values.isNotEmpty) {
-        add(type, pick(values, preferred));
+        add(settingType, pick(values, preferred));
       }
     }
     return Uint8List.fromList(bytes);
@@ -1878,22 +2103,9 @@ class PolarBleService {
   ]);
 
   Future<Uint8List> _accStartCommand() async {
-    try {
-      final response = await _sendPmdCommandAndWaitForResponse(
-        Uint8List.fromList([pmdOpGetMeasurementSettings, pmdTypeAcc]),
-        expectedOpcode: pmdOpGetMeasurementSettings,
-        expectedMeasurementType: pmdTypeAcc,
-      );
-      if (response.isSuccess) {
-        final options =
-            parsePmdSettingOptions(_pmdParameters(response.payload));
-        debugPrint('[POLAR DEBUG] ACC settings offered: $options');
-        if (options[pmdSettingSampleRate]?.isNotEmpty == true) {
-          return accStartCommandFor(options);
-        }
-      }
-    } catch (e) {
-      debugPrint('[POLAR DEBUG] ACC settings not available: $e');
+    final options = await _settingsOffered(pmdTypeAcc);
+    if (options[pmdSettingSampleRate]?.isNotEmpty == true) {
+      return accStartCommandFor(options);
     }
     return _h10AccStartCommand;
   }
@@ -2030,9 +2242,13 @@ class PolarBleService {
     final measurementType =
         data[0] & 0x3F;
 
-    // Bytes 1..8: sensor time of the last sample of the frame.
+    // Bytes 1..8: sensor time of the last sample of the frame. PPI frames
+    // are held back by the sensor for tens of seconds, so they say nothing
+    // about the clocks; a frame without a time (0) neither.
     if (data.length >= 10 &&
-        (measurementType == pmdTypeEcg || measurementType == pmdTypeAcc)) {
+        measurementType != pmdTypePpi &&
+        pmdStreamNames.containsKey(measurementType) &&
+        _readUint64LittleEndian(data, 1) != 0) {
       final arrival = DateTime.now().toUtc().microsecondsSinceEpoch;
       final frameNs = _readUint64LittleEndian(data, 1);
       _clock.observe(arrivalHostMicros: arrival, lastSampleSensorMicros: frameNs ~/ 1000);
@@ -2053,8 +2269,238 @@ class PolarBleService {
         _parseAccelerationFrame(data);
         break;
 
+      case pmdTypePpg:
+        _parsePpgFrame(data);
+        break;
+
+      case pmdTypePpi:
+        _parsePpiFrame(data);
+        break;
+
+      case pmdTypeGyro:
+      case pmdTypeMagnetometer:
+        _parseThreeAxisFrame(measurementType, data);
+        break;
+
       default:
         break;
+    }
+  }
+
+  // ===========================================================================
+  // PPG, PPI, GYRO AND MAGNETOMETER FRAMES (VERITY SENSE)
+  // ===========================================================================
+
+  /// Sensor time of every sample of a frame whose last sample is at
+  /// [timestampNs], as [_buildPmdTimestamps] does for ACC and ECG.
+  List<int> _frameTimestamps({
+    required int measurementType,
+    required bool compressed,
+    required int frameType,
+    required int timestampNs,
+    required int sampleCount,
+    required int sampleRateHz,
+  }) {
+    final key = _pmdTimestampKey(
+      measurementType: measurementType,
+      compressed: compressed,
+      frameType: frameType,
+    );
+    final timestamps = _buildPmdTimestamps(
+      timestampNs: timestampNs,
+      previousTimestampNs: _lastPmdFrameTimestampNs[key],
+      sampleCount: sampleCount,
+      sampleRateHz: sampleRateHz,
+    );
+    _lastPmdFrameTimestampNs[key] = timestampNs;
+    return timestamps;
+  }
+
+  /// PPG frame type 0 of the Verity Sense: four channels (three green PPG
+  /// and the ambient light) of 22 bits, raw (3 bytes each) or delta coded,
+  /// as PpgData in the Polar BLE SDK.
+  void _parsePpgFrame(Uint8List data) {
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (frameType != 0) {
+      debugPrint('[POLAR DEBUG] PPG frame type no soportado: $frameType');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    const channels = 4;
+    final List<List<int>> samples;
+    if (compressed) {
+      samples = _parsePolarDeltaFramesToSamples(content, channels: channels, resolution: 22);
+    } else {
+      const bytesPerSample = 3 * channels;
+      if (content.isEmpty || content.length % bytesPerSample != 0) {
+        debugPrint('[POLAR DEBUG] PPG raw payload inválido: ${content.length} bytes');
+        return;
+      }
+      samples = [
+        for (var offset = 0; offset < content.length; offset += bytesPerSample)
+          [for (var c = 0; c < channels; c++) _readSigned24LittleEndian(content, offset + 3 * c)],
+      ];
+    }
+    if (samples.isEmpty) return;
+    final timestamps = _frameTimestamps(
+      measurementType: pmdTypePpg,
+      compressed: compressed,
+      frameType: frameType,
+      timestampNs: timestampNs,
+      sampleCount: samples.length,
+      sampleRateHz: ppgSampleRateHz,
+    );
+    final factor = _pmdFactor[pmdTypePpg] ?? 1.0;
+    int scaled(int raw) => factor == 1.0 ? raw : (raw * factor).round();
+    for (var i = 0; i < samples.length; i++) {
+      final s = samples[i];
+      final sample = PolarPpgSample(
+        timestamp: _convertPmdTimestampToHostUtc(timestamps[i]),
+        participantId: currentParticipantId,
+        activityIndex: currentActivityIndex,
+        phaseName: currentPhaseName,
+        ppg0: scaled(s[0]),
+        ppg1: scaled(s[1]),
+        ppg2: scaled(s[2]),
+        ambient: scaled(s[3]),
+        sensorTimeNs: timestamps[i],
+      );
+      recordedPpgSamples.add(sample);
+      if (!_ppgStreamController.isClosed) _ppgStreamController.add(sample);
+    }
+  }
+
+  /// Gyroscope and magnetometer frames, always delta coded. Type 0 carries
+  /// three 16-bit axes times the factor the sensor reported (degrees per
+  /// second, gauss); type 1 three float32 axes (gyro) or four 16-bit values
+  /// in milligauss plus the calibration status (magnetometer), as GyrData
+  /// and MagData in the Polar BLE SDK.
+  void _parseThreeAxisFrame(int measurementType, Uint8List data) {
+    final name = pmdStreamNames[measurementType]!.toUpperCase();
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (!compressed || frameType > 1) {
+      debugPrint('[POLAR DEBUG] $name frame ${compressed ? 'delta' : 'raw'} type $frameType no soportado');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    final isMag = measurementType == pmdTypeMagnetometer;
+    final channels = frameType == 1 && isMag ? 4 : 3;
+    final resolution = frameType == 1 && !isMag ? 32 : 16;
+    final samples = _parsePolarDeltaFramesToSamples(content, channels: channels, resolution: resolution);
+    if (samples.isEmpty) return;
+    final timestamps = _frameTimestamps(
+      measurementType: measurementType,
+      compressed: true,
+      frameType: frameType,
+      timestampNs: timestampNs,
+      sampleCount: samples.length,
+      sampleRateHz: isMag ? magSampleRateHz : gyroSampleRateHz,
+    );
+    final factor = _pmdFactor[measurementType] ?? 1.0;
+    double value(int raw) {
+      final base = resolution == 32 ? _int32BitsToFloat(raw) : raw.toDouble();
+      final scaled = factor != 1.0 ? base * factor : base;
+      return frameType == 1 && isMag ? scaled / 1000.0 : scaled;
+    }
+
+    for (var i = 0; i < samples.length; i++) {
+      final s = samples[i];
+      final t = _convertPmdTimestampToHostUtc(timestamps[i]);
+      if (isMag) {
+        final sample = PolarMagSample(
+          timestamp: t,
+          participantId: currentParticipantId,
+          activityIndex: currentActivityIndex,
+          phaseName: currentPhaseName,
+          xGauss: value(s[0]),
+          yGauss: value(s[1]),
+          zGauss: value(s[2]),
+          sensorTimeNs: timestamps[i],
+        );
+        recordedMagSamples.add(sample);
+        if (!_magStreamController.isClosed) _magStreamController.add(sample);
+      } else {
+        final sample = PolarGyroSample(
+          timestamp: t,
+          participantId: currentParticipantId,
+          activityIndex: currentActivityIndex,
+          phaseName: currentPhaseName,
+          xDps: value(s[0]),
+          yDps: value(s[1]),
+          zDps: value(s[2]),
+          sensorTimeNs: timestamps[i],
+        );
+        recordedGyroSamples.add(sample);
+        if (!_gyroStreamController.isClosed) _gyroStreamController.add(sample);
+      }
+    }
+  }
+
+  static double _int32BitsToFloat(int bits) =>
+      (ByteData(4)..setInt32(0, bits, Endian.little)).getFloat32(0, Endian.little);
+
+  /// PPI frame type 0 (Verity Sense): 6 bytes per pulse (heart rate, interval
+  /// in ms, error estimate in ms, flags). The sensor sends them in batches;
+  /// when the frame carries a sensor time it is that of the last pulse and
+  /// the earlier ones are placed back by their intervals (PpiData in the
+  /// Polar BLE SDK); otherwise the pulses share the arrival time of the
+  /// batch and [PolarPpiSample.indexInFrame] orders them. The activity and
+  /// phase of the rows are those at the arrival.
+  void _parsePpiFrame(Uint8List data) {
+    if (data.length < 11) return;
+    final timestampNs = _readUint64LittleEndian(data, 1);
+    final compressed = (data[9] & 0x80) != 0;
+    final frameType = data[9] & 0x7F;
+    if (compressed || frameType != 0) {
+      debugPrint('[POLAR DEBUG] PPI frame type no soportado: $frameType');
+      return;
+    }
+    final content = Uint8List.sublistView(data, 10);
+    const bytesPerSample = 6;
+    if (content.isEmpty || content.length % bytesPerSample != 0) {
+      debugPrint('[POLAR DEBUG] PPI payload inválido: ${content.length} bytes');
+      return;
+    }
+    final count = content.length ~/ bytesPerSample;
+    final arrival = DateTime.now().toUtc();
+    final intervals = [
+      for (var i = 0; i < count; i++)
+        content[i * bytesPerSample + 1] | (content[i * bytesPerSample + 2] << 8),
+    ];
+    final sensorTimes = List<int?>.filled(count, null);
+    if (timestampNs != 0) {
+      var t = timestampNs;
+      for (var i = count - 1; i >= 0; i--) {
+        sensorTimes[i] = t;
+        t -= intervals[i] * 1000000;
+      }
+    }
+    for (var i = 0; i < count; i++) {
+      final o = i * bytesPerSample;
+      final flags = content[o + 5];
+      final sensorTime = sensorTimes[i];
+      final sample = PolarPpiSample(
+        timestamp: sensorTime == null ? arrival : _convertPmdTimestampToHostUtc(sensorTime),
+        participantId: currentParticipantId,
+        activityIndex: currentActivityIndex,
+        phaseName: currentPhaseName,
+        ppiMs: intervals[i],
+        heartRateBpm: content[o],
+        errorEstimateMs: content[o + 3] | (content[o + 4] << 8),
+        blocker: flags & 0x01 != 0,
+        skinContact: flags & 0x02 != 0,
+        skinContactSupported: flags & 0x04 != 0,
+        indexInFrame: i,
+        sensorTimeNs: sensorTime,
+      );
+      recordedPpiSamples.add(sample);
+      if (!_ppiStreamController.isClosed) _ppiStreamController.add(sample);
     }
   }
 
@@ -3353,6 +3799,7 @@ class PolarBleService {
             phaseName: currentPhaseName,
             heartRateBpm: bpm,
             rrIntervalsMs: rrList,
+            hrSource: hrSource,
           ),
         );
       }
@@ -3540,6 +3987,19 @@ class PolarBleService {
       );
     }
 
+    for (final (type, stop) in [
+      (pmdTypePpg, stopPpg),
+      (pmdTypePpi, stopPpi),
+      (pmdTypeGyro, stopGyro),
+      (pmdTypeMagnetometer, stopMagnetometer),
+    ]) {
+      try {
+        if (isStreaming(pmdStreamNames[type]!)) await stop();
+      } catch (e) {
+        debugPrint('[POLAR DEBUG] Error deteniendo ${pmdStreamNames[type]}: $e');
+      }
+    }
+
     // -------------------------------------------------------------------------
     // Cancel subscriptions.
     // -------------------------------------------------------------------------
@@ -3679,6 +4139,12 @@ class PolarBleService {
     _rrStreaming = false;
     _ecgStreaming = false;
     _accStreaming = false;
+    _ppgStreaming = false;
+    _ppiStreaming = false;
+    _gyroStreaming = false;
+    _magStreaming = false;
+    _pmdSampleRateHz.clear();
+    _pmdFactor.clear();
 
     _resetPmdTimingState();
 
@@ -3800,6 +4266,10 @@ class PolarBleService {
     await _hrStreamController.close();
     await _ecgStreamController.close();
     await _accStreamController.close();
+    await _ppgStreamController.close();
+    await _ppiStreamController.close();
+    await _gyroStreamController.close();
+    await _magStreamController.close();
     await _scanStreamController.close();
   }
 
@@ -3844,8 +4314,32 @@ class PolarBleService {
       }
     }
 
+    for (final (name, supported, start) in [
+      ('ppg', supportsPpg, startPpg),
+      ('ppi', supportsPpi, startPpi),
+      ('gyro', supportsGyro, startGyro),
+      ('mag', supportsMagnetometer, startMagnetometer),
+    ]) {
+      if (!configuration.hasSensor(name)) continue;
+      if (supported) {
+        await run(name, start);
+      } else {
+        errors[name] = 'No soportado por $_lastDeviceName';
+      }
+    }
+
     return errors;
   }
+
+  /// Feeds a PMD data notification as if the sensor had sent it (tests).
+  @visibleForTesting
+  void handlePmdDataForTest(Uint8List data) => _handlePmdData(data);
+
+  /// Applies the parameters of a PMD start response: sample rate and factor
+  /// of a stream (tests).
+  @visibleForTesting
+  void applyStartResponseForTest(int measurementType, Uint8List payload) =>
+      _updatePmdSettingsFromResponse(payload, measurementType: measurementType);
 }
 
 class _ConnectCancelled implements Exception {
@@ -3932,11 +4426,7 @@ class PmdClockObservation {
       'arrival_utc,stream,frame_sensor_time_ns,offset_us';
 
   String toCsvRow() {
-    final stream = switch (measurementType) {
-      PolarBleService.pmdTypeEcg => 'ecg',
-      PolarBleService.pmdTypeAcc => 'acc',
-      _ => '$measurementType',
-    };
+    final stream = PolarBleService.pmdStreamNames[measurementType] ?? '$measurementType';
     final arrival = DateTime.fromMicrosecondsSinceEpoch(arrivalHostMicros, isUtc: true);
     return '${arrival.toIso8601String()},$stream,$frameSensorNs,$offsetMicros';
   }
@@ -3985,6 +4475,157 @@ class PolarAccelerationSample {
   }
 }
 
+
+// =============================================================================
+// VERITY SENSE SAMPLES: PPG, PPI, GYRO, MAGNETOMETER
+// =============================================================================
+
+/// One PPG sample of the Verity Sense: raw 22-bit counts of its three green
+/// channels and of the ambient-light channel (PMD PPG frame type 0).
+class PolarPpgSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final int ppg0;
+  final int ppg1;
+  final int ppg2;
+  final int ambient;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarPpgSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.ppg0,
+    required this.ppg1,
+    required this.ppg2,
+    required this.ambient,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,ppg0,ppg1,ppg2,ambient,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$ppg0,$ppg1,$ppg2,$ambient,${sensorTimeNs ?? ''}';
+}
+
+/// One pulse of Polar's PPI algorithm (Verity Sense): the interval to the
+/// previous pulse, the heart rate the algorithm derives from it, its error
+/// estimate and the flags of the sensor.
+class PolarPpiSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final int ppiMs;
+  final int heartRateBpm;
+  final int errorEstimateMs;
+
+  /// Movement detected: the interval is not reliable.
+  final bool blocker;
+  final bool skinContact;
+  final bool skinContactSupported;
+
+  /// Position of the pulse in its batch, which orders the pulses of a batch
+  /// that shares one arrival time.
+  final int indexInFrame;
+
+  /// Sensor clock of the pulse (ns) when the frame carried one.
+  final int? sensorTimeNs;
+
+  const PolarPpiSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.ppiMs,
+    required this.heartRateBpm,
+    required this.errorEstimateMs,
+    required this.blocker,
+    required this.skinContact,
+    required this.skinContactSupported,
+    required this.indexInFrame,
+    this.sensorTimeNs,
+  });
+
+  /// Source of [heartRateBpm], see [PolarHrSample.hrSource].
+  static const String hrSource = 'verity_ppi_firmware';
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,ppi_ms,hr_bpm,error_estimate_ms,'
+      'blocker,skin_contact,skin_contact_supported,index_in_frame,sensor_time_ns,hr_source';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$ppiMs,$heartRateBpm,$errorEstimateMs,${blocker ? 1 : 0},${skinContact ? 1 : 0},'
+      '${skinContactSupported ? 1 : 0},$indexInFrame,${sensorTimeNs ?? ''},$hrSource';
+}
+
+/// One gyroscope sample of the Verity Sense, in degrees per second.
+class PolarGyroSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final double xDps;
+  final double yDps;
+  final double zDps;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarGyroSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.xDps,
+    required this.yDps,
+    required this.zDps,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,gyro_x_dps,gyro_y_dps,gyro_z_dps,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$xDps,$yDps,$zDps,${sensorTimeNs ?? ''}';
+}
+
+/// One magnetometer sample of the Verity Sense, in gauss.
+class PolarMagSample {
+  final DateTime timestamp;
+  final String participantId;
+  final int activityIndex;
+  final String phaseName;
+  final double xGauss;
+  final double yGauss;
+  final double zGauss;
+
+  /// Sensor clock of the sample (ns), before mapping it to the host clock.
+  final int? sensorTimeNs;
+
+  const PolarMagSample({
+    required this.timestamp,
+    required this.participantId,
+    required this.activityIndex,
+    required this.phaseName,
+    required this.xGauss,
+    required this.yGauss,
+    required this.zGauss,
+    this.sensorTimeNs,
+  });
+
+  static const String csvHeader =
+      'timestamp_iso,participant_id,activity_index,phase_name,mag_x_gauss,mag_y_gauss,mag_z_gauss,sensor_time_ns';
+
+  String toCsvRow() => '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,'
+      '$xGauss,$yGauss,$zGauss,${sensorTimeNs ?? ''}';
+}
 
 // ===========================================================================
 // POLAR BIT READER

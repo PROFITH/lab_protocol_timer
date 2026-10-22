@@ -26,7 +26,7 @@ void main() {
 
       final verity = configuration.deviceById('verity_arm')!;
       expect(verity.isLive, isTrue);
-      expect(verity.sensors, {'heart_rate', 'acc'});
+      expect(verity.sensors, {'heart_rate', 'acc', 'ppg', 'ppi', 'gyro', 'mag'});
 
       final h10 = configuration.devices.firstWhere((d) => d.type == 'polar_h10');
       expect(h10.sensors, containsAll(['heart_rate', 'rr', 'acc', 'ecg']));

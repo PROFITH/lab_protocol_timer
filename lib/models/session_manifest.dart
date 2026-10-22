@@ -35,12 +35,21 @@ Map<String, dynamic> buildSessionManifest({
     final liveSensors = device.sensors.difference({'video'});
     if (!device.isLive || liveSensors.isEmpty) continue;
 
+    // The signals asked to the device and the files that got rows, so SAVES
+    // knows what to look for (`polar_<signal>_<device>_<stamp>.csv`).
+    final files = [
+      for (final path in generatedFiles)
+        path.split(RegExp(r'[\\/]')).last,
+    ].where((name) => name.startsWith('polar_') && name.contains('_${device.deviceId}_')).toList()
+      ..sort();
     sensors[device.deviceId] = {
       'present': true,
       'timestamp_domain': 'native_plus_host_utc',
       'device_name': device.deviceName,
       if (device.placement != null) 'placement': device.placement,
       'connection': 'live',
+      'signals': liveSensors.toList()..sort(),
+      'files': files,
     };
   }
 

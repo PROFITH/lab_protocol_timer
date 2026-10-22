@@ -6,7 +6,9 @@ import '../services/polar_ble_service.dart';
 import '../session/csv_stream_writer.dart';
 
 /// Streams the samples of one Polar device into the session folder while
-/// the session runs.
+/// the session runs: one file per signal (`polar_hr`, `polar_acc`,
+/// `polar_ecg`, and on the Verity Sense `polar_ppg`, `polar_ppi`,
+/// `polar_gyro`, `polar_mag`), plus the clock and connection logs.
 ///
 /// The service keeps every sample in memory as it arrives; this moves them
 /// to the files about once a second and empties the lists, so a crash loses
@@ -30,6 +32,10 @@ class PolarSessionFiles {
   late final CsvStreamWriter hr = _writer('polar_hr', PolarHrSample.csvHeader);
   late final CsvStreamWriter acc = _writer('polar_acc', PolarAccelerationSample.csvHeader);
   late final CsvStreamWriter ecg = _writer('polar_ecg', PolarEcgSample.csvHeader);
+  late final CsvStreamWriter ppg = _writer('polar_ppg', PolarPpgSample.csvHeader);
+  late final CsvStreamWriter ppi = _writer('polar_ppi', PolarPpiSample.csvHeader);
+  late final CsvStreamWriter gyro = _writer('polar_gyro', PolarGyroSample.csvHeader);
+  late final CsvStreamWriter mag = _writer('polar_mag', PolarMagSample.csvHeader);
   late final CsvStreamWriter events =
       _writer('polar_connection_events', PolarConnectionEvent.csvHeader);
   late final CsvStreamWriter clock = _writer('polar_clock', PmdClockObservation.csvHeader);
@@ -42,7 +48,7 @@ class PolarSessionFiles {
   int _eventsWritten = 0;
   bool _stopped = false;
 
-  List<CsvStreamWriter> get _writers => [hr, acc, ecg, events, clock];
+  List<CsvStreamWriter> get _writers => [hr, acc, ecg, ppg, ppi, gyro, mag, events, clock];
 
   CsvStreamWriter _writer(String kind, String header) => CsvStreamWriter(
         '$directory${Platform.pathSeparator}${kind}_${deviceId}_$stamp.csv',
@@ -60,12 +66,20 @@ class PolarSessionFiles {
   int get hrRows => hr.rows;
   int get accRows => acc.rows;
   int get ecgRows => ecg.rows;
+  int get ppgRows => ppg.rows;
+  int get ppiRows => ppi.rows;
+  int get gyroRows => gyro.rows;
+  int get magRows => mag.rows;
 
   void start() {
     // What arrived before the session is not part of it.
     service.recordedSamples.clear();
     service.recordedAccelerationSamples.clear();
     service.recordedEcgSamples.clear();
+    service.recordedPpgSamples.clear();
+    service.recordedPpiSamples.clear();
+    service.recordedGyroSamples.clear();
+    service.recordedMagSamples.clear();
     service.clockObservations.clear();
     // The connection history of the device is (a few rows).
     _eventsWritten = 0;
@@ -88,6 +102,10 @@ class PolarSessionFiles {
     }
     _move(service.recordedAccelerationSamples, acc, (s) => s.toCsvRow());
     _move(service.recordedEcgSamples, ecg, (s) => s.toCsvRow());
+    _move(service.recordedPpgSamples, ppg, (s) => s.toCsvRow());
+    _move(service.recordedPpiSamples, ppi, (s) => s.toCsvRow());
+    _move(service.recordedGyroSamples, gyro, (s) => s.toCsvRow());
+    _move(service.recordedMagSamples, mag, (s) => s.toCsvRow());
     _move(service.clockObservations, clock, (s) => s.toCsvRow());
     final history = service.connectionEvents;
     if (_eventsWritten > history.length) _eventsWritten = 0;

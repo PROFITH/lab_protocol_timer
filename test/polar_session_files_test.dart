@@ -44,6 +44,50 @@ void main() {
     });
   });
 
+  test('the Verity Sense streams get their own files', () async {
+    final dir = await Directory.systemTemp.createTemp('lpt_polar_');
+    final service = PolarBleService();
+    final files = PolarSessionFiles(directory: dir.path, stamp: '20261022_100000', deviceId: 'verity_arm', service: service)
+      ..start();
+    final now = DateTime.now().toUtc();
+    service.recordedPpgSamples.add(PolarPpgSample(
+      timestamp: now, participantId: '001', activityIndex: 1, phaseName: 'activity_main',
+      ppg0: 100000, ppg1: 100100, ppg2: 100200, ambient: 4000, sensorTimeNs: 5000000000,
+    ));
+    service.recordedPpiSamples.add(PolarPpiSample(
+      timestamp: now, participantId: '001', activityIndex: 1, phaseName: 'activity_main',
+      ppiMs: 850, heartRateBpm: 70, errorEstimateMs: 8, blocker: false, skinContact: true,
+      skinContactSupported: true, indexInFrame: 0,
+    ));
+    service.recordedGyroSamples.add(PolarGyroSample(
+      timestamp: now, participantId: '001', activityIndex: 1, phaseName: 'activity_main',
+      xDps: 1.5, yDps: -2.5, zDps: 0.25, sensorTimeNs: 5000000000,
+    ));
+    service.recordedMagSamples.add(PolarMagSample(
+      timestamp: now, participantId: '001', activityIndex: 1, phaseName: 'activity_main',
+      xGauss: 0.1, yGauss: 0.2, zGauss: -0.3, sensorTimeNs: 5000000000,
+    ));
+    files.drain();
+    expect(service.recordedPpgSamples, isEmpty);
+    expect(service.recordedGyroSamples, isEmpty);
+    expect([files.ppgRows, files.ppiRows, files.gyroRows, files.magRows], [1, 1, 1, 1]);
+
+    final written = (await files.stop()).map((p) => p.split(Platform.pathSeparator).last).toList();
+    expect(written, containsAll([
+      'polar_ppg_verity_arm_20261022_100000.csv',
+      'polar_ppi_verity_arm_20261022_100000.csv',
+      'polar_gyro_verity_arm_20261022_100000.csv',
+      'polar_mag_verity_arm_20261022_100000.csv',
+    ]));
+    expect(written.where((n) => n.startsWith('polar_hr_') || n.startsWith('polar_acc_') || n.startsWith('polar_ecg_')), isEmpty);
+    final ppi = File('${dir.path}${Platform.pathSeparator}polar_ppi_verity_arm_20261022_100000.csv').readAsLinesSync();
+    expect(ppi.first, PolarPpiSample.csvHeader);
+    expect(ppi[1], endsWith(',850,70,8,0,1,1,0,,verity_ppi_firmware'));
+    final gyro = File('${dir.path}${Platform.pathSeparator}polar_gyro_verity_arm_20261022_100000.csv').readAsLinesSync();
+    expect(gyro[1], endsWith(',1.5,-2.5,0.25,5000000000'));
+    await dir.delete(recursive: true);
+  });
+
   test('the files of a session get the samples once and in order', () async {
     final dir = await Directory.systemTemp.createTemp('lpt_polar_');
     final service = PolarBleService();
