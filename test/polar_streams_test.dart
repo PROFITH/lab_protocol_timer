@@ -238,6 +238,51 @@ void main() {
     });
   });
 
+  group('PPG rate of older Verity Sense firmware', () {
+    test('a single offered rate of 135 Hz on a Verity Sense means 55 Hz', () {
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [135], reportedRateHz: 135, deviceName: 'Polar Sense B2C3D4'),
+        55,
+      );
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [135], reportedRateHz: 135, deviceType: 'verity_sense'),
+        55,
+      );
+      // Fixed firmware offers 55 Hz and is right.
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [55], reportedRateHz: 55, deviceType: 'verity_sense'),
+        isNull,
+      );
+      // In SDK mode the sensor offers several rates and reports them right.
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [28, 44, 55, 135, 176], reportedRateHz: 135, deviceType: 'verity_sense'),
+        isNull,
+      );
+      // The OH1 has the opposite issue.
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [130], reportedRateHz: 130, deviceName: 'Polar OH1 123456'),
+        135,
+      );
+      // An H10 never streams PPG; nothing is corrected.
+      expect(
+        PolarBleService.correctedPpgRate(
+            offeredRates: [135], reportedRateHz: 135, deviceType: 'polar_h10', deviceName: 'Polar H10 1'),
+        isNull,
+      );
+    });
+
+    test('the setting asked for is the preferred one when offered, else the highest', () {
+      expect(PolarBleService.pickSetting([26, 52, 104], 52), 52);
+      expect(PolarBleService.pickSetting([26, 52, 104], 55), 104);
+      expect(PolarBleService.pickSetting([135], null), 135);
+    });
+  });
+
   group('start commands and the clock log', () {
     test('a Verity stream asks for the preferred rate and range it offers', () {
       final offered = {

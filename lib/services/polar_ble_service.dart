@@ -1584,11 +1584,13 @@ class PolarBleService {
     if (isStreaming(name)) return;
 
     final Uint8List command;
+    var offeredRates = const <int>[];
     if (type == pmdTypePpi) {
       command = Uint8List.fromList([pmdOpStartMeasurement, pmdTypePpi]);
     } else {
       final options = await _settingsOffered(type);
-      if (options[pmdSettingSampleRate]?.isNotEmpty != true) {
+      offeredRates = options[pmdSettingSampleRate] ?? const [];
+      if (offeredRates.isEmpty) {
         throw Exception('El sensor no ofrece ajustes de ${name.toUpperCase()}');
       }
       command = startCommandFor(type, options, preferredRateHz: preferredRateHz, preferredRange: preferredRange);
@@ -1600,6 +1602,27 @@ class PolarBleService {
       throw Exception('${name.toUpperCase()} START rechazado por PMD: ${response.errorCode}');
     }
     _updatePmdSettingsFromResponse(response.payload, measurementType: type);
+    if (offeredRates.isNotEmpty && type != pmdTypeAcc) {
+      // The start response echoes the settings; without them, the rate asked
+      // for is the one in force. Older Verity Sense firmware reports a PPG
+      // rate it does not sample at, and the timestamps need the real one.
+      final reported = _pmdSampleRateHz[type] ?? pickSetting(offeredRates, preferredRateHz);
+      final corrected = type == pmdTypePpg
+          ? correctedPpgRate(
+              offeredRates: offeredRates,
+              reportedRateHz: reported,
+              deviceName: _lastDeviceName,
+              deviceType: deviceType,
+            )
+          : null;
+      _pmdSampleRateHz[type] = corrected ?? reported;
+      if (corrected != null) {
+        _logEvent(
+          'ppg_rate_corrected',
+          'el sensor dice $reported Hz pero muestrea a $corrected Hz (problema conocido del firmware)',
+        );
+      }
+    }
     _removePmdTimingKeys(measurementType: type);
     _lastPmdDataAt = DateTime.now();
     _setStreaming(type, true);
@@ -2060,17 +2083,39 @@ class PolarBleService {
   /// Start command for a PMD stream from the settings the sensor offers: the
   /// preferred rate and range when offered (else the highest), the highest
   /// resolution and the most channels, as the Polar SDK's `maxSettings`.
+  /// The value asked to the sensor among the [values] it offers: [preferred]
+  /// when offered, otherwise the highest.
+  static int pickSetting(List<int> values, int? preferred) =>
+      preferred != null && values.contains(preferred)
+          ? preferred
+          : values.reduce((a, b) => a > b ? a : b);
+
+  /// Polar's known PPG issue (polar-ble-sdk, KnownIssues.md): in normal mode
+  /// the Verity Sense with firmware 1.1.5 to 2.1.0 offers a single PPG rate,
+  /// 135 Hz, but samples at 55 Hz; the OH1 offers 130 Hz but samples at
+  /// 135 Hz. The sample timestamps need the real rate, so this returns it, or
+  /// null when the sensor is right. Several offered rates mean SDK mode,
+  /// where the sensor reports them correctly.
+  static int? correctedPpgRate({
+    required List<int> offeredRates,
+    required int reportedRateHz,
+    String deviceName = '',
+    String deviceType = '',
+  }) {
+    if (offeredRates.length != 1) return null;
+    final name = deviceName.toLowerCase();
+    if (name.contains('oh1')) return reportedRateHz == 130 ? 135 : null;
+    final verity = deviceType == 'verity_sense' || name.contains('sense');
+    if (verity && reportedRateHz == 135) return 55;
+    return null;
+  }
+
   static Uint8List startCommandFor(
     int type,
     Map<int, List<int>> options, {
     int? preferredRateHz,
     int? preferredRange,
   }) {
-    int pick(List<int> values, int? preferred) =>
-        preferred != null && values.contains(preferred)
-            ? preferred
-            : values.reduce((a, b) => a > b ? a : b);
-
     final bytes = <int>[pmdOpStartMeasurement, type];
     void add(int settingType, int value) {
       final size = _pmdSettingFieldSize(settingType);
@@ -2089,7 +2134,7 @@ class PolarBleService {
     ]) {
       final values = options[settingType];
       if (values != null && values.isNotEmpty) {
-        add(settingType, pick(values, preferred));
+        add(settingType, pickSetting(values, preferred));
       }
     }
     return Uint8List.fromList(bytes);

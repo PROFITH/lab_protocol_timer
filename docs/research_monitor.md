@@ -29,8 +29,14 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
     the heart rate of the HR service is updated only every 5 s, and the
     first batch of pulses arrives about 25 s after the start; the sensor
     then sends them in batches, each stamped with the sensor time of its
-    last pulse when the firmware provides it. Skin-contact flags of the
-    Verity Sense are unreliable (Polar's own note).
+    last pulse when the firmware provides it. Polar's notes: the PPI is only
+    accurate at complete rest (during movement `blocker` is 1 and the heart
+    rate of the PPI rows is held at the last reliable value), and the
+    skin-contact flags of the Verity Sense are unreliable.
+  - PPG rate of older firmware: a Verity Sense with firmware 1.1.5 to 2.1.0
+    offers a single PPG rate of 135 Hz while it samples at 55 Hz (Polar's
+    known issue). The sample timestamps use the real rate, and the
+    connection log notes it (`ppg_rate_corrected`).
   - Heart-rate source: every row of `polar_hr_*` carries `hr_source`
     (`h10_ecg_firmware`: the H10 derives it from the ECG;
     `verity_ppg_firmware`: the Verity Sense from the PPG), and the PPI rows

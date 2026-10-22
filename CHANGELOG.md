@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every signal of the Polar Verity Sense:** besides heart rate and ACC, the Research Monitor now records the raw PPG (`polar_ppg_*`, three channels plus ambient light, 55 Hz), the pulse-to-pulse intervals of Polar's PPI algorithm (`polar_ppi_*`, with its heart rate, error estimate and flags), the gyroscope (`polar_gyro_*`, dps) and the magnetometer (`polar_mag_*`, gauss), each with the sensor's own time and mapped to the host clock like ACC and ECG. The settings of each stream are negotiated with the sensor as the Polar SDK does.
 - **Heart-rate source:** `polar_hr_*` files carry `hr_source` (`h10_ecg_firmware`, `verity_ppg_firmware`), and the PPI rows `verity_ppi_firmware`, so an analysis always knows which device and signal produced an estimate.
 - **Manifest:** each live sensor lists its requested `signals` and the `files` that got rows (optional fields, format 1.1).
+- **PPG rate of older firmware:** a Verity Sense with firmware 1.1.5 to 2.1.0 reports a PPG rate of 135 Hz while sampling at 55 Hz (Polar's known issue); the Research Monitor uses the real rate for the sample timestamps and notes it in `polar_connection_events_*` (`ppg_rate_corrected`).
 
 ## [1.0.0] - 2026-08-22
 
