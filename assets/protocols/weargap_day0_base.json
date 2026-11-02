@@ -1,6 +1,6 @@
 {
   "protocol_id": "weargap_day0_base",
-  "protocol_version": "1",
+  "protocol_version": "2",
   "title": "WEARGAP día 0 (base)",
   "study": "WEARGAP",
   "moments": [
@@ -138,6 +138,12 @@
       "placement": "wrist",
       "dominance": "non_dominant",
       "free_living": true
+    },
+    {
+      "sensor_id": "matrix_wnd",
+      "type": "matrix",
+      "placement": "wrist",
+      "dominance": "non_dominant"
     },
     {
       "sensor_id": "ax3_thigh",
