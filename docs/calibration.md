@@ -14,12 +14,12 @@ The program (`lib/calibration/calibration_program.dart`):
 
 | Step | Duration |
 |---|---|
-| Still, face 1 up | 2:00 |
+| Face 1 up, get ready (the last beep marks the knocks) | 0:10 |
 | Three sharp knocks | 0:10 |
 | Faces 1 to 12, each one up | 0:40 each (1:00 with the 6-face box) |
 | Three sharp knocks | 0:10 |
 
-About 10 min with 12 faces. Three beeps (one per second) come before every change; at the change a go beep sounds and the voice says the new face («Cara 5.»). The drawing turns to the face that goes up, highlighted. Faces are numbered like the printed dodecahedron: 1 on top, 2-6 around it, 7-11 below, 12 at the bottom; opposite faces add up to 13.
+About 8 min 20 s with 12 faces (the 2-min still start became 10 s to get ready in 1.3.1). Three beeps (one per second) come before every change; at the change a go beep sounds and the voice says the new face («Cara 5.»). The drawing turns to the face that goes up, highlighted. Faces are numbered like the printed dodecahedron: 1 on top, 2-6 around it, 7-11 below, 12 at the bottom; opposite faces add up to 13.
 
 Closing the screen during a calibration asks first; what was done is kept but does not count as a calibration.
 

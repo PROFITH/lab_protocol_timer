@@ -18,13 +18,13 @@ void main() {
   setUp(() => root = Directory.systemTemp.createTempSync('lpt_calib_'));
   tearDown(() => root.deleteSync(recursive: true));
 
-  test('the 12-face program: 2 min still, knocks, 40 s per face, knocks', () {
+  test('the 12-face program: 10 s to get ready, knocks, 40 s per face, knocks', () {
     final p = CalibrationProgram();
-    expect(p.totalSeconds, 120 + 10 + 12 * 40 + 10);
+    expect(p.totalSeconds, 10 + 10 + 12 * 40 + 10);
     expect(p.stepAt(0)!.kind, CalibrationStepKind.still);
-    expect(p.stepAt(125)!.kind, CalibrationStepKind.knock);
-    expect(p.stepAt(130)!.face, 1);
-    expect(p.stepAt(130 + 11 * 40 + 1)!.face, 12);
+    expect(p.stepAt(10)!.kind, CalibrationStepKind.knock);
+    expect(p.stepAt(20)!.face, 1);
+    expect(p.stepAt(20 + 11 * 40 + 1)!.face, 12);
     expect(p.stepAt(p.totalSeconds.toDouble()), isNull);
     expect(CalibrationProgram(faces: 6).faceSeconds, 60);
     // The instructions are for the technician, never for a participant.
@@ -193,7 +193,7 @@ void main() {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
       await tester.pump();
     }
-    expect(audio.said.first, 'Calibración. Cara 1 arriba, quieto.');
+    expect(audio.said.first, 'Calibración. Cara 1 arriba. En 5 segundos, tres golpes secos.');
 
     for (var i = 0; i < program.totalSeconds * 10 + 5 && !popped; i++) {
       clock.advance(const Duration(milliseconds: 100));
