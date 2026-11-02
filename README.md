@@ -10,20 +10,23 @@ The app captures high-precision timestamps to isolate active exercise windows fr
 
 ## Features
 
-- **Accelerometer Time-Synchronization:** Visual and acoustic prompts during pre- and post-activity static phases to perform controlled sensor-to-sensor clapping events, facilitating offline clock synchronization.
+- **Accelerometer Time-Synchronization:** Visual and acoustic prompts during pre- and post-activity static phases for a sharp clap or a jump that every sensor feels, so SAVES can synchronize the offline sensors and the video.
 - **Precise Activity Isolation:** Explicit logging of exact exercise boundaries (`activityStartTime`, `activityEndTime`), separating movement from static baseline and transition intervals.
 - **Multi-Participant Setup:** Simultaneous tracking of multiple participants in a single lab trial, allowing individual assignment of Participant IDs and REDCap longitudinal event arms (e.g., *Day 0 — Initial Visit* or *Day 8 — Final Visit*).
 - **Aggregated REDCap Batch Export:** Automated flat-record data transfer delivering key aggregated metrics: total protocol duration, total activity duration, total transition time, and total completed stations.
 - **Local State Persistence & Recovery:** Automatic local storage (`SharedPreferences`) on every lap/activity to restore interrupted sessions following accidental tab closures or browser reloads.
 - **Audio & TTS Voice Prompts:** Integrated audio alerts and Text-to-Speech narration for phase transitions and sensor synchronization commands.
+- **Session Setup:** Pick a base protocol (RUN4HEALTH, WEARGAP day 0 and day 8) or a saved one, edit its activities (order, 2024 Compendium code and MET, durations, calibration box segments) and sensors (type, including ActiGraph GT3X and GENEActiv; placement with optional dominance and side; serial), and save it under a name; the closing visit reuses each participant's sensors. JSON import and export remain; see [docs/protocol_format.md](docs/protocol_format.md) and [docs/base_protocols.md](docs/base_protocols.md).
+- **SAVES Session Output:** Each session folder holds `session_manifest.json` (format 1.1), `sync_windows.csv` and `activity_markers.csv`, read by [SAVES](https://github.com/PROFITH/saves_app) to synchronize offline sensors and video.
+- **Every signal of the live sensors:** the Research Monitor records everything a Polar sensor offers over Bluetooth, one CSV per signal on the host clock. H10: heart rate with RR intervals, ECG (130 Hz) and ACC (200 Hz). Verity Sense: heart rate, ACC (52 Hz), raw PPG (55 Hz, three channels plus ambient light), the pulse-to-pulse intervals of Polar's PPI algorithm, gyroscope (52 Hz, ±2000 dps) and magnetometer (50 Hz). Every heart-rate row says where the estimate comes from (`hr_source`: `h10_ecg_firmware`, `verity_ppg_firmware`, `verity_ppi_firmware`). See [docs/research_monitor.md](docs/research_monitor.md) and the file catalogue in SAVES's `docs/session_format.md`.
 
 ---
 
 ## Protocol Structure per Activity
 
-1. **Initial Static Baseline (30 s default):** Subject remains motionless. A 5-second countdown prompts the initial accelerometer synchronization clap.
+1. **Initial Static Baseline (30 s default):** Subject remains motionless. A 3-2-1 countdown puts the go for the synchronization clap or jump in the middle of the phase (15 s into a 30-s phase).
 2. **Main Activity (Configurable duration):** Active exercise phase. Triggers and records `activityStartTime`.
-3. **Final Static Baseline (30 s default):** Immediate cessation of movement and logging of `activityEndTime`. The first 5 seconds prompt the final synchronization clap.
+3. **Final Static Baseline (30 s default):** Immediate cessation of movement and logging of `activityEndTime`, with a second clap or jump after the same countdown.
 4. **Lap / Transition Mode:** Manual pause interval for station rotation or protocol completion.
 
 ---
@@ -50,12 +53,31 @@ Ensure you have the [Flutter SDK](https://docs.flutter.dev/get-started/install) 
 
 ## REDCap Configuration
 
-Set your REDCap endpoint and API credentials in `lib/services/lab_redcap_service.dart`:
+REDCap is optional. On the start screen, **REDCap (opcional) → Conectar** asks for the API address (default `https://minerva.ugr.es/api/`, the address the UGR gives for its REDCap, which only accepts connections from the UGR network or its VPN) and the project's API token, tries them (**Probar conexión** shows the project title and its events) and keeps them on this computer. The same build works with any REDCap project: the visit list shows the events of the project the token belongs to (RUN4HEALTH's Day 0 and Day 8 until REDCap has answered once), and in a project without events the records go without `redcap_event_name`. **Quitar token** removes it.
 
-```dart
-static const String _redcapUrl = '[https://your-redcap-instance.org/api/](https://your-redcap-instance.org/api/)';
-static const String _apiToken = 'YOUR_REDCAP_API_TOKEN';
+Without a token, nothing is sent: each session is saved only in its folder, with the records in `redcap_records.json`, and **Enviar a REDCap una sesión guardada…** sends them once a token is set.
+
+### Records from the phones (healthy_tracker)
+
+The phones cannot reach the UGR's REDCap from home, so healthy_tracker leaves its records as `healthy_tracker_*.json` files in the study's Google Drive folder, or they are copied from the phone by cable (see healthy_tracker's `docs/drive_upload.md` and `docs/export_format.md`). **Enviar a REDCap los registros del móvil (healthy_tracker)…** on the start screen sends every such file of a folder and its subfolders (for example the Drive folder synced by Google Drive for desktop), with the VPN on:
+
+- The participant must already exist in REDCap; the app never creates a record.
+- Each new row gets the next free instance of `healthy_tracker` in its event. Rows REDCap already has, with the same type and times (to the minute), are skipped, so a file sent twice, or the same rows in a Drive file and a cable copy, add nothing. Photos (`meal_photo`) and videos (`act_video`) go to their instance unless REDCap already has a file there.
+- A file fully sent is renamed `…_enviado_<fecha>.json`. On an error (for example, no VPN) the file stays as it was and the summary says why; pressing the button again sends only what is missing.
+
+The folder chosen last is remembered on this computer (`lpt_phone_records_folder`). The code is in `lib/services/phone_records_import.dart`.
+
+The token is never written in the code. A build can still bring one, used while none is set in the app:
+
+```sh
+flutter build windows --release --dart-define=REDCAP_TOKEN=<project token>
+# another REDCap: --dart-define=REDCAP_URL=https://your-redcap-instance.org/api/
+build\windows\x64\runner\Release\lab_protocol_timer.exe
 ```
+
+Another project needs the same instruments and fields (below); if one is missing, REDCap refuses that import and the console says which.
+
+At the end of a session the app sends three imports, so one that fails does not stop the others: the protocol summary (`protocol_feasibility`, fields below), the session (`wearable_session`) with one instance of the repeating instrument `lab_activity` per attempt, and the fitness-test fields of `physical_fitness`. `lab_activity` must be enabled as a repeating instrument in the visit events. If an import fails, the console shows why and **Reintentar REDCap** sends it again.
 
 ### Required REDCap Data Dictionary Fields
 
