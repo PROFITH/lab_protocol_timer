@@ -14,9 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Samples of a frame:** spread between consecutive frame times as the Polar SDK does; the H10 accelerometer runs at about 203 Hz and 5 ms steps overlapped each frame with the one before by 2.5 ms.
 - **Heart rate:** its time is the arrival less the delay of the PMD frames at that moment, in the new last column `ble_delay_ms`.
 - A device without the Polar data service (a Garmin HRM-Pro+ was retried 21 times) is not retried; the panel says to choose the H10 or the Verity Sense.
+- **Verity Sense:** the device panel showed PPG, PPI, GYRO and MAG as stopped while they recorded (only ACC was checked); a stream now shows as receiving when its frames arrive. The data-loss watchdog tore down a Verity whose frames came 2-9 s late after 6 s without data, and reconnecting it on Windows failed for two minutes; it now waits 20 s, or 60 s while the heart rate keeps arriving.
 
 ### Added
 
+- Live charts of the Verity Sense PPG (first green channel) and gyroscope.
 - The device panel of the monitor warns when the link is more than 2 s behind and of the frames each stream lost (`ACC: 27 % de paquetes perdidos`); the connection events log `frames_lost`, `link_behind` and `link_caught_up`.
 
 ## [1.3.2] - 2026-11-02

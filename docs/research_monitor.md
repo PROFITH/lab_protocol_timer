@@ -127,6 +127,8 @@ then stop: they show what has arrived. The files stay right:
 The device panel of the monitor warns while it happens: «Bluetooth con 17 s
 de retraso» and «ACC: 27 % de paquetes perdidos».
 
+The data-loss watchdog reconnects a device whose PMD streams send nothing for 20 s (60 s while the heart rate keeps arriving): reconnecting a Verity Sense on Windows can fail for minutes, so a late link is not torn down.
+
 A device without the Polar data service (another brand's strap, such as a
 Garmin HRM-Pro+) is not retried: the panel says to choose the H10 or the
 Verity Sense.

@@ -411,7 +411,16 @@ class PolarBleService {
 
   /// Sin datos durante este tiempo con un flujo activo se considera pérdida
   /// de recepción y se fuerza la reconexión.
-  static const Duration dataLossTimeout = Duration(seconds: 6);
+  ///
+  /// Was 6 s: on 02/11/2026 a Verity Sense whose frames were arriving 2-9 s
+  /// late was torn down twice, and reconnecting it on Windows failed for two
+  /// minutes (the PMD characteristic asked for authentication), so the
+  /// session lost those minutes. A late link is not a lost one.
+  static const Duration dataLossTimeout = Duration(seconds: 20);
+
+  /// While the heart rate of the standard service keeps arriving the link
+  /// is up, and silent PMD streams get this long before a reconnection.
+  static const Duration pmdSilentWithHrTimeout = Duration(seconds: 60);
 
   static const List<Duration> _reconnectBackoff = [
     Duration(seconds: 2),
@@ -495,6 +504,15 @@ class PolarBleService {
   final Map<String, ({int received, int lost})> pmdFrameStats = {};
 
   final Map<int, int> _lastFrameNs = {};
+  final Map<String, DateTime> _lastFrameArrival = {};
+
+  /// Whether frames of the PMD stream [name] (`acc`, `ppg`...) arrived in
+  /// the last [within], whatever the app believes it started: the sensor
+  /// keeps streaming through a reconnection in which starting failed.
+  bool receivedRecently(String name, [Duration within = const Duration(seconds: 5)]) {
+    final last = _lastFrameArrival[name];
+    return last != null && DateTime.now().difference(last) < within;
+  }
   final Map<int, int> _frameSpanNs = {};
 
   /// Longest delay of the episode in which the link is behind (µs), or
@@ -514,6 +532,7 @@ class PolarBleService {
     final name = pmdStreamNames[measurementType] ?? '$measurementType';
     final previous = _lastFrameNs[measurementType];
     _lastFrameNs[measurementType] = frameNs;
+    _lastFrameArrival[name] = DateTime.now();
     var lost = 0;
     if (previous != null && frameNs > previous) {
       final gap = frameNs - previous;
@@ -786,7 +805,10 @@ class PolarBleService {
     if (_accStreaming || _ecgStreaming) {
       lastData = _lastPmdDataAt;
       stream = 'PMD (ACC/ECG)';
-      timeout = dataLossTimeout;
+      final hr = _lastHrDataAt;
+      timeout = hr != null && now.difference(hr) < const Duration(seconds: 5)
+          ? pmdSilentWithHrTimeout
+          : dataLossTimeout;
     } else if (_hrStreaming) {
       // HR puede pausarse si la banda pierde contacto con la piel, así que
       // se da más margen antes de considerarlo una pérdida de conexión.
