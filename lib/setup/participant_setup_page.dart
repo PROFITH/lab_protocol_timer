@@ -1283,7 +1283,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         : '${calibrations.length == 1 ? 'Calibración' : '${calibrations.length} calibraciones'} de hoy '
             '(la última ${hhmm(c.start)}–${hhmm(c.end)}), $devices '
             '${devices == 1 ? 'dispositivo' : 'dispositivos'}. '
-            '${missing > 0 ? 'Faltan $missing ${missing == 1 ? 'sensor' : 'sensores'} de los participantes.' : 'Se copia a la carpeta de cada participante.'}';
+            '${missing > 0 ? 'Faltan $missing ${missing == 1 ? 'sensor' : 'sensores'} de los participantes.' : 'Pasará a la carpeta de cada participante al empezar.'}';
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
       decoration: BoxDecoration(

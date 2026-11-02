@@ -794,18 +794,23 @@ class SessionController extends ChangeNotifier {
     return const CommandResult.ok();
   }
 
-  /// Puts in each participant's folder a copy of the calibration CSVs of
-  /// their sensors, so each folder stands on its own.
+  /// Moves the calibration CSVs used by the session to the folders of the
+  /// participants whose sensors they have (a copy in each, so each folder
+  /// stands on its own) and takes them out of `calibraciones/`.
   Future<void> _copyCalibration() async {
     final s = store;
     if (s == null || calibrations.isEmpty) return;
+    final used = <CalibrationRecord>{};
+    var failed = false;
     for (final p in participants) {
       final dir = s.directoryOf(p.participantId);
       final mine = calibrationsOf(p);
       for (final c in mine.values.toSet()) {
         try {
           await CalibrationStore.copyInto(c, [dir]);
+          used.add(c);
         } catch (e) {
+          failed = true;
           s.logEvent('calibration_copy_failed', detail: '${p.participantId}: $e');
         }
       }
@@ -814,6 +819,15 @@ class SessionController extends ChangeNotifier {
           'calibration',
           detail: '${p.participantId} ${sensor.sensorId} ${sensor.serial?.trim()}: ${c.fileName}',
         );
+      }
+    }
+    // Only when every copy is in place: a failed one keeps the original.
+    if (failed) return;
+    for (final c in used) {
+      try {
+        if (await c.file.exists()) await c.file.delete();
+      } catch (e) {
+        s.logEvent('calibration_move_failed', detail: '${c.fileName}: $e');
       }
     }
   }

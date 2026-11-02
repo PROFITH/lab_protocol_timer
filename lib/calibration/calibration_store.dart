@@ -100,16 +100,12 @@ class CalibrationRecord {
   }
 }
 
-/// Where calibrations are kept and how they reach each session.
+/// Where calibrations wait for their session: `calibraciones/` under the
+/// parent folder. When a session starts, each calibration used is moved to
+/// the folders of the participants whose sensors it has.
 class CalibrationStore {
   static const folderName = 'calibraciones';
   static const filePrefix = 'calibracion_';
-
-  /// One row per device and calibration, to follow each serial number over
-  /// time and to find the calibration of each sensor of a session.
-  static const indexName = 'calibraciones_dispositivos.csv';
-  static const indexHeader =
-      'calibration_file,device_type,serial,start_utc,end_utc,faces,completed';
 
   /// A calibration older than this is not taken as the one before a
   /// session (the sensors are charged and calibrated on the day).
@@ -154,26 +150,6 @@ class CalibrationStore {
       if (best == null || r.end.isAfter(best.end)) best = r;
     }
     return best;
-  }
-
-  /// Adds the devices of a complete calibration to the index.
-  static Future<void> addToIndex(String dataRoot, CalibrationRecord record) async {
-    final file = File('${folderOf(dataRoot).path}${Platform.pathSeparator}$indexName');
-    final exists = await file.exists();
-    final sink = file.openWrite(mode: FileMode.append);
-    if (!exists) sink.writeln(indexHeader);
-    for (final d in record.devices) {
-      sink.writeln([
-        record.fileName,
-        d.type,
-        d.serial.replaceAll(',', ' '),
-        record.start.toUtc().toIso8601String(),
-        record.end.toUtc().toIso8601String(),
-        record.faces,
-        record.completed ? 1 : 0,
-      ].join(','));
-    }
-    await sink.close();
   }
 
   /// Copies [record] into each of [folders], keeping its name.

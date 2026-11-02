@@ -68,12 +68,10 @@ void main() {
     await w.log('face_start', start.add(const Duration(seconds: 130)), face: 1);
     if (complete) await w.log('calibration_end', start.add(const Duration(minutes: 10)));
     await w.close();
-    final r = (await CalibrationRecord.read(w.file))!;
-    if (complete) await CalibrationStore.addToIndex(root.path, r);
-    return r;
+    return (await CalibrationRecord.read(w.file))!;
   }
 
-  test('calibrations are kept by device and found for each serial', () async {
+  test('calibrations are found by device and serial', () async {
     final now = DateTime.now().toUtc();
     final old = await writeCalibration(
         now.subtract(const Duration(days: 2)), [const CalibrationDevice('ax6', 'A1')]);
@@ -91,14 +89,9 @@ void main() {
     expect(CalibrationStore.forDevice(recent, 'ax3', 'A1'), isNull, reason: 'other type');
     expect(CalibrationStore.forDevice(recent, 'ax6', null), isNull);
 
-    final index = File('${CalibrationStore.folderOf(root.path).path}/${CalibrationStore.indexName}')
-        .readAsLinesSync();
-    expect(index.first, CalibrationStore.indexHeader);
-    expect(index.skip(1).map((l) => l.split(',').sublist(1, 3).join(':')),
-        ['ax6:A1', 'ax6:A1', 'ax3:X9']);
   });
 
-  test('a session copies the calibration of each sensor to its participant', () async {
+  test('a session moves the calibration of each sensor to its participant', () async {
     final now = DateTime.now().toUtc();
     final batch = await writeCalibration(now.subtract(const Duration(hours: 1)), [
       const CalibrationDevice('ax6', 'A1'),
@@ -128,6 +121,8 @@ void main() {
     final dir2 = c.store!.directoryOf('002').path;
     expect(File('$dir1/${batch.fileName}').existsSync(), isTrue);
     expect(File('$dir2/${batch.fileName}').existsSync(), isFalse);
+    // Moved, not copied: it is only in the participant's folder now.
+    expect(batch.file.existsSync(), isFalse);
 
     final manifest = c.manifestJsonFor(participants.first, status: 'complete');
     final calib = manifest['calibrations'] as List;

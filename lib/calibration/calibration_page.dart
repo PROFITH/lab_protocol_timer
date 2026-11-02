@@ -166,13 +166,6 @@ class _CalibrationPageState extends State<CalibrationPage> {
     widget.audio.play(SessionSound.end);
     widget.audio.say('Calibración terminada.');
     final record = await CalibrationRecord.read(writer.file);
-    if (record != null) {
-      try {
-        await CalibrationStore.addToIndex(widget.dataRoot, record);
-      } catch (e) {
-        debugPrint('[CALIBRACIÓN] No se pudo escribir el índice: $e');
-      }
-    }
     if (!mounted) return;
     Navigator.of(context).pop(record);
   }
@@ -274,8 +267,8 @@ class _CalibrationPageState extends State<CalibrationPage> {
                   ),
                 const SizedBox(height: 8),
                 Text(
-                  'Dura unos $minutes min. Se guarda en ${CalibrationStore.folderOf(widget.dataRoot).path} '
-                  'y se copia a las carpetas de los participantes al empezar la sesión.',
+                  'Dura unos $minutes min. Espera en ${CalibrationStore.folderOf(widget.dataRoot).path} '
+                  'y, al empezar la sesión, pasa a la carpeta de los participantes cuyos sensores lleva.',
                   style: const TextStyle(fontSize: 12, color: Colors.white60),
                 ),
               ],

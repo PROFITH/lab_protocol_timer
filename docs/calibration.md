@@ -27,13 +27,13 @@ The start screen shows the calibrations of today. Starting a session when an off
 
 ## Files
 
-Under the parent folder of the sessions:
+The app writes no sensor data: each sensor records on its own and is downloaded afterwards. It keeps only when each step happened, on this computer's clock.
+
+While waiting for its session, a calibration is under the parent folder of the sessions:
 
 ```
 calibraciones/
   calibracion_2026-11-03T08-15-00.csv
-  calibracion_2026-11-03T08-30-12.csv
-  calibraciones_dispositivos.csv
 ```
 
 `calibracion_<local date and time>.csv`, one row per event, written as it happens:
@@ -45,21 +45,14 @@ calibraciones/
 | `time_utc`, `time_local` | Time on this computer |
 | `detail` | Program for `calibration_start`; `type:serial` for `device` (`ax6:A1B2C3`) |
 
-`calibraciones_dispositivos.csv`, one row per device and complete calibration, to follow each serial number over time (the coefficients of the same device are expected to be stable):
-
-```
-calibration_file,device_type,serial,start_utc,end_utc,faces,completed
-calibracion_2026-11-03T08-15-00.csv,ax6,A1B2C3,2026-11-03T07:15:00.000Z,2026-11-03T07:25:20.000Z,12,1
-```
-
 ## In each session
 
-When a session starts, each offline sensor of each participant takes the latest complete calibration of the last 12 h that has its type and serial. Each participant's folder gets:
+When a session starts, each offline sensor of each participant takes the latest complete calibration of the last 12 h that has its type and serial. The calibration **moves** to the participant's folder: each participant whose sensors it has gets a copy (so each folder stands on its own for SAVES), and then it is deleted from `calibraciones/` (unless a copy failed). What stays in `calibraciones/` was not used by any session: a cancelled calibration, or one whose devices did not match. Each participant's folder then has:
 
-- a copy of the calibration CSVs of their sensors;
+- the calibration CSVs of their sensors;
 - in `session_manifest.json`, `calibrations`: one entry per calibrated sensor with `sensor_id`, `device_type`, `serial`, `file`, `start_utc`, `end_utc` and `faces`;
 - in the event log, one `calibration` event per sensor.
 
 REDCap receives `ws_calibration = 1`, `ws_calib_start` (start of the first calibration used) and `ws_calib_end` (end of the last one).
 
-To calibrate a participant's data later: read the serial of each sensor in the manifest, take its calibration file, and compute the coefficients from the sensor's own recording between `face_start` and `face_end` of each face (or look the serial up in `calibraciones_dispositivos.csv` for its whole history). The sensor clocks are not corrected here: SAVES aligns them with the session.
+To calibrate a participant's data later: read the serial of each sensor in the manifest, take its calibration file, and compute the coefficients from the sensor's own recording between `face_start` and `face_end` of each face; the knocks are a common mark to align the sensor clock with this computer's. The history of one serial number over time comes from going through the manifests (`calibrations` names the serial of each sensor). The app computes no coefficients, so any method fits.
