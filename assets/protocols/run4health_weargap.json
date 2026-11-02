@@ -1,6 +1,6 @@
 {
   "protocol_id": "run4health_weargap",
-  "protocol_version": "1",
+  "protocol_version": "2",
   "title": "RUN4HEALTH (WEARGAP)",
   "study": "RUN4HEALTH",
   "moments": [
@@ -29,65 +29,237 @@
       "duration_seconds": 300,
       "animation": "lie",
       "instructions": "Túmbate boca arriba, relajado. No hables ni te muevas.",
-      "resting_hr": true,
-      "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos."
+      "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos. Sin pasos (TFM 1).",
+      "resting_hr": true
     },
     {
-      "name": "De pie quieto",
-      "compendium_code": "07040",
-      "met": 1.3,
-      "duration_seconds": 240,
+      "name": "De pie sin desplazarse",
+      "compendium_code": "07041",
+      "met": 1.5,
+      "duration_seconds": 180,
       "animation": "stand",
-      "instructions": "Quédate de pie, quieto y relajado, con los brazos a los lados."
+      "instructions": "Quédate de pie sin dar pasos. Puedes cambiar el peso de pie, apoyarte o moverte en el sitio.",
+      "notes": "Negativo de pasos: cambios de postura y de apoyo, sin desplazarse."
     },
     {
-      "name": "Sentado escribiendo en el ordenador",
-      "compendium_code": "09040",
-      "met": 1.3,
-      "duration_seconds": 240,
-      "animation": "type",
-      "instructions": "Siéntate y escribe en el teclado a tu ritmo habitual."
+      "name": "Sentado golpeando con el talón",
+      "compendium_code": "07023",
+      "met": 1.8,
+      "duration_seconds": 120,
+      "animation": "sit",
+      "instructions": "Sentado, golpea el suelo con el talón una y otra vez, como cuando estás nervioso. Cambia de pie cada 30 segundos.",
+      "notes": "Negativo de pasos. El evaluador/a avisa del cambio de pie cada 30 s."
     },
     {
-      "name": "Caminar despacio con bolsas de la compra",
+      "name": "De pie golpeando con la puntera",
+      "compendium_code": "07041",
+      "met": 1.5,
+      "duration_seconds": 120,
+      "animation": "stand",
+      "instructions": "De pie, golpea el suelo con la puntera una y otra vez. Cambia de pie cada 30 segundos.",
+      "notes": "Negativo de pasos. El evaluador/a avisa del cambio de pie cada 30 s."
+    },
+    {
+      "name": "Caminar en cinta 3,0 km/h",
+      "compendium_code": "17346",
+      "met": 2.8,
+      "duration_seconds": 120,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina en la cinta con los brazos libres.",
+      "notes": "Primera de la cinta: la fase quieta inicial es de pie en el suelo, antes de subir. Pendiente 0 %."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina en la cinta con los brazos libres.",
+      "notes": "Pendiente 0 %. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Caminar en cinta 6,0 km/h",
+      "compendium_code": "17358",
+      "met": 4.8,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina en la cinta con los brazos libres.",
+      "notes": "Pendiente 0 %. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h al 5 %",
+      "compendium_code": "17034",
+      "met": 5.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "uphill",
+      "instructions": "Camina en la cinta cuesta arriba con los brazos libres.",
+      "notes": "Código del Compendio aproximado (subir cuestas 1-5 %, sin cinta). Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h al 10 %",
+      "compendium_code": "17035",
+      "met": 7.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "uphill",
+      "instructions": "Camina en la cinta cuesta arriba con los brazos libres.",
+      "notes": "Código del Compendio aproximado (subir cuestas 6-10 %, sin cinta). Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h con bolsas",
       "compendium_code": "05054",
       "met": 3.5,
-      "duration_seconds": 240,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
       "animation": "walk_bags",
-      "instructions": "Camina despacio con una bolsa en cada mano, sin parar."
+      "instructions": "Camina con una bolsa en cada mano, sin balancear los brazos.",
+      "notes": "Pendiente 0 %, una bolsa en cada mano (muñeca sin balanceo). Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
     },
     {
-      "name": "Barrer",
-      "compendium_code": "05010",
-      "met": 3.3,
-      "duration_seconds": 240,
-      "animation": "sweep",
-      "instructions": "Barre el suelo como lo harías en casa, sin parar."
+      "name": "Caminar en cinta 4,5 km/h escribiendo en el móvil",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina mientras escribes en el móvil con las dos manos.",
+      "notes": "Pendiente 0 %. Muñeca sin balanceo y marcha más irregular. Código del Compendio de la marcha sin móvil. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
     },
     {
-      "name": "Subir escaleras",
-      "compendium_code": "17131",
-      "met": 6.8,
-      "duration_seconds": 240,
-      "animation": "stairs",
-      "instructions": "Sube las escaleras a ritmo constante. Baja con calma y vuelve a subir."
+      "name": "Caminar en cinta 4,5 km/h agarrado a la barandilla",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina agarrado a la barandilla con las dos manos.",
+      "notes": "Opcional. Pendiente 0 %: el fallo típico de la muñeca. Al terminar se para la cinta y la fase quieta final es de pie en el suelo. Código del Compendio de la marcha sin barandilla."
     },
     {
-      "name": "Trotar a ritmo propio",
-      "compendium_code": "12020",
-      "met": 7.5,
-      "duration_seconds": 240,
+      "name": "Descanso sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 180,
+      "animation": "sit",
+      "instructions": "Siéntate y descansa. Puedes beber agua.",
+      "notes": "Entre la marcha y la carrera."
+    },
+    {
+      "name": "Correr en cinta 8 km/h",
+      "compendium_code": "12030",
+      "met": 8.5,
+      "duration_seconds": 120,
+      "post_seconds": 0,
       "animation": "run",
-      "instructions": "Trota a un ritmo cómodo y constante, el que podrías mantener mucho rato."
+      "instructions": "Corre en la cinta a ritmo constante.",
+      "notes": "Primera de la carrera: la fase quieta inicial es de pie en el suelo. Pendiente 0 %. Las velocidades se ajustan al nivel de cada corredor; se para si no puede mantenerla."
     },
     {
-      "name": "Sentarse y levantarse 30 s",
+      "name": "Correr en cinta 10 km/h",
+      "compendium_code": "12050",
+      "met": 9.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre en la cinta a ritmo constante.",
+      "notes": "Pendiente 0 %. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Correr en cinta 12 km/h",
+      "compendium_code": "12080",
+      "met": 11.8,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre en la cinta a ritmo constante.",
+      "notes": "Pendiente 0 %. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Correr en cinta 14 km/h",
+      "compendium_code": "12100",
+      "met": 12.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre en la cinta a ritmo constante.",
+      "notes": "Pendiente 0 %. Solo si su ritmo lo permite; si no, se salta. Cinta sin parar: el evaluador/a cambia velocidad o pendiente al empezar la actividad y el vídeo marca cuándo se alcanza. Sin fase quieta ni señal de sincronización."
+    },
+    {
+      "name": "Correr en cinta 10 km/h al 5 %",
+      "compendium_code": "12260",
+      "met": 13.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre en la cinta cuesta arriba a ritmo constante.",
+      "notes": "[PENDIENTE: confirmar que la ética cubre correr con pendiente.] Código del Compendio de 9,7 km/h al 5 %. Al terminar se para la cinta y la fase quieta final es de pie en el suelo."
+    },
+    {
+      "name": "Recuperación sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 300,
+      "animation": "sit",
+      "instructions": "Siéntate quieto y relajado. No hables.",
+      "notes": "Caída de la FC tras la carrera y descanso antes de las pruebas."
+    },
+    {
+      "name": "5 repeticiones de sentarse y levantarse (1)",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces lo más rápido que puedas.",
+      "notes": "Hasta 30 s. El tiempo de las 5 repeticiones sale del vídeo."
+    },
+    {
+      "name": "Pausa sentado quieto (1)",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "animation": "sit",
+      "instructions": "Siéntate quieto, sin hablar.",
+      "notes": "Quieto: el PPG registra la bajada de la FC."
+    },
+    {
+      "name": "5 repeticiones de sentarse y levantarse (2)",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces lo más rápido que puedas.",
+      "notes": "Segundo intento. El tiempo sale del vídeo."
+    },
+    {
+      "name": "Pausa sentado quieto (2)",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "animation": "sit",
+      "instructions": "Siéntate quieto, sin hablar.",
+      "notes": "Quieto: el PPG registra la bajada de la FC."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s (1)",
       "compendium_code": "02344",
       "met": 4.0,
       "duration_seconds": 30,
       "animation": "sit_to_stand",
       "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
-      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas.",
+      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas; van a REDCap.",
       "redcap": {
         "done_field": "chairstand_realiza",
         "start_field": "chairstand_start",
@@ -117,13 +289,40 @@
       }
     },
     {
+      "name": "Pausa sentado quieto (3)",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "animation": "sit",
+      "instructions": "Siéntate quieto, sin hablar.",
+      "notes": "Quieto: el PPG registra la bajada de la FC."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s (2)",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "notes": "Segundo intento. [PENDIENTE: campo de REDCap para sus repeticiones; mientras, se cuentan en el vídeo.]"
+    },
+    {
+      "name": "Quieto sentado tras la prueba",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 120,
+      "animation": "sit",
+      "instructions": "Siéntate quieto, sin hablar.",
+      "notes": "1-2 min quieto tras el último intento: bajada de la FC."
+    },
+    {
       "name": "Marcha de 6 minutos",
       "compendium_code": "17220",
       "met": 5.5,
       "duration_seconds": 360,
       "animation": "walk_fast",
       "instructions": "Camina lo más rápido que puedas sin correr, dando vueltas al circuito.",
-      "notes": "El evaluador/a B cuenta las vueltas y mide la distancia adicional al final.",
+      "notes": "En el pasillo. El evaluador/a B cuenta las vueltas y mide la distancia adicional al final. FC con H10, Verity y Matrix.",
       "redcap": {
         "done_field": "mwt_realiza",
         "start_field": "mwt_start",

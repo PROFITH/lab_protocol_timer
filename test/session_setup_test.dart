@@ -105,13 +105,31 @@ void main() {
     });
 
     test('RUN4HEALTH (WEARGAP) has the pilot sensors and the dodecahedron', () {
-      final base = _asset('assets/protocols/run4health_base.json');
       final p = _asset('assets/protocols/run4health_weargap.json');
       expect(p.study, 'RUN4HEALTH');
       expect(p.moments, [_day0, _day8]);
-      // The same 9 activities as the base, between two calibrations.
+      // The battery for the validation TFMs (2026-11-02): no steps, step
+      // negatives, treadmill walking and running, chair stands and the 6MWT,
+      // between two calibrations.
       final lab = p.activities.where((a) => !a.isCalibration).toList();
-      expect(lab.map((a) => a.name), base.activities.map((a) => a.name));
+      expect(lab, hasLength(28));
+      expect(lab.first.name, 'Tumbado en reposo');
+      expect(lab.first.restingHr, isTrue);
+      expect(lab.last.name, 'Marcha de 6 minutos');
+      expect(lab.last.redcap?.doneField, 'mwt_realiza');
+      // Only one chair-stand activity fills the REDCap fields.
+      expect(lab.where((a) => a.redcap?.doneField == 'chairstand_realiza'),
+          hasLength(1));
+      // On the moving belt there is no static phase, so no sync cue.
+      final belt = lab.where((a) => a.name.contains('cinta')).toList();
+      expect(belt, hasLength(13));
+      for (final a in belt.skip(1).take(6)) {
+        expect(a.prepSeconds, 0, reason: a.name);
+      }
+      for (final a in lab) {
+        expect(a.instructions, isNotNull, reason: a.name);
+        expect(activityAnimations, contains(a.animation), reason: a.name);
+      }
       expect(p.activities.first.isCalibration, isTrue);
       expect(p.activities.last.isCalibration, isTrue);
       for (final c in p.activities.where((a) => a.isCalibration)) {
