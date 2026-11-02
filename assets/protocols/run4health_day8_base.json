@@ -1,6 +1,6 @@
 {
   "protocol_id": "run4health_day8_base",
-  "protocol_version": "1",
+  "protocol_version": "2",
   "title": "RUN4HEALTH (base), día 8",
   "study": "RUN4HEALTH",
   "moments": [
@@ -13,15 +13,6 @@
   "ask_rpe": true,
   "lap_mode": false,
   "activities": [
-    {
-      "name": "Dodecaedro de calibración inicial",
-      "kind": "calibration",
-      "duration_seconds": 480,
-      "prep_seconds": 120,
-      "post_seconds": 30,
-      "faces": 12,
-      "notes": "Con los sensores recién cargados que se ponen el Día 8, ya grabando y antes de colocarlos. Dodecaedro quieto 2 min con la cara 1 arriba, tres golpes secos, 12 caras de 40 s y tres golpes al final. Sin dodecaedro impreso, caja rígida y 6 caras."
-    },
     {
       "name": "Tumbado en reposo",
       "compendium_code": "07011",
@@ -153,16 +144,6 @@
       "instructions": "Intenta tocar la rodilla de tu compañero sin que te toque la tuya.",
       "wait_before": true,
       "notes": "Solo con dos participantes a la vez. Sin empujones, en suelo despejado. Sirve de calentamiento para Cooper, que guía healthy_tracker fuera de esta sesión."
-    },
-    {
-      "name": "Dodecaedro de calibración final",
-      "kind": "calibration",
-      "duration_seconds": 480,
-      "prep_seconds": 120,
-      "post_seconds": 30,
-      "faces": 12,
-      "notes": "Tras la prueba de Cooper (healthy_tracker), al quitar los sensores de laboratorio, sin conectar ningún Axivity al USB. Misma secuencia que la inicial.",
-      "wait_before": true
     }
   ],
   "sensors": [
@@ -171,7 +152,8 @@
       "type": "matrix",
       "placement": "wrist",
       "dominance": "non_dominant",
-      "free_living": true
+      "sampling_rate_hz": 25,
+      "range_g": 8
     },
     {
       "sensor_id": "ax3_wnd",
@@ -190,19 +172,17 @@
       "range_g": 8
     },
     {
-      "sensor_id": "ax3_thigh",
-      "type": "ax3",
+      "sensor_id": "sens_thigh",
+      "type": "sens",
       "placement": "thigh",
-      "free_living": true,
-      "sampling_rate_hz": 100,
-      "range_g": 8
+      "sampling_rate_hz": 12.5,
+      "range_g": 2
     },
     {
       "sensor_id": "ax6_shoe_l",
       "type": "ax6",
       "placement": "shoe",
       "side": "left",
-      "free_living": true,
       "sampling_rate_hz": 100,
       "range_g": 16
     },
@@ -211,7 +191,6 @@
       "type": "ax6",
       "placement": "shoe",
       "side": "right",
-      "free_living": true,
       "sampling_rate_hz": 100,
       "range_g": 16
     },

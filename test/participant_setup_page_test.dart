@@ -37,6 +37,7 @@ void main() {
     String id, {
     SyncKind? choose,
     String? h10Serial,
+    bool calibratedToday = false,
   }) async {
     SessionController? started;
     await tester.pumpWidget(const SizedBox());
@@ -76,7 +77,16 @@ void main() {
     }
     await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
     await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    // Sensors without a calibration of today (here they have no serial
+    // numbers to match): the technician is asked first.
+    await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
+    expect(
+      find.textContaining(calibratedToday ? 'Sin calibración de hoy:' : 'No hay ninguna calibración de hoy'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Empezar sin calibrar'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
+    expect(find.text('Sensores sin calibrar'), findsNothing);
     await tester.tap(find.text('Empezar').last);
     await wait(tester, () => started != null);
     return started;
@@ -97,11 +107,26 @@ void main() {
     expect(worn.firstWhere((s) => s.sensorId == 'polar_h10').serial, 'C0FFEE');
     expect(worn.firstWhere((s) => s.sensorId == 'ax3_wnd').serial, isNull);
     expect(first.participants.single.folder, isNull);
+    expect(first.calibrations, isEmpty);
     first.dispose();
 
+    // A calibration done this morning goes with the session.
+    final calib = Directory('${root.path}${Platform.pathSeparator}calibraciones')..createSync();
+    final t0 = DateTime.now().subtract(const Duration(minutes: 30)).toUtc();
+    final t1 = t0.add(const Duration(minutes: 10));
+    File('${calib.path}${Platform.pathSeparator}calibracion_test.csv').writeAsStringSync(
+      'event,face,time_utc,time_local,detail\n'
+      'calibration_start,,${t0.toIso8601String()},,\n'
+      'device,,${t0.toIso8601String()},,ax6:A1\n'
+      'face_start,1,${t0.toIso8601String()},,\n'
+      'calibration_end,,${t1.toIso8601String()},,\n',
+    );
+
     // Jump chosen: it goes to the session and is kept on this computer.
-    final second = await startSession(tester, 'P02', choose: SyncKind.jump);
-    expect(second!.battery!.sync.kind, SyncKind.jump);
+    final second = await startSession(tester, 'P02', choose: SyncKind.jump, calibratedToday: true);
+    expect(second!.calibrations.single.end, t1);
+    expect(second.calibrations.single.devices.single.serial, 'A1');
+    expect(second.battery!.sync.kind, SyncKind.jump);
     expect(second.battery!.sync.auto, AutoSync.everyStatic);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('lpt_sync_kind'), 'jump');
@@ -111,7 +136,7 @@ void main() {
     // and the protocol is not marked as modified. A returning participant
     // gets their serials back.
     for (final id in ['P03', 'P02', 'P01']) {
-      final next = await startSession(tester, id);
+      final next = await startSession(tester, id, calibratedToday: true);
       expect(next!.battery!.sync.kind, SyncKind.jump, reason: id);
       // (P01 comes back with a serial, which counts as an edited protocol.)
       if (id != 'P01') expect(find.textContaining('(modificado)'), findsNothing, reason: id);

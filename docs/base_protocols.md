@@ -2,7 +2,7 @@
 
 Five protocols ship in `assets/protocols/`. Codes and METs are from the 2024 Adult Compendium bundled in `assets/compendium/compendium_2024.csv`; `test/session_setup_test.dart` checks that every code exists with that MET. Points marked **[revisar]** are defaults chosen here, not taken from the sources. Edit them in the app and save the result as a new protocol rather than changing the base files.
 
-The WEARGAP protocols start with a calibration box (2 min still with three taps, six faces of 60 s, three taps) and the day-0 protocol ends with another one after the sensors are removed. The RUN4HEALTH protocols start and end with the 12-face dodecahedron (protocol v2, 2026-11-01).
+Since 1.3.0 no protocol has calibration segments: the technician calibrates the offline sensors from the «Calibración» button of the start screen, before the participants arrive or after they leave ([`calibration.md`](calibration.md)). No sensor is marked as staying on for the free-living days either: every device is downloaded after the visit and replaced by the free-living ones, each with its own serial number. Matrix is set to 25 Hz and ±8 g (accelerometer and gyroscope), heart rate in real time and temperature on (about 7 days and 8 h of battery); SENS motion records at its fixed 12.5 Hz.
 
 Protocol files can also say, for the timer screen and REDCap:
 
@@ -21,28 +21,26 @@ Source: lab battery agreed with Jairo on 2026-11-02 (TFG/TFM document). Particip
 
 | # | Activity | Code | MET | Duration |
 |---|---|---|---|---|
-| 1 | Dodecaedro de calibración inicial (12 caras) | – | – | 8:00 |
-| 2 | ⏸ Tumbado en reposo (resting HR) | 07011 | 1.0 | 5:00 |
-| 3 | De pie sin desplazarse | 07041 | | 3:00 |
-| 4 | Sentado libre | 09055 | | 4:00 |
-| 5-11 | Sentarse y levantarse 5 veces (×2) and 30 s (×2), each attempt a step with «Pausa sentado» 1:00 between them | 02344 / 07021 | | 0:30 each |
-| 12 | Sentado quieto tras las pruebas | 07021 | | 2:00 |
-| 13 | Sentado, golpeando con el talón | 07023 | | 2:00 |
-| 14 | De pie, golpeando con la puntera | 07041 | | 2:00 |
-| 15-22 | ⏸ Treadmill walking, 2:00 each: 3.0, 4.5, 6.0 km/h; 4.5 km/h at 5 % and 10 %; 4.5 km/h with a kettlebell in each hand; typing on the phone; holding the handrail | 17346… | | 16:00 |
-| 23-24 | ⏸ Bicicleta 60 rpm and 90 rpm, 1 W/kg body mass (easy; only pedal cycles are counted) | 01216 | | 4:00 |
-| 25 | ⏸ Descanso sentado | 07021 | | 3:00 |
-| 26-30 | ⏸ Treadmill running, 2:00 each: 8, 10, 12, 14 km/h; 10 km/h at 5 % | 12030… | | 10:00 |
-| 31 | ⏸ Recuperación sentado | 07021 | | 3:00 |
-| 32 | ⏸ Dodecaedro de calibración final | – | – | 8:00 |
+| 1 | ⏸ Tumbado en reposo (resting HR) | 07011 | 1.0 | 5:00 |
+| 2 | De pie sin desplazarse | 07041 | | 3:00 |
+| 3 | Sentado libre | 09055 | | 4:00 |
+| 4-10 | Sentarse y levantarse 5 veces (×2) and 30 s (×2), each attempt a step with «Pausa sentado» 1:00 between them | 02344 / 07021 | | 0:30 each |
+| 11 | Sentado quieto tras las pruebas | 07021 | | 2:00 |
+| 12 | Sentado, golpeando con el talón | 07023 | | 2:00 |
+| 13 | De pie, golpeando con la puntera | 07041 | | 2:00 |
+| 14-21 | ⏸ Treadmill walking, 2:00 each: 3.0, 4.5, 6.0 km/h; 4.5 km/h at 5 % and 10 %; 4.5 km/h with a kettlebell in each hand; typing on the phone; holding the handrail | 17346… | | 16:00 |
+| 22-23 | ⏸ Bicicleta 60 rpm and 90 rpm, 1 W/kg body mass (easy; only pedal cycles are counted) | 01216 | | 4:00 |
+| 24 | ⏸ Descanso sentado | 07021 | | 3:00 |
+| 25-29 | ⏸ Treadmill running, 2:00 each: 8, 10, 12, 14 km/h; 10 km/h at 5 % | 12030… | | 10:00 |
+| 30 | ⏸ Recuperación sentado | 07021 | | 3:00 |
 
 - The sit-to-stand fills `chairstand_*` from the first 30-s attempt only.
 - Kettlebells: 4 kg in each hand (3 kg if there are none of 4), like a shopping bag. 01216 (60 W) is the closest code to 1 W/kg for most runners.
-- Sensors of the pilot: Matrix (non-dominant wrist, free living), AX3 on both wrists, AX3 thigh and AX6 on both shoes (free living), Polar H10, Verity Sense (arm), room camera. No SENS and no SensWear.
+- Sensors of the pilot: Matrix (non-dominant wrist), AX3 on both wrists, SENS motion on the thigh (its own patches; downloaded afterwards), AX6 on both shoes, Polar H10, Verity Sense (arm), room camera. No SensWear.
 
 ## RUN4HEALTH (base), day 8 (`run4health_day8_base`)
 
-Calibration, ⏸ lying rest (resting HR), the same sit-to-stand block, ⏸ the pairs knee-tag game (3:00, only with two participants; warm-up for Cooper) and ⏸ the final calibration. Cooper runs outside between the game and the final calibration, guided by healthy_tracker on the participant's phone with the Polar connected, so the timer waits until the participant is back. About 39 min plus Cooper.
+⏸ Lying rest (resting HR), the same sit-to-stand block and ⏸ the pairs knee-tag game (3:00, only with two participants; warm-up for Cooper). Cooper runs outside after the game, guided by healthy_tracker on the participant's phone with the Polar connected. About 23 min plus Cooper.
 
 `ProtocolLibrary.forMoment` picks this protocol when the visit is day 8 and the day-0 one on day 0, because each visit's own protocol comes first in `builtInAssets`.
 
@@ -52,7 +50,6 @@ Source: proposal v15, *Day 0 (laboratory)*.
 
 | # | Activity | Code | MET | Duration |
 |---|---|---|---|---|
-| | Calibration box | | | 6 × 60 s |
 | 1 | Reposo tumbado en la cámara de calorimetría | 07011 | 1.0 | 30:00 |
 | 2 | Escribir en el ordenador | 09040 | 1.3 | 10:00 |
 | 3 | De pie quieto | 07040 | 1.3 | 10:00 |
@@ -66,13 +63,12 @@ Source: proposal v15, *Day 0 (laboratory)*.
 | 11 | Trotar (si puede) | 12020 | 7.5 | 10:00 |
 | 12 | Marcha de 6 minutos | 17200 | 4.8 | 6:00 |
 | 13 | Prueba de esfuerzo en cinta con gases | | | 12:00 |
-| | Calibration box | | | 6 × 60 s |
 
 - Resting 30 min supine in the chamber with the portable calorimeter, the 6-minute walk, and the exercise test last come from the proposal. Anthropometry, bioimpedance and skin tone happen in the wait between activities 1 and 2.
 - **[revisar]** The proposal names only these activities of the 16 ("e.g., typing, standing, slow walking with shopping bags, uphill walking, stairs, sweeping, dish-washing, cycling at two loads, jogging if able"); 6 are missing and are not invented here.
 - **[revisar]** 10 min per activity until IMUDS confirms how long the chamber needs to stabilise; loads (50 W, 90-100 W), slope (6-10 %) and walking speeds are defaults.
 - **[revisar]** The exercise test is a ramp to exhaustion with no fixed length: the timer cannot yet end an activity early, so 12 min is a placeholder, and it has no Compendium code.
-- Sensors: AX3 on both wrists, SensWear and AX3 on the non-dominant wrist, thigh AX3, AX6 on each shoe, Polar H10, three fixed cameras. SensWear, thigh AX3 and AX6 stay on for the free-living days. **[revisar]** The SensWear clock is `unknown` in the manifest until its file format is known; the Verity Sense is live (`native_plus_host_utc`).
+- Sensors: AX3 on both wrists, SensWear and AX3 on the non-dominant wrist, thigh AX3, AX6 on each shoe, Polar H10, three fixed cameras. **[revisar]** The SensWear clock is `unknown` in the manifest until its file format is known; the Verity Sense is live (`native_plus_host_utc`).
 
 ## WEARGAP day 8 (`weargap_day8_base`)
 
@@ -80,7 +76,6 @@ Source: proposal v15, *Day 8 (closing visit)*: static calibration, device return
 
 | # | Activity | Code | MET | Duration |
 |---|---|---|---|---|
-| | Calibration box | | | 6 × 60 s |
 | 1 | Marcha de 6 minutos | 17200 | 4.8 | 6:00 |
 
 Sensors: SensWear and AX3 on the non-dominant wrist, AX3 on the dominant wrist, fixed camera. Serials come from the participant's day-0 setup for the sensors with the same ID. **[revisar]** Thigh AX3 and shoe AX6 are returned at this visit and are not listed; add them if their files should be synchronised with this session.

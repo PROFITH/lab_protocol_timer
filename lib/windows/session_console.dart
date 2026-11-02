@@ -1639,7 +1639,8 @@ Future<void> showSessionSummaryDialog(
                   const SizedBox(height: 4),
                   if (after.download.isNotEmpty)
                     line(Icons.download_rounded, _amber,
-                        'Descarga y copia a la carpeta de la sesión: ${names(after.download)}.'),
+                        'Descarga y copia a la carpeta de la sesión: ${names(after.download)}. '
+                        'Para la vida libre van otros dispositivos, cada uno con su número de serie.'),
                   if (after.downloadAndRestart.isNotEmpty)
                     line(Icons.restart_alt_rounded, _amber,
                         'Descarga, copia a la carpeta y vuelve a inicializar para la vida libre: '

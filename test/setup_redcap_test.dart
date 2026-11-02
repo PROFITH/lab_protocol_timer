@@ -62,6 +62,8 @@ void main() {
     await tester.pump();
     await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
     await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
+    await tester.tap(find.text('Empezar sin calibrar'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar').last);
     await wait(tester, () => started != null);
@@ -81,6 +83,8 @@ void main() {
 
     await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
     await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
+    await tester.tap(find.text('Empezar sin calibrar'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar').last);
     await wait(tester, () => started != null);

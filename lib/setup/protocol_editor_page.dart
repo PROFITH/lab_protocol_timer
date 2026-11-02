@@ -311,21 +311,6 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                 label: const Text('Añadir actividad'),
               ),
               const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () => setState(
-                  () => _activities.add(const BatteryActivity(
-                    name: 'Caja de calibración',
-                    kind: ActivityKind.calibration,
-                    durationSeconds: 360,
-                    prepSeconds: 120,
-                    postSeconds: 30,
-                    faces: 6,
-                  )),
-                ),
-                icon: const Icon(Icons.inventory_2_outlined),
-                label: const Text('Añadir caja de calibración'),
-              ),
-              const SizedBox(width: 12),
               const Expanded(
                 child: Text(
                   'Arrastra para cambiar el orden. Toca una actividad para editarla.',
@@ -351,11 +336,9 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
               final s = _sensors[i];
               final details = [
                 s.sensorId,
-                if (s.hasSerial) 'nº ${s.serial}' else 'sin nº de serie',
                 if (s.samplingRateHz != null)
                   '${formatDecimal(s.samplingRateHz)} Hz',
                 if (s.rangeG != null) '±${formatDecimal(s.rangeG)} g',
-                if (s.freeLiving) 'sigue en vida libre',
                 if (s.connection == 'live') 'en directo',
               ].join(' · ');
               return Card(
@@ -374,11 +357,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                       '${s.deviceName} · ${s.placementLabel ?? 'sin ubicación'}'),
                   subtitle: Text(
                     details,
-                    style: TextStyle(
-                      color: s.hasSerial || s.connection == 'video'
-                          ? Colors.white54
-                          : const Color(0xFFFBBF24),
-                    ),
+                    style: const TextStyle(color: Colors.white54),
                   ),
                   onTap: () => _editSensor(i),
                   trailing: IconButton(
@@ -462,7 +441,15 @@ class _ActivityDialogState extends State<_ActivityDialog> {
 
   @override
   void dispose() {
-    for (final c in [_name, _duration, _prep, _post, _faces, _notes, _instructions]) {
+    for (final c in [
+      _name,
+      _duration,
+      _prep,
+      _post,
+      _faces,
+      _notes,
+      _instructions
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -541,23 +528,27 @@ class _ActivityDialogState extends State<_ActivityDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                SegmentedButton<ActivityKind>(
-                  segments: const [
-                    ButtonSegment(
-                      value: ActivityKind.activity,
-                      label: Text('Actividad'),
-                      icon: Icon(Icons.directions_run_rounded),
-                    ),
-                    ButtonSegment(
-                      value: ActivityKind.calibration,
-                      label: Text('Caja de calibración'),
-                      icon: Icon(Icons.inventory_2_outlined),
-                    ),
-                  ],
-                  selected: {_kind},
-                  onSelectionChanged: (s) => setState(() => _kind = s.first),
-                ),
-                const SizedBox(height: 16),
+                // Calibration now runs before the session (start screen);
+                // only protocols saved before keep calibration segments.
+                if (widget.initial?.isCalibration ?? false)
+                  SegmentedButton<ActivityKind>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ActivityKind.activity,
+                        label: Text('Actividad'),
+                        icon: Icon(Icons.directions_run_rounded),
+                      ),
+                      ButtonSegment(
+                        value: ActivityKind.calibration,
+                        label: Text('Caja de calibración'),
+                        icon: Icon(Icons.inventory_2_outlined),
+                      ),
+                    ],
+                    selected: {_kind},
+                    onSelectionChanged: (s) => setState(() => _kind = s.first),
+                  ),
+                if (widget.initial?.isCalibration ?? false)
+                  const SizedBox(height: 16),
                 TextFormField(
                   controller: _name,
                   decoration: _decoration(
@@ -823,25 +814,31 @@ class _SensorDialogState extends State<_SensorDialog> {
       ? SensorDominance.nonDominant
       : widget.initial!.dominance;
   late String? _side = widget.initial?.side;
-  late bool _freeLiving = widget.initial?.freeLiving ?? false;
   late final _id = TextEditingController(
     text: widget.initial?.sensorId ?? _suggestedId(),
   );
-  late final _serial = TextEditingController(text: widget.initial?.serial);
   late final _rate = TextEditingController(
     text: formatDecimal(
-      widget.initial == null
-          ? sensorTypeByKey(_type).defaultSamplingRateHz
-          : widget.initial!.samplingRateHz,
+      widget.initial?.samplingRateHz ??
+          proposedSettings(_type, _placement).samplingRateHz,
     ),
   );
   late final _range = TextEditingController(
     text: formatDecimal(
-      widget.initial == null
-          ? sensorTypeByKey(_type).defaultRangeG
-          : widget.initial!.rangeG,
+      widget.initial?.rangeG ?? proposedSettings(_type, _placement).rangeG,
     ),
   );
+
+  /// Rate and range follow type and placement until the user types one.
+  late bool _settingsEdited =
+      widget.initial?.samplingRateHz != null || widget.initial?.rangeG != null;
+
+  void _proposeSettings() {
+    if (_settingsEdited) return;
+    final p = proposedSettings(_type, _placement);
+    _rate.text = formatDecimal(p.samplingRateHz);
+    _range.text = formatDecimal(p.rangeG);
+  }
 
   /// The ID follows type and placement until the user types one.
   late bool _idEdited = widget.initial != null &&
@@ -864,7 +861,7 @@ class _SensorDialogState extends State<_SensorDialog> {
 
   @override
   void dispose() {
-    for (final c in [_id, _serial, _rate, _range]) {
+    for (final c in [_id, _rate, _range]) {
       c.dispose();
     }
     super.dispose();
@@ -878,7 +875,6 @@ class _SensorDialogState extends State<_SensorDialog> {
 
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final serial = _serial.text.trim();
     final base = widget.initial;
     Navigator.of(context).pop(
       SessionSensor(
@@ -887,10 +883,10 @@ class _SensorDialogState extends State<_SensorDialog> {
         placement: _placement ?? base?.placement,
         dominance: _dominance,
         side: _side,
-        serial: serial.isEmpty ? null : serial,
+        // Serials are typed per participant on the start screen.
+        serial: base?.serial,
         samplingRateHz: parseDecimal(_rate.text),
         rangeG: parseDecimal(_range.text),
-        freeLiving: _freeLiving,
         deviceNameOverride: _type == 'other' ? base?.deviceNameOverride : null,
         timestampDomainOverride:
             _type == base?.type ? base?.timestampDomainOverride : null,
@@ -907,7 +903,6 @@ class _SensorDialogState extends State<_SensorDialog> {
   @override
   Widget build(BuildContext context) {
     final type = sensorTypeByKey(_type);
-    final isCamera = type.connection == 'video';
     return AlertDialog(
       backgroundColor: _card,
       title: Text(widget.initial == null ? 'Nuevo sensor' : 'Editar sensor'),
@@ -932,14 +927,14 @@ class _SensorDialogState extends State<_SensorDialog> {
                     setState(() {
                       _type = v;
                       final t = sensorTypeByKey(v);
-                      _rate.text = formatDecimal(t.defaultSamplingRateHz);
-                      _range.text = formatDecimal(t.defaultRangeG);
+                      _settingsEdited = false;
                       if (t.connection == 'video') {
                         _placement = 'room';
                         _dominance = null;
                         _side = null;
                       }
                       _typeOrPlacementChanged();
+                      _proposeSettings();
                     });
                   },
                 ),
@@ -961,6 +956,7 @@ class _SensorDialogState extends State<_SensorDialog> {
                   onChanged: (v) => setState(() {
                     _placement = v;
                     _typeOrPlacementChanged();
+                    _proposeSettings();
                   }),
                 ),
                 const SizedBox(height: 12),
@@ -1010,19 +1006,15 @@ class _SensorDialogState extends State<_SensorDialog> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                TextFormField(
-                  controller: _serial,
-                  decoration: _decoration('Número de serie'),
-                ),
-                const SizedBox(height: 12),
-                if (!isCamera)
+                if (type.connection == 'offline' && !type.fixedSettings)
                   Row(
                     children: [
                       Expanded(
                         child: TextFormField(
                           controller: _rate,
+                          onChanged: (_) => _settingsEdited = true,
                           decoration: _decoration('Frecuencia (Hz)',
-                              helper: 'Opcional'),
+                              helper: 'Propuesta según el sensor y su sitio'),
                           validator: _optionalPositive,
                         ),
                       ),
@@ -1030,14 +1022,28 @@ class _SensorDialogState extends State<_SensorDialog> {
                       Expanded(
                         child: TextFormField(
                           controller: _range,
-                          decoration:
-                              _decoration('Rango (±g)', helper: 'Opcional'),
+                          onChanged: (_) => _settingsEdited = true,
+                          decoration: _decoration('Rango (±g)',
+                              helper: 'Propuesto según el sensor y su sitio'),
                           validator: _optionalPositive,
                         ),
                       ),
                     ],
                   ),
-                if (!isCamera) const SizedBox(height: 12),
+                if (type.connection == 'offline' && !type.fixedSettings) const SizedBox(height: 12),
+                if (type.setupNote case final note?) ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.info_outline_rounded, size: 16, color: Colors.white54),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(note, style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextFormField(
                   controller: _id,
                   decoration: _decoration(
@@ -1056,17 +1062,6 @@ class _SensorDialogState extends State<_SensorDialog> {
                     return null;
                   },
                 ),
-                if (!isCamera)
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    value: _freeLiving,
-                    onChanged: (v) => setState(() => _freeLiving = v),
-                    title: const Text('Sigue puesto en vida libre'),
-                    subtitle: const Text(
-                      'Al terminar el laboratorio se descarga y se vuelve a inicializar para la vida libre',
-                      style: TextStyle(color: Colors.white38),
-                    ),
-                  ),
               ],
             ),
           ),
