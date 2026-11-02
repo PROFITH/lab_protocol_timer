@@ -38,7 +38,7 @@ Source: lab battery agreed with Jairo on 2026-11-02 (TFG/TFM document). Particip
 
 - The sit-to-stand fills `chairstand_*` from the first 30-s attempt only.
 - Kettlebells: 4 kg in each hand (3 kg if there are none of 4), like a shopping bag. 01216 (60 W) is the closest code to 1 W/kg for most runners.
-- Sensors as in RUN4HEALTH (WEARGAP): Matrix (non-dominant wrist, free living), AX3 on both wrists, AX3 thigh and AX6 on both shoes (free living), Polar H10, Verity Sense (arm), room camera. No SENS and no SensWear.
+- Sensors of the pilot: Matrix (non-dominant wrist, free living), AX3 on both wrists, AX3 thigh and AX6 on both shoes (free living), Polar H10, Verity Sense (arm), room camera. No SENS and no SensWear.
 
 ## RUN4HEALTH (base), day 8 (`run4health_day8_base`)
 
