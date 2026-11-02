@@ -118,6 +118,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   /// of rebuilding the window on every sample.
   final LiveFrameClock _frameClock = LiveFrameClock();
   late final Ticker _frameTicker;
+
+  /// Rebuilds the device panel when the link warnings change.
+  Timer? _linkTimer;
+  String _linkWarnings = '';
   bool _samplesPending = false;
 
   final List<MonitorSlot> _monitorSlots = [
@@ -399,6 +403,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       case 'ecg':
         return MonitorVisualization.ecg;
 
+      case 'ppg':
+        return MonitorVisualization.ppg;
+
+      case 'gyro':
+        return MonitorVisualization.gyro;
+
       case 'video':
         return MonitorVisualization.video;
 
@@ -421,6 +431,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
     })
       ..start();
+    _linkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final warnings = [
+        for (final device in _liveDevices.values) _linkWarning(device.service) ?? '',
+      ].join('|');
+      if (warnings != _linkWarnings && mounted) setState(() => _linkWarnings = warnings);
+    });
 
     MultiWindowManager.current.addListener(this);
     HardwareKeyboard.instance.addHandler(_onKey);
@@ -725,6 +741,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     unawaited(_videoLog?.close());
     MultiWindowManager.current.removeListener(this);
     _frameTicker.dispose();
+    _linkTimer?.cancel();
     for (final device in _liveDevices.values) {
       device.dispose();
     }
@@ -1650,6 +1667,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   };
 
   /// Every device of the session, in the order of the session setup.
+  /// What is wrong with the Bluetooth link of a connected Polar device:
+  /// its frames arrive late (the live charts stop, nothing is lost and the
+  /// files keep the right times) or the sensor dropped frames (those
+  /// samples are missing from the files). Null when it keeps up.
+  static String? _linkWarning(PolarBleService service) {
+    final parts = <String>[];
+    final delay = service.bluetoothDelay;
+    if (delay != null && delay.inMilliseconds >= 2000) {
+      parts.add('Bluetooth con ${(delay.inMilliseconds / 1000).round()} s de retraso');
+    }
+    for (final entry in service.pmdFrameStats.entries) {
+      final total = entry.value.received + entry.value.lost;
+      if (entry.value.lost == 0 || total == 0) continue;
+      final percent = 100 * entry.value.lost / total;
+      parts.add('${entry.key.toUpperCase()}: ${percent < 1 ? '<1' : percent.round()} % de paquetes perdidos');
+    }
+    if (parts.isEmpty) return null;
+    return '${parts.join(' · ')}. Puede ser interferencia: vídeo por wifi u otras bandas cerca del ordenador.';
+  }
+
   List<DeviceStatus> get _deviceStatuses {
     final statuses = <DeviceStatus>[];
 
@@ -1710,6 +1747,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               'rr' => service.isRrStreaming,
               'acc' => service.isAccelerationStreaming,
               'ecg' => service.isEcgStreaming,
+              'ppg' => service.isPpgStreaming,
+              'ppi' => service.isPpiStreaming,
+              'gyro' => service.isGyroStreaming,
+              'mag' => service.isMagnetometerStreaming,
               _ => false,
             };
         statuses.add(
@@ -1725,7 +1766,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             icon: Icons.favorite_rounded,
             connectionStatus: _polarConnectionStatus(service),
             statusMessage: switch (service.linkStatus.value.state) {
-              PolarLinkState.connected || PolarLinkState.disconnected => null,
+              PolarLinkState.connected => _linkWarning(service),
+              PolarLinkState.disconnected => null,
               _ => service.linkStatus.value.message,
             },
             sensors: [
@@ -1735,7 +1777,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     id: sensor,
                     name: _sensorLabels[sensor]!.$1,
                     icon: _sensorLabels[sensor]!.$2,
-                    status: streaming(sensor)
+                    status: streaming(sensor) || service.receivedRecently(sensor)
                         ? SensorAcquisitionStatus.acquiring
                         : service.isConnected
                             ? SensorAcquisitionStatus.stopped
@@ -2013,6 +2055,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 _buildAccelerationMonitor(slot),
               MonitorVisualization.ecg =>
                 _buildEcgMonitor(slot),
+              MonitorVisualization.ppg =>
+                _buildPpgMonitor(slot),
+              MonitorVisualization.gyro =>
+                _buildGyroMonitor(slot),
               MonitorVisualization.video =>
                 _buildVideoMonitor(slot),
               MonitorVisualization.unknown =>
@@ -2158,6 +2204,46 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           color: const Color(0xFFF43F5E),
           label: 'ECG',
         ),
+      ],
+    );
+  }
+
+  /// The first green channel of the Verity Sense (raw counts): enough to
+  /// see whether the pulse is there.
+  Widget _buildPpgMonitor(MonitorSlot slot) {
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'PPG',
+      icon: Icons.fingerprint_rounded,
+      unit: 'cuentas',
+      window: device.ppg.window,
+      currentValue: () => _format(device.ppg.lastValue),
+      series: [
+        ChartSeries(
+          buffer: device.ppg,
+          color: Colors.greenAccent,
+          label: 'PPG',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGyroMonitor(MonitorSlot slot) {
+    final device = _liveDevices[slot.deviceId];
+    if (device == null) return _buildAssignedMonitorPlaceholder(slot);
+    return _buildChart(
+      slot: slot,
+      label: 'GYRO',
+      icon: Icons.threesixty_rounded,
+      unit: 'dps',
+      window: device.gyroX.window,
+      currentValue: () => _format(device.gyroZ.lastValue, 1),
+      series: [
+        ChartSeries(buffer: device.gyroX, color: Colors.redAccent, label: 'X'),
+        ChartSeries(buffer: device.gyroY, color: Colors.greenAccent, label: 'Y'),
+        ChartSeries(buffer: device.gyroZ, color: const Color(0xFF38BDF8), label: 'Z'),
       ],
     );
   }
@@ -2741,6 +2827,10 @@ class _LiveDevice {
   final SignalBuffer accY = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
   final SignalBuffer accZ = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
   final SignalBuffer accVm = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer ppg = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 140);
+  final SignalBuffer gyroX = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer gyroY = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
+  final SignalBuffer gyroZ = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 210);
 
   final List<StreamSubscription<dynamic>> _subscriptions = [];
 
@@ -2777,6 +2867,16 @@ class _LiveDevice {
         );
         onSamples();
       }),
+      service.ppgStream.listen((sample) {
+        ppg.add(sample.timestamp, sample.ppg0.toDouble());
+        onSamples();
+      }),
+      service.gyroStream.listen((sample) {
+        gyroX.add(sample.timestamp, sample.xDps);
+        gyroY.add(sample.timestamp, sample.yDps);
+        gyroZ.add(sample.timestamp, sample.zDps);
+        onSamples();
+      }),
     ]);
   }
 
@@ -2802,7 +2902,7 @@ class _LiveDevice {
         failed.add(signal == 'heart_rate' ? 'HR' : signal.toUpperCase());
       }
     }
-    for (final buffer in [hr, rr, ecg, accX, accY, accZ, accVm]) {
+    for (final buffer in [hr, rr, ecg, accX, accY, accZ, accVm, ppg, gyroX, gyroY, gyroZ]) {
       buffer.clear();
     }
     return failed;

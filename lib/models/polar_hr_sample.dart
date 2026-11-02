@@ -15,6 +15,10 @@ class PolarHrSample {
   final List<int> rrIntervalsMs;
   final String hrSource;
 
+  /// What the Bluetooth link was behind when the notification arrived (ms),
+  /// already taken off [timestamp]; null when no PMD stream told it.
+  final int? bleDelayMs;
+
   const PolarHrSample({
     required this.timestamp,
     required this.participantId,
@@ -23,6 +27,7 @@ class PolarHrSample {
     required this.heartRateBpm,
     required this.rrIntervalsMs,
     this.hrSource = unknownSource,
+    this.bleDelayMs,
   });
 
   static const String unknownSource = 'polar_firmware';
@@ -42,11 +47,11 @@ class PolarHrSample {
   }
 
   static const String csvHeader =
-      'timestamp_iso,participant_id,activity_index,phase_name,hr_bpm,rr_intervals_ms,hr_source';
+      'timestamp_iso,participant_id,activity_index,phase_name,hr_bpm,rr_intervals_ms,hr_source,ble_delay_ms';
 
   String toCsvRow() {
     final rrFormatted = rrIntervalsMs.isEmpty ? '' : rrIntervalsMs.join(';');
-    return '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,$heartRateBpm,"$rrFormatted",$hrSource';
+    return '${timestamp.toIso8601String()},$participantId,$activityIndex,$phaseName,$heartRateBpm,"$rrFormatted",$hrSource,${bleDelayMs ?? ''}';
   }
 
   Map<String, dynamic> toJson() => {
@@ -57,6 +62,7 @@ class PolarHrSample {
         'heartRateBpm': heartRateBpm,
         'rrIntervalsMs': rrIntervalsMs,
         'hrSource': hrSource,
+        if (bleDelayMs != null) 'bleDelayMs': bleDelayMs,
       };
 
   factory PolarHrSample.fromJson(Map<String, dynamic> json) => PolarHrSample(
@@ -67,5 +73,6 @@ class PolarHrSample {
         heartRateBpm: json['heartRateBpm'] ?? 0,
         rrIntervalsMs: List<int>.from(json['rrIntervalsMs'] ?? []),
         hrSource: json['hrSource']?.toString() ?? unknownSource,
+        bleDelayMs: (json['bleDelayMs'] as num?)?.toInt(),
       );
 }

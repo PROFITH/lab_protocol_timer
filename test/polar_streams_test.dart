@@ -230,8 +230,19 @@ void main() {
         rrIntervalsMs: const [880, 890],
         hrSource: 'h10_ecg_firmware',
       );
-      expect(PolarHrSample.csvHeader, endsWith(',hr_bpm,rr_intervals_ms,hr_source'));
-      expect(sample.toCsvRow(), endsWith(',68,"880;890",h10_ecg_firmware'));
+      expect(PolarHrSample.csvHeader, endsWith(',hr_bpm,rr_intervals_ms,hr_source,ble_delay_ms'));
+      expect(sample.toCsvRow(), endsWith(',68,"880;890",h10_ecg_firmware,'));
+      final late = PolarHrSample(
+        timestamp: sample.timestamp,
+        participantId: '001',
+        activityIndex: 2,
+        phaseName: 'activity_main',
+        heartRateBpm: 68,
+        rrIntervalsMs: const [],
+        bleDelayMs: 16950,
+      );
+      expect(late.toCsvRow(), endsWith(',68,"",polar_firmware,16950'));
+      expect(PolarHrSample.fromJson(late.toJson()).bleDelayMs, 16950);
       expect(PolarHrSample.fromJson(sample.toJson()).hrSource, 'h10_ecg_firmware');
       // Rows written before the column existed read as unknown.
       expect(PolarHrSample.fromJson(sample.toJson()..remove('hrSource')).hrSource, 'polar_firmware');
@@ -316,6 +327,60 @@ void main() {
       );
       expect(observation.toCsvRow(), contains(',gyro,5000000000,12'));
       expect(PolarBleService.pmdStreamNames.values, containsAll(['ecg', 'acc', 'ppg', 'ppi', 'gyro', 'mag']));
+    });
+  });
+
+  group('ECG frames of the H10', () {
+    List<int> ecgPayload(int n) => [for (var i = 0; i < n; i++) ...signedBytes(i * 10, 3)];
+
+    test('the samples of a frame are spread up to the frame before (no overlap)', () {
+      final service = PolarBleService();
+      const s0 = 599616185243949330;
+      // The H10 ECG: 73 samples a frame, frames 561.4 ms apart (130.0 Hz).
+      service.handlePmdDataForTest(frame(PolarBleService.pmdTypeEcg, s0, 0x00, ecgPayload(73)));
+      service.handlePmdDataForTest(
+          frame(PolarBleService.pmdTypeEcg, s0 + 561409128, 0x00, ecgPayload(73)));
+      final t = [for (final e in service.recordedEcgSamples) e.sensorTimeNs!];
+      expect(t, hasLength(146));
+      expect(t[145], s0 + 561409128);
+      for (var i = 74; i < 146; i++) {
+        expect(t[i] - t[i - 1], closeTo(561409128 / 73, 1), reason: 'sample $i');
+      }
+      expect(t[73] - t[72], closeTo(561409128 / 73, 1));
+      service.dispose();
+    });
+
+    test('each sample takes the phase in which it was measured, not in which it arrived', () {
+      final service = PolarBleService();
+      final now = DateTime.now().toUtc();
+      service.updateProtocolContext(
+          participantId: '1', activityIndex: 1, phaseName: 'static_prep',
+          at: now.subtract(const Duration(seconds: 60)));
+      // The phase changed 0.3 s ago; the frame that arrives now was measured
+      // over the last 0.55 s.
+      service.updateProtocolContext(
+          participantId: '1', activityIndex: 1, phaseName: 'activity_main',
+          at: now.subtract(const Duration(milliseconds: 300)));
+      service.handlePmdDataForTest(frame(PolarBleService.pmdTypeEcg, 599616185243949330, 0x00, ecgPayload(73)));
+      final phases = [for (final e in service.recordedEcgSamples) e.phaseName];
+      final firstMain = phases.indexOf('activity_main');
+      expect(phases.take(firstMain), everyElement('static_prep'));
+      expect(phases.skip(firstMain), everyElement('activity_main'));
+      // About 0.25 s of the frame (32 samples) were before the change.
+      expect(firstMain, inInclusiveRange(28, 36));
+      service.dispose();
+    });
+
+    test('a lost frame is counted and logged', () {
+      final service = PolarBleService();
+      const s0 = 599616185243949330;
+      const span = 561409128;
+      for (final k in [0, 1, 2, 5, 6]) {
+        service.handlePmdDataForTest(frame(PolarBleService.pmdTypeEcg, s0 + k * span, 0x00, ecgPayload(73)));
+      }
+      expect(service.pmdFrameStats['ecg'], (received: 5, lost: 2));
+      expect(service.connectionEvents.map((e) => e.event), contains('frames_lost'));
+      service.dispose();
     });
   });
 }

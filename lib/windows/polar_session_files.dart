@@ -81,6 +81,7 @@ class PolarSessionFiles {
     service.recordedGyroSamples.clear();
     service.recordedMagSamples.clear();
     service.clockObservations.clear();
+    service.resetLinkStats();
     // The connection history of the device is (a few rows).
     _eventsWritten = 0;
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => drain());

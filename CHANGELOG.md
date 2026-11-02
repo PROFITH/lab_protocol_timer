@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-11-02
+
+### Fixed
+
+- **Polar times when the Bluetooth link falls behind:** in a test with the H10 the frames arrived up to 17 s late, twice, and the clock mapper took that delay for a change of the offset (it started again when a frame was more than 5 s above the minimum of the last 30 s): `timestamp_iso` moved by up to 13.6 s. The offset is now the lower envelope of `arrival - sensor time`, rising at most 150 ppm and coming down at most 90 % as fast as the sensor time; replaying the frames of that test it stays within 19 ms of the best frame seen.
+- **Phase of each sample:** `activity_index` and `phase_name` are those of the moment the sample was measured, not of its arrival (late frames put the end of a phase in the next one).
+- **Samples of a frame:** spread between consecutive frame times as the Polar SDK does; the H10 accelerometer runs at about 203 Hz and 5 ms steps overlapped each frame with the one before by 2.5 ms.
+- **Heart rate:** its time is the arrival less the delay of the PMD frames at that moment, in the new last column `ble_delay_ms`.
+- A device without the Polar data service (a Garmin HRM-Pro+ was retried 21 times) is not retried; the panel says to choose the H10 or the Verity Sense.
+- **Verity Sense:** the device panel showed PPG, PPI, GYRO and MAG as stopped while they recorded (only ACC was checked); a stream now shows as receiving when its frames arrive. The data-loss watchdog tore down a Verity whose frames came 2-9 s late after 6 s without data, and reconnecting it on Windows failed for two minutes; it now waits 20 s, or 60 s while the heart rate keeps arriving.
+
+### Added
+
+- Live charts of the Verity Sense PPG (first green channel) and gyroscope.
+- The device panel of the monitor warns when the link is more than 2 s behind and of the frames each stream lost (`ACC: 27 % de paquetes perdidos`); the connection events log `frames_lost`, `link_behind` and `link_caught_up`.
+
 ## [1.3.2] - 2026-11-02
 
 ### Added

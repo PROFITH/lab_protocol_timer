@@ -3,6 +3,8 @@ enum MonitorVisualization {
   rr,
   acceleration,
   ecg,
+  ppg,
+  gyro,
   video,
   unknown,
 }

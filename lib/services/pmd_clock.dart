@@ -1,40 +1,42 @@
-import 'dart:collection';
 import 'dart:math' as math;
 
 /// Maps the clock of a Polar sensor (PMD timestamps) to the host clock.
 ///
 /// Each PMD frame is stamped with the sensor time of its last sample and is
-/// sent as soon as it is full, so `arrival - last sample` is the clock
-/// offset plus the Bluetooth latency of that frame, which is never negative.
-/// The smallest of those values over the last [window] is the offset plus
-/// the minimum latency (a few ms), and it follows the drift between the two
-/// clocks.
+/// sent as soon as it is full, so `arrival - last sample` (the candidate) is
+/// the clock offset plus the Bluetooth delay of that frame, which is never
+/// negative. The offset is the lower envelope of the candidates:
 ///
-/// The old method took the offset from the first sample of the first frame
-/// against its arrival, which put every sample late by the length of a
-/// frame (about 175 ms for ACC at 200 Hz and 560 ms for ECG) plus that
-/// frame's latency, and never followed the drift.
+/// * a candidate below the offset brings it down at once during the
+///   [warmup], and then by at most 90 % of what the sensor clock advanced
+///   since the frame before, so the timestamps of every stream keep
+///   increasing (at least at a tenth of the speed while it comes down);
+/// * the offset rises only as fast as two clocks can drift apart
+///   ([maxDriftPpm]), whatever the candidates say.
 ///
-/// After [warmup] the offset in use moves at most [maxSlewMicros] per frame,
-/// less than one sample period, so timestamps always increase.
+/// So a Bluetooth link that falls behind (on 02/11/2026 an H10 delivered its
+/// frames up to 17 s late for half a minute, twice) delays the frames but
+/// not their timestamps. The method before took the minimum of the last
+/// 30 s and started again when a candidate was more than 5 s above it: a
+/// delay longer than 5 s, or longer than 30 s, moved every timestamp by the
+/// delay.
 class PmdClockMapper {
   PmdClockMapper({
-    this.window = const Duration(seconds: 30),
     this.warmup = const Duration(seconds: 3),
-    this.maxSlewMicros = 2000,
+    this.maxDriftPpm = 150,
   });
 
-  final Duration window;
   final Duration warmup;
-  final int maxSlewMicros;
 
-  /// (arrival host µs, candidate offset µs), increasing offsets.
-  final ListQueue<(int, int)> _candidates = ListQueue();
+  /// How fast the offset may rise: two quartz clocks drift less than this.
+  final double maxDriftPpm;
 
   int? _firstArrivalMicros;
+  int? _lastArrivalMicros;
+  int? _maxSensorMicros;
   int? _offsetMicros;
 
-  /// Last values, for the clock log.
+  /// Last values, for the clock log and the monitor.
   int? lastCandidateMicros;
   int? lastEstimateMicros;
 
@@ -43,9 +45,13 @@ class PmdClockMapper {
   /// Offset in use: host µs = sensor µs + offset.
   int? get offsetMicros => _offsetMicros;
 
+  /// Host time (UTC µs) when the last frame arrived.
+  int? get lastArrivalMicros => _lastArrivalMicros;
+
   void reset() {
-    _candidates.clear();
     _firstArrivalMicros = null;
+    _lastArrivalMicros = null;
+    _maxSensorMicros = null;
     _offsetMicros = null;
     lastCandidateMicros = null;
     lastEstimateMicros = null;
@@ -55,35 +61,35 @@ class PmdClockMapper {
   /// of its last sample (µs).
   void observe({required int arrivalHostMicros, required int lastSampleSensorMicros}) {
     final candidate = arrivalHostMicros - lastSampleSensorMicros;
-    lastCandidateMicros = candidate;
 
-    // A reconnection or a sensor clock reset: start again.
+    // The sensor clock went back (a reset or another sensor) or jumped
+    // ahead of the host: start again. Frames of different streams arrive
+    // out of order by less than a second.
+    final maxSensor = _maxSensorMicros;
     if (_offsetMicros != null &&
-        (candidate - _offsetMicros!).abs() > 5 * 1000 * 1000) {
+        ((maxSensor != null && lastSampleSensorMicros < maxSensor - 2 * 1000 * 1000) ||
+            candidate < _offsetMicros! - 5 * 1000 * 1000)) {
       reset();
-      lastCandidateMicros = candidate;
     }
-
-    while (_candidates.isNotEmpty && _candidates.last.$2 >= candidate) {
-      _candidates.removeLast();
-    }
-    _candidates.addLast((arrivalHostMicros, candidate));
-    final oldest = arrivalHostMicros - window.inMicroseconds;
-    while (_candidates.length > 1 && _candidates.first.$1 < oldest) {
-      _candidates.removeFirst();
-    }
-
-    final estimate = _candidates.first.$2;
-    lastEstimateMicros = estimate;
+    lastCandidateMicros = candidate;
+    final advanced = math.max(0, lastSampleSensorMicros - (_maxSensorMicros ?? lastSampleSensorMicros));
+    _maxSensorMicros = math.max(_maxSensorMicros ?? lastSampleSensorMicros, lastSampleSensorMicros);
     _firstArrivalMicros ??= arrivalHostMicros;
 
-    if (_offsetMicros == null ||
-        arrivalHostMicros - _firstArrivalMicros! < warmup.inMicroseconds) {
-      _offsetMicros = estimate;
+    final offset = _offsetMicros;
+    if (offset == null) {
+      _offsetMicros = candidate;
     } else {
-      final step = (estimate - _offsetMicros!).clamp(-maxSlewMicros, maxSlewMicros);
-      _offsetMicros = _offsetMicros! + step;
+      final elapsed = math.max(0, arrivalHostMicros - (_lastArrivalMicros ?? arrivalHostMicros));
+      final ceiling = offset + (elapsed * maxDriftPpm / 1e6).ceil();
+      var next = math.min(candidate, ceiling);
+      final warming = arrivalHostMicros - _firstArrivalMicros! < warmup.inMicroseconds;
+      final floor = offset - (advanced * 0.9).floor();
+      if (!warming && next < floor) next = floor;
+      _offsetMicros = next;
     }
+    lastEstimateMicros = _offsetMicros;
+    _lastArrivalMicros = arrivalHostMicros;
   }
 
   /// Host UTC µs of a sensor time (µs). Before the first frame the sensor
@@ -95,9 +101,10 @@ class PmdClockMapper {
         isUtc: true,
       );
 
-  /// Latency of the last frame above the best one in the window (µs).
+  /// How late the last frame arrived beyond the usual Bluetooth latency
+  /// (µs): what the link has fallen behind.
   int? get lastExcessLatencyMicros =>
-      lastCandidateMicros == null || lastEstimateMicros == null
+      lastCandidateMicros == null || _offsetMicros == null
           ? null
-          : math.max(0, lastCandidateMicros! - lastEstimateMicros!);
+          : math.max(0, lastCandidateMicros! - _offsetMicros!);
 }
