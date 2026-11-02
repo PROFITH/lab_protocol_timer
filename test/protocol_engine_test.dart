@@ -515,4 +515,58 @@ void main() {
         [2, 3, 4, 5, 6]);
     expect(e.syncWindows, isEmpty);
   });
+
+  test('without lap mode the session waits only before wait_before', () {
+    final clock = FakeSessionClock();
+    // A1 runs on its own; A2 is on another machine (wait_before); A3
+    // follows A2 with no preparation, like the treadmill stages.
+    final e = ProtocolEngine(
+      clock: clock,
+      planFor: (i) => ActivityPlan(
+        index: i,
+        name: 'A$i',
+        prepSeconds: i == 3 ? 0 : 10,
+        mainSeconds: 20,
+        postSeconds: i == 2 ? 0 : 10,
+        waitBefore: i == 2,
+      ),
+      lastIndex: 3,
+      lapMode: false,
+      sync: const SyncSettings(auto: AutoSync.manual),
+    );
+    e.start();
+    run(e, clock, const Duration(seconds: 40));
+    // A1 done: the session stops before A2 until the evaluator goes on.
+    expect(e.phase, SessionPhase.wait);
+    expect(e.nextIndex, 2);
+    run(e, clock, const Duration(minutes: 2));
+    expect(e.phase, SessionPhase.wait);
+
+    e.advance();
+    expect(e.activityIndex, 2);
+    run(e, clock, const Duration(seconds: 30));
+    // A2 ends with no post phase and A3 starts straight in its main phase.
+    expect(e.activityIndex, 3);
+    expect(e.phase, SessionPhase.main);
+
+    run(e, clock, const Duration(seconds: 30));
+    // The last activity always ends in the wait.
+    expect(e.phase, SessionPhase.wait);
+    expect(e.protocolComplete, isTrue);
+  });
+
+  test('lap mode still waits after every activity', () {
+    final clock = FakeSessionClock();
+    final e = ProtocolEngine(
+      clock: clock,
+      planFor: (i) => ActivityPlan(
+          index: i, prepSeconds: 5, mainSeconds: 5, postSeconds: 5),
+      lastIndex: 3,
+      sync: const SyncSettings(auto: AutoSync.manual),
+    );
+    e.start();
+    run(e, clock, const Duration(seconds: 16));
+    expect(e.phase, SessionPhase.wait);
+    expect(e.nextIndex, 2);
+  });
 }

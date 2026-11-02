@@ -1,18 +1,27 @@
 {
   "protocol_id": "run4health_base",
-  "protocol_version": "2",
+  "protocol_version": "3",
   "title": "RUN4HEALTH (base)",
   "study": "RUN4HEALTH",
   "moments": [
-    "da_0__visita_inici_arm_1",
-    "da_8__visita_final_arm_1"
+    "da_0__visita_inici_arm_1"
   ],
   "sync": {
     "kind": "clap",
     "auto": "every_static"
   },
   "ask_rpe": true,
+  "lap_mode": false,
   "activities": [
+    {
+      "name": "Dodecaedro de calibración inicial",
+      "kind": "calibration",
+      "duration_seconds": 480,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 12,
+      "notes": "Con todos los sensores de laboratorio, recién cargados y ya grabando, antes de colocarlos. Dodecaedro quieto 2 min con la cara 1 arriba, tres golpes secos, 12 caras de 40 s y tres golpes al final. Sin dodecaedro impreso, caja rígida y 6 caras."
+    },
     {
       "name": "Tumbado en reposo",
       "compendium_code": "07011",
@@ -20,65 +29,77 @@
       "duration_seconds": 300,
       "animation": "lie",
       "instructions": "Túmbate boca arriba, relajado. No hables ni te muevas.",
+      "wait_before": true,
       "resting_hr": true,
       "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos."
     },
     {
-      "name": "De pie quieto",
-      "compendium_code": "07040",
-      "met": 1.3,
-      "duration_seconds": 240,
+      "name": "De pie sin desplazarse",
+      "compendium_code": "07041",
+      "met": 1.5,
+      "duration_seconds": 180,
       "animation": "stand",
-      "instructions": "Quédate de pie, quieto y relajado, con los brazos a los lados."
+      "instructions": "Quédate de pie sin dar pasos. Puedes cambiar de postura y de apoyo."
     },
     {
-      "name": "Sentado escribiendo en el ordenador",
-      "compendium_code": "09040",
+      "name": "Sentado libre",
+      "compendium_code": "09055",
       "met": 1.3,
       "duration_seconds": 240,
-      "animation": "type",
-      "instructions": "Siéntate y escribe en el teclado a tu ritmo habitual."
+      "animation": "sit",
+      "instructions": "Siéntate y haz lo que quieras: usar el móvil, hablar, cruzar las piernas."
     },
     {
-      "name": "Caminar despacio con bolsas de la compra",
-      "compendium_code": "05054",
-      "met": 3.5,
-      "duration_seconds": 240,
-      "animation": "walk_bags",
-      "instructions": "Camina despacio con una bolsa en cada mano, sin parar."
-    },
-    {
-      "name": "Barrer",
-      "compendium_code": "05010",
-      "met": 3.3,
-      "duration_seconds": 240,
-      "animation": "sweep",
-      "instructions": "Barre el suelo como lo harías en casa, sin parar."
-    },
-    {
-      "name": "Subir escaleras",
-      "compendium_code": "17131",
-      "met": 6.8,
-      "duration_seconds": 240,
-      "animation": "stairs",
-      "instructions": "Sube las escaleras a ritmo constante. Baja con calma y vuelve a subir."
-    },
-    {
-      "name": "Trotar a ritmo propio",
-      "compendium_code": "12020",
-      "met": 7.5,
-      "duration_seconds": 240,
-      "animation": "run",
-      "instructions": "Trota a un ritmo cómodo y constante, el que podrías mantener mucho rato."
-    },
-    {
-      "name": "Sentarse y levantarse 30 s",
+      "name": "Sentarse y levantarse 5 veces, intento 1",
       "compendium_code": "02344",
       "met": 4.0,
       "duration_seconds": 30,
+      "prep_seconds": 30,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces, lo más rápido que puedas. Al terminar, quédate sentado y quieto.",
+      "notes": "Cronometrar desde la señal hasta que se sienta por quinta vez (también se mide en el vídeo). Si termina antes de los 30 s, se queda sentado y quieto."
+    },
+    {
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 5 veces, intento 2",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces, lo más rápido que puedas. Al terminar, quédate sentado y quieto.",
+      "notes": "Igual que el intento 1."
+    },
+    {
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s, intento 1",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
       "animation": "sit_to_stand",
       "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
-      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas.",
       "redcap": {
         "done_field": "chairstand_realiza",
         "start_field": "chairstand_start",
@@ -105,50 +126,249 @@
             "default": "0"
           }
         ]
-      }
+      },
+      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas. Este intento rellena chairstand_* en REDCap; el intento 2 queda en lab_activity."
     },
     {
-      "name": "Marcha de 6 minutos",
-      "compendium_code": "17220",
-      "met": 5.5,
-      "duration_seconds": 360,
-      "animation": "walk_fast",
-      "instructions": "Camina lo más rápido que puedas sin correr, dando vueltas al circuito.",
-      "notes": "El evaluador/a B cuenta las vueltas y mide la distancia adicional al final.",
-      "redcap": {
-        "done_field": "mwt_realiza",
-        "start_field": "mwt_start",
-        "rpe_before_field": "rpe_6mwt_pre",
-        "rpe_after_field": "rpe_6mwt_post",
-        "fields": [
-          {
-            "field": "circuito_m",
-            "label": "Longitud del circuito (m)",
-            "type": "number",
-            "min": 1,
-            "max": 400
-          },
-          {
-            "field": "vueltas_6mwt",
-            "label": "Vueltas completas",
-            "type": "integer",
-            "min": 0,
-            "max": 100
-          },
-          {
-            "field": "adicional_6mwt",
-            "label": "Distancia adicional al final (m)",
-            "type": "number",
-            "min": 0,
-            "max": 400
-          },
-          {
-            "field": "obs_6mwt",
-            "label": "Observaciones",
-            "type": "text"
-          }
-        ]
-      }
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s, intento 2",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "notes": "Cuenta las repeticiones completas."
+    },
+    {
+      "name": "Sentado quieto tras las pruebas",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto.",
+      "notes": "Recuperación de la FC tras las pruebas (TFM del PPG)."
+    },
+    {
+      "name": "Sentado, golpeando con el talón",
+      "compendium_code": "07023",
+      "met": 1.8,
+      "duration_seconds": 120,
+      "animation": "sit",
+      "instructions": "Sentado, golpea el suelo con el talón una y otra vez, como cuando estás nervioso. Cambia de pie cuando te lo digan.",
+      "notes": "Alternar pies cada 30 s."
+    },
+    {
+      "name": "De pie, golpeando con la puntera",
+      "compendium_code": "07041",
+      "met": 1.5,
+      "duration_seconds": 120,
+      "animation": "stand",
+      "instructions": "De pie, golpea el suelo con la puntera una y otra vez, sin dar pasos. Cambia de pie cuando te lo digan.",
+      "notes": "Alternar pies cada 30 s."
+    },
+    {
+      "name": "Caminar en cinta 3,0 km/h",
+      "compendium_code": "17346",
+      "met": 2.8,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres.",
+      "wait_before": true,
+      "notes": "Programa de la cinta: 8 tramos de 2 min seguidos (3,0 / 4,5 / 6,0 km/h al 0 %; 4,5 km/h al 5 % y al 10 %; 4,5 km/h al 0 % con kettlebells, con el móvil y agarrado a la barandilla). Pulsa «Siguiente» (lap) justo cuando arranque la cinta."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres."
+    },
+    {
+      "name": "Caminar en cinta 6,0 km/h",
+      "compendium_code": "17358",
+      "met": 4.8,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h, pendiente 5 %",
+      "compendium_code": "17034",
+      "met": 5.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h, pendiente 10 %",
+      "compendium_code": "17035",
+      "met": 7.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h con una kettlebell en cada mano",
+      "compendium_code": "17016",
+      "met": 4.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con una kettlebell en cada mano, como si llevaras bolsas.",
+      "notes": "Una kettlebell de 4 kg en cada mano (o 3 kg si no hay de 4), como una bolsa de la compra; solo interesa el movimiento de llevar un objeto. Dárselas al empezar el tramo y recogerlas al acabar."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h escribiendo en el móvil",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina mientras escribes en el móvil."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h agarrado a la barandilla",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 30,
+      "animation": "treadmill",
+      "instructions": "Camina agarrado a la barandilla con las dos manos.",
+      "notes": "Al acabar el tramo la cinta se para: fase quieta de pie sobre la cinta."
+    },
+    {
+      "name": "Bicicleta 60 rpm, carga ligera",
+      "compendium_code": "01216",
+      "met": 5.0,
+      "duration_seconds": 120,
+      "prep_seconds": 30,
+      "post_seconds": 0,
+      "animation": "cycle",
+      "instructions": "Pedalea a 60 revoluciones por minuto.",
+      "wait_before": true,
+      "notes": "Carga: 1 W/kg de peso corporal, redondeada a 5 W (p. ej., 65 kg = 65 W); esfuerzo fácil, solo se cuentan las pedaladas. Fase quieta sentado en la bici, sin pedalear. Los dos tramos van seguidos."
+    },
+    {
+      "name": "Bicicleta 90 rpm, carga ligera",
+      "compendium_code": "01216",
+      "met": 5.0,
+      "notes": "Misma carga que a 60 rpm (1 W/kg de peso corporal).",
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 30,
+      "animation": "cycle",
+      "instructions": "Pedalea a 90 revoluciones por minuto."
+    },
+    {
+      "name": "Descanso sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 180,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Siéntate y descansa. Puedes beber agua.",
+      "wait_before": true
+    },
+    {
+      "name": "Correr en cinta 8 km/h",
+      "compendium_code": "12030",
+      "met": 8.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre a la velocidad de la cinta.",
+      "wait_before": true,
+      "notes": "Programa de la cinta: 5 tramos de 2 min seguidos (8, 10, 12 y 14 km/h al 0 %; 10 km/h al 5 %). Pulsa «Siguiente» (lap) justo cuando arranque la cinta. Si 14 km/h es demasiado para el corredor, ajusta el programa antes de empezar."
+    },
+    {
+      "name": "Correr en cinta 10 km/h",
+      "compendium_code": "12050",
+      "met": 9.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre a la velocidad de la cinta."
+    },
+    {
+      "name": "Correr en cinta 12 km/h",
+      "compendium_code": "12080",
+      "met": 11.8,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre a la velocidad de la cinta."
+    },
+    {
+      "name": "Correr en cinta 14 km/h",
+      "compendium_code": "12100",
+      "met": 12.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "run",
+      "instructions": "Corre a la velocidad de la cinta."
+    },
+    {
+      "name": "Correr en cinta 10 km/h, pendiente 5 %",
+      "compendium_code": "12260",
+      "met": 13.3,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 30,
+      "animation": "run",
+      "instructions": "Corre a la velocidad de la cinta.",
+      "notes": "Al acabar el tramo la cinta se para: fase quieta de pie sobre la cinta."
+    },
+    {
+      "name": "Recuperación sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 180,
+      "prep_seconds": 0,
+      "animation": "sit",
+      "instructions": "Siéntate y quédate quieto.",
+      "wait_before": true,
+      "notes": "Caída de la FC tras la carrera (TFM del PPG): pulsa «Siguiente» en cuanto se siente."
+    },
+    {
+      "name": "Dodecaedro de calibración final",
+      "kind": "calibration",
+      "duration_seconds": 480,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 12,
+      "notes": "Justo al quitar los sensores de laboratorio, sin conectar ningún Axivity al USB; después se ponen los de vida libre. Misma secuencia que la inicial.",
+      "wait_before": true
     }
   ],
   "sensors": [
@@ -176,17 +396,30 @@
       "range_g": 8
     },
     {
-      "sensor_id": "sens_thigh",
-      "type": "sens",
-      "placement": "thigh",
-      "free_living": true
-    },
-    {
       "sensor_id": "ax3_thigh",
       "type": "ax3",
       "placement": "thigh",
+      "free_living": true,
       "sampling_rate_hz": 100,
       "range_g": 8
+    },
+    {
+      "sensor_id": "ax6_shoe_l",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "left",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "ax6_shoe_r",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "right",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
     },
     {
       "sensor_id": "polar_h10",
@@ -197,7 +430,7 @@
       "sensor_id": "verity_arm",
       "type": "verity_sense",
       "placement": "upper_arm",
-      "free_living": true
+      "dominance": "non_dominant"
     },
     {
       "sensor_id": "cam_room",

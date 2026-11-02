@@ -488,6 +488,7 @@ class SessionController extends ChangeNotifier {
       animation: a?.animationOrGuess ?? 'stand',
       instructions: a?.instructions,
       restingHr: a?.restingHr ?? false,
+      waitBefore: a?.waitBefore ?? false,
     );
   }
 

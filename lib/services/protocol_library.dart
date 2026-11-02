@@ -39,8 +39,11 @@ class RememberedSetup {
 /// the last setup of each participant.
 class ProtocolLibrary {
   static const builtInAssets = [
-    'assets/protocols/run4health_weargap.json',
+    // Each visit's own protocol first: forMoment takes the first protocol of
+    // the study that names the visit.
     'assets/protocols/run4health_base.json',
+    'assets/protocols/run4health_day8_base.json',
+    'assets/protocols/run4health_weargap.json',
     'assets/protocols/weargap_day0_base.json',
     'assets/protocols/weargap_day8_base.json',
   ];

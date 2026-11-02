@@ -902,6 +902,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       participants: entries,
       battery: battery,
       dataRoot: root,
+      // A protocol can run its activities one after another (lap_mode false).
+      settings: SessionSettings(lapMode: battery?.lapMode ?? true),
       operator: operator.isEmpty ? null : operator,
       startIndex: activity,
       audio: widget.audioFactory(),
