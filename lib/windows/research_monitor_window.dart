@@ -118,6 +118,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   /// of rebuilding the window on every sample.
   final LiveFrameClock _frameClock = LiveFrameClock();
   late final Ticker _frameTicker;
+
+  /// Rebuilds the device panel when the link warnings change.
+  Timer? _linkTimer;
+  String _linkWarnings = '';
   bool _samplesPending = false;
 
   final List<MonitorSlot> _monitorSlots = [
@@ -421,6 +425,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
     })
       ..start();
+    _linkTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final warnings = [
+        for (final device in _liveDevices.values) _linkWarning(device.service) ?? '',
+      ].join('|');
+      if (warnings != _linkWarnings && mounted) setState(() => _linkWarnings = warnings);
+    });
 
     MultiWindowManager.current.addListener(this);
     HardwareKeyboard.instance.addHandler(_onKey);
@@ -725,6 +735,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     unawaited(_videoLog?.close());
     MultiWindowManager.current.removeListener(this);
     _frameTicker.dispose();
+    _linkTimer?.cancel();
     for (final device in _liveDevices.values) {
       device.dispose();
     }
@@ -1650,6 +1661,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   };
 
   /// Every device of the session, in the order of the session setup.
+  /// What is wrong with the Bluetooth link of a connected Polar device:
+  /// its frames arrive late (the live charts stop, nothing is lost and the
+  /// files keep the right times) or the sensor dropped frames (those
+  /// samples are missing from the files). Null when it keeps up.
+  static String? _linkWarning(PolarBleService service) {
+    final parts = <String>[];
+    final delay = service.bluetoothDelay;
+    if (delay != null && delay.inMilliseconds >= 2000) {
+      parts.add('Bluetooth con ${(delay.inMilliseconds / 1000).round()} s de retraso');
+    }
+    for (final entry in service.pmdFrameStats.entries) {
+      final total = entry.value.received + entry.value.lost;
+      if (entry.value.lost == 0 || total == 0) continue;
+      final percent = 100 * entry.value.lost / total;
+      parts.add('${entry.key.toUpperCase()}: ${percent < 1 ? '<1' : percent.round()} % de paquetes perdidos');
+    }
+    if (parts.isEmpty) return null;
+    return '${parts.join(' · ')}. Puede ser interferencia: vídeo por wifi u otras bandas cerca del ordenador.';
+  }
+
   List<DeviceStatus> get _deviceStatuses {
     final statuses = <DeviceStatus>[];
 
@@ -1725,7 +1756,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             icon: Icons.favorite_rounded,
             connectionStatus: _polarConnectionStatus(service),
             statusMessage: switch (service.linkStatus.value.state) {
-              PolarLinkState.connected || PolarLinkState.disconnected => null,
+              PolarLinkState.connected => _linkWarning(service),
+              PolarLinkState.disconnected => null,
               _ => service.linkStatus.value.message,
             },
             sensors: [

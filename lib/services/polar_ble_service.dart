@@ -7,6 +7,7 @@ import 'package:universal_ble/universal_ble.dart';
 import '../models/polar_hr_sample.dart';
 import '../models/device_configuration.dart';
 import 'pmd_clock.dart';
+import 'protocol_context_timeline.dart';
 
 /// Estado del enlace BLE con el sensor Polar, pensado para mostrarse en la UI.
 enum PolarLinkState {
@@ -334,14 +335,49 @@ class PolarBleService {
   /// [PolarHrSample.sourceFor].
   String get hrSource => PolarHrSample.sourceFor(deviceType: deviceType, deviceName: _lastDeviceName);
 
+  /// When each phase started, to label every sample with the phase in
+  /// which it was measured (see [ProtocolContextTimeline]).
+  final ProtocolContextTimeline _contextTimeline = ProtocolContextTimeline();
+
   void updateProtocolContext({
     required String participantId,
     required int activityIndex,
     required String phaseName,
+    DateTime? at,
   }) {
     currentParticipantId = participantId;
     currentActivityIndex = activityIndex;
     currentPhaseName = phaseName;
+    _contextTimeline.update(
+      (at ?? DateTime.now()).toUtc().microsecondsSinceEpoch,
+      ProtocolContext(participantId, activityIndex, phaseName),
+    );
+  }
+
+  ProtocolContext _contextAt(DateTime t) => _contextTimeline.at(t.microsecondsSinceEpoch);
+
+  /// Time of a heart-rate notification, which carries no sensor time: its
+  /// arrival less what the PMD frames of the same link arrive late beyond
+  /// the usual latency (when one arrived in the last 5 s), and that delay
+  /// in ms.
+  (DateTime, int?) _heartRateTime() {
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final last = _clock.lastArrivalMicros;
+    final delay = _clock.lastExcessLatencyMicros;
+    if (last == null || delay == null || now - last > 5 * 1000 * 1000) {
+      return (DateTime.fromMicrosecondsSinceEpoch(now, isUtc: true), null);
+    }
+    return (DateTime.fromMicrosecondsSinceEpoch(now - delay, isUtc: true), delay ~/ 1000);
+  }
+
+  /// How late the PMD frames are arriving beyond the usual latency, while
+  /// they arrive (null without PMD streams). The monitor warns above 2 s.
+  Duration? get bluetoothDelay {
+    final last = _clock.lastArrivalMicros;
+    final delay = _clock.lastExcessLatencyMicros;
+    if (last == null || delay == null) return null;
+    if (DateTime.now().toUtc().microsecondsSinceEpoch - last > 5 * 1000 * 1000) return null;
+    return Duration(microseconds: delay);
   }
 
   // ===========================================================================
@@ -398,6 +434,16 @@ class PolarBleService {
 
   bool _userRequestedDisconnect = false;
   bool _reconnectLoopRunning = false;
+
+  /// The device answered but has no Polar data service (PMD): another
+  /// brand's chest strap (a Garmin HRM-Pro+ was tried 21 times on
+  /// 02/11/2026). Retrying cannot help, so it is not retried.
+  bool _notPolar = false;
+
+  static bool _isMissingPolarService(Object e) {
+    final text = '$e';
+    return text.contains('serviceNotFound') || text.toLowerCase().contains('fb005c80');
+  }
   int _connectGeneration = 0;
 
   Timer? _watchdogTimer;
@@ -437,6 +483,68 @@ class PolarBleService {
 
   void _logEvent(String event, [String detail = '']) {
     connectionEvents.add(PolarConnectionEvent(event, detail));
+  }
+
+  // ===========================================================================
+  // LINK QUALITY
+  // ===========================================================================
+
+  /// Frames received and lost of each PMD stream (`acc`, `ecg`...) since
+  /// [resetLinkStats]. A frame is lost when the sensor time jumps by more
+  /// than one frame: the sensor dropped it because the link was behind.
+  final Map<String, ({int received, int lost})> pmdFrameStats = {};
+
+  final Map<int, int> _lastFrameNs = {};
+  final Map<int, int> _frameSpanNs = {};
+
+  /// Longest delay of the episode in which the link is behind (µs), or
+  /// null while it keeps up.
+  int? _behindMaxMicros;
+
+  /// Delay above which the link counts as behind, and below which it has
+  /// caught up again.
+  static const behindMicros = 2 * 1000 * 1000;
+  static const caughtUpMicros = 500 * 1000;
+
+  void resetLinkStats() {
+    pmdFrameStats.clear();
+  }
+
+  void _trackFrame(int measurementType, int frameNs) {
+    final name = pmdStreamNames[measurementType] ?? '$measurementType';
+    final previous = _lastFrameNs[measurementType];
+    _lastFrameNs[measurementType] = frameNs;
+    var lost = 0;
+    if (previous != null && frameNs > previous) {
+      final gap = frameNs - previous;
+      final span = _frameSpanNs[measurementType];
+      // Frames are lost whole, so the shortest gap is one frame.
+      if (span == null || gap < span) {
+        _frameSpanNs[measurementType] = gap;
+      } else if (gap > span * 1.5) {
+        lost = (gap / span).round() - 1;
+        _logEvent('frames_lost', '$name: $lost (${(gap / 1e9).toStringAsFixed(2)} s)');
+      }
+    }
+    final stats = pmdFrameStats[name] ?? (received: 0, lost: 0);
+    pmdFrameStats[name] = (received: stats.received + 1, lost: stats.lost + lost);
+  }
+
+  void _trackDelay() {
+    final delay = _clock.lastExcessLatencyMicros;
+    if (delay == null) return;
+    final worst = _behindMaxMicros;
+    if (worst == null) {
+      if (delay > behindMicros) {
+        _behindMaxMicros = delay;
+        _logEvent('link_behind', '${(delay / 1e6).toStringAsFixed(1)} s');
+      }
+    } else if (delay < caughtUpMicros) {
+      _behindMaxMicros = null;
+      _logEvent('link_caught_up', 'máximo ${(worst / 1e6).toStringAsFixed(1)} s');
+    } else if (delay > worst) {
+      _behindMaxMicros = delay;
+    }
   }
 
   String exportConnectionEventsCsv() {
@@ -542,6 +650,10 @@ class PolarBleService {
   void _resetPmdTimingState() {
     _lastPmdFrameTimestampNs.clear();
     _lastAccSampleTimestampNs = null;
+    _measuredPeriodNs.clear();
+    _lastFrameNs.clear();
+    _frameSpanNs.clear();
+    _behindMaxMicros = null;
     _resetClockSync();
   }
 
@@ -721,8 +833,9 @@ class PolarBleService {
   }) {
     if (_userRequestedDisconnect ||
         !autoReconnectEnabled ||
+        _notPolar ||
         _lastDevice == null) {
-      _setStatus(PolarLinkState.disconnected, reason);
+      if (!_notPolar) _setStatus(PolarLinkState.disconnected, reason);
       return;
     }
 
@@ -756,7 +869,7 @@ class PolarBleService {
     final ok = await _connectAndRestore(device, attempt: 1);
 
     // Si ya hay un bucle automático en marcha, sigue él; si no, se arranca.
-    if (!ok && autoReconnectEnabled) {
+    if (!ok && autoReconnectEnabled && !_notPolar) {
       unawaited(_runReconnectLoop('Reintento fallido'));
     }
 
@@ -776,6 +889,7 @@ class PolarBleService {
 
       while (!_userRequestedDisconnect &&
           autoReconnectEnabled &&
+          !_notPolar &&
           generation == _connectGeneration &&
           _connectedDevice == null) {
         final device = _lastDevice;
@@ -917,6 +1031,7 @@ class PolarBleService {
     }
 
     _lastDevice = device;
+    _notPolar = false;
     _lastDeviceName = _displayName(device);
     _logEvent('connect_requested', _lastDeviceName);
 
@@ -1023,6 +1138,17 @@ class PolarBleService {
           }
 
           _logEvent('connect_failed', '$e');
+          if (_isMissingPolarService(e)) {
+            _notPolar = true;
+            _setStatus(
+              PolarLinkState.error,
+              '$name no es un sensor Polar compatible: no tiene el servicio de '
+              'datos de Polar (ECG, ACC). Elige la H10 o la Verity Sense en '
+              'Configurar dispositivo.',
+              attempt: attempt,
+            );
+            return false;
+          }
           _setStatus(
             PolarLinkState.error,
             authError
@@ -2303,6 +2429,8 @@ class PolarBleService {
         frameSensorNs: frameNs,
         offsetMicros: _clock.offsetMicros ?? 0,
       ));
+      _trackFrame(measurementType, frameNs);
+      _trackDelay();
     }
 
     switch (measurementType) {
@@ -2402,11 +2530,11 @@ class PolarBleService {
     int scaled(int raw) => factor == 1.0 ? raw : (raw * factor).round();
     for (var i = 0; i < samples.length; i++) {
       final s = samples[i];
+      final t = _convertPmdTimestampToHostUtc(timestamps[i]);
+      final ctx = _contextAt(t);
       final sample = PolarPpgSample(
-        timestamp: _convertPmdTimestampToHostUtc(timestamps[i]),
-        participantId: currentParticipantId,
-        activityIndex: currentActivityIndex,
-        phaseName: currentPhaseName,
+        timestamp: t,
+        participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
         ppg0: scaled(s[0]),
         ppg1: scaled(s[1]),
         ppg2: scaled(s[2]),
@@ -2457,12 +2585,11 @@ class PolarBleService {
     for (var i = 0; i < samples.length; i++) {
       final s = samples[i];
       final t = _convertPmdTimestampToHostUtc(timestamps[i]);
+      final ctx = _contextAt(t);
       if (isMag) {
         final sample = PolarMagSample(
           timestamp: t,
-          participantId: currentParticipantId,
-          activityIndex: currentActivityIndex,
-          phaseName: currentPhaseName,
+          participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
           xGauss: value(s[0]),
           yGauss: value(s[1]),
           zGauss: value(s[2]),
@@ -2473,9 +2600,7 @@ class PolarBleService {
       } else {
         final sample = PolarGyroSample(
           timestamp: t,
-          participantId: currentParticipantId,
-          activityIndex: currentActivityIndex,
-          phaseName: currentPhaseName,
+          participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
           xDps: value(s[0]),
           yDps: value(s[1]),
           zDps: value(s[2]),
@@ -2530,11 +2655,11 @@ class PolarBleService {
       final o = i * bytesPerSample;
       final flags = content[o + 5];
       final sensorTime = sensorTimes[i];
+      final t = sensorTime == null ? arrival : _convertPmdTimestampToHostUtc(sensorTime);
+      final ctx = _contextAt(t);
       final sample = PolarPpiSample(
-        timestamp: sensorTime == null ? arrival : _convertPmdTimestampToHostUtc(sensorTime),
-        participantId: currentParticipantId,
-        activityIndex: currentActivityIndex,
-        phaseName: currentPhaseName,
+        timestamp: t,
+        participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
         ppiMs: intervals[i],
         heartRateBpm: content[o],
         errorEstimateMs: content[o + 3] | (content[o + 4] << 8),
@@ -2659,18 +2784,12 @@ class PolarBleService {
         offset,
       );
 
+      final t = _convertPmdTimestampToHostUtc(timestamps[i]);
+      final ctx = _contextAt(t);
       final sample =
           PolarEcgSample(
-        timestamp:
-            _convertPmdTimestampToHostUtc(
-          timestamps[i],
-        ),
-        participantId:
-            currentParticipantId,
-        activityIndex:
-            currentActivityIndex,
-        phaseName:
-            currentPhaseName,
+        timestamp: t,
+        participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
         microVolts:
             rawUv,
         sensorTimeNs:
@@ -3495,6 +3614,21 @@ class PolarBleService {
   // PMD TIMESTAMP RECONSTRUCTION
   // ===========================================================================
 
+  /// Sample period measured from consecutive frames, by sample rate (each
+  /// stream of a device has its own rate).
+  final Map<int, double> _measuredPeriodNs = {};
+
+  /// Sensor time of every sample of a frame whose last sample is at
+  /// [timestampNs].
+  ///
+  /// The frame times are the sensor's own clock, so when the frame before
+  /// is the one just before (its time is one frame of samples back, within
+  /// 5 %), the samples are spread evenly between the two, as the Polar SDK
+  /// does (PmdTimeStampUtils): the H10 accelerometer set to 200 Hz runs at
+  /// about 203 Hz, and placing its 36 samples 5 ms apart overlapped each
+  /// frame with the one before by 2.5 ms. When frames were lost in between,
+  /// or for the first frame, the period measured last (or the nominal one)
+  /// is used back from the frame time.
   List<int> _buildPmdTimestamps({
     required int timestampNs,
     required int? previousTimestampNs,
@@ -3504,97 +3638,25 @@ class PolarBleService {
     if (sampleCount <= 0 || sampleRateHz <= 0) {
       return const [];
     }
-
-    final samplePeriodNs =
-        (1000000000.0 / sampleRateHz);
-
-    // -------------------------------------------------------------------------
-    // First frame
-    // -------------------------------------------------------------------------
-    //
-    // With no previous frame timestamp, the frame timestamp corresponds to the
-    // end of the sample block. Reconstruct backwards from that timestamp.
-    //
-    // This is also the only safe fallback when starting a stream.
-    //
-    if (previousTimestampNs == null ||
-        previousTimestampNs <= 0) {
-      final firstTimestamp =
-          timestampNs -
-              (sampleCount - 1) *
-                  samplePeriodNs;
-
-      return List<int>.generate(
-        sampleCount,
-        (index) =>
-            (firstTimestamp +
-                    index * samplePeriodNs)
-                .round(),
-      );
-    }
-
-    // -------------------------------------------------------------------------
-    // Consecutive frames
-    // -------------------------------------------------------------------------
-    //
-    // Polar's PMD timestamp utility uses the frame timestamps as the temporal
-    // anchors and the configured sample rate to reconstruct individual sample
-    // timestamps.
-    //
-    // We deliberately do NOT derive the sample interval from:
-    //
-    //     (timestampNs - previousTimestampNs) / sampleCount
-    //
-    // because BLE notification timing and frame boundaries are not a substitute
-    // for the sensor sample clock.
-    //
-    // The sample period therefore remains determined by the PMD sample rate.
-    //
-    final timestamps =
-        List<int>.generate(
-      sampleCount,
-      (index) =>
-          timestampNs -
-          ((sampleCount - 1 - index) *
-                  samplePeriodNs)
-              .round(),
-    );
-
-    // -------------------------------------------------------------------------
-    // Continuity check
-    // -------------------------------------------------------------------------
-    //
-    // This is diagnostic only. We do not modify Polar timestamps merely because
-    // a frame arrives with a gap.
-    //
-    final expectedFirstTimestamp =
-        previousTimestampNs +
-            samplePeriodNs.round();
-
-    final actualFirstTimestamp =
-        timestamps.first;
-
-    final error =
-        actualFirstTimestamp -
-            expectedFirstTimestamp;
-
-    // Small differences are normal because timestamps are integer nanoseconds.
-    // A larger difference indicates a genuine discontinuity / dropped data /
-    // sensor-side timing event and should be visible during development.
-    if (error.abs() >
-        (samplePeriodNs * 2).round()) {
-      if (debugPmdFrames) {
+    final nominalNs = 1000000000.0 / sampleRateHz;
+    var periodNs = _measuredPeriodNs[sampleRateHz] ?? nominalNs;
+    if (previousTimestampNs != null && previousTimestampNs > 0) {
+      final measured = (timestampNs - previousTimestampNs) / sampleCount;
+      if ((measured / nominalNs - 1).abs() < 0.05) {
+        periodNs = measured;
+        _measuredPeriodNs[sampleRateHz] = measured;
+      } else if (debugPmdFrames) {
         debugPrint(
           '[POLAR DEBUG] PMD timestamp discontinuity: '
-          'previous=$previousTimestampNs '
-          'expectedFirst=$expectedFirstTimestamp '
-          'actualFirst=$actualFirstTimestamp '
-          'error=${error}ns',
+          'previous=$previousTimestampNs frame=$timestampNs '
+          'samples=$sampleCount rate=$sampleRateHz',
         );
       }
     }
-
-    return timestamps;
+    return List<int>.generate(
+      sampleCount,
+      (index) => timestampNs - ((sampleCount - 1 - index) * periodNs).round(),
+    );
   }
 
   // ===========================================================================
@@ -3636,17 +3698,13 @@ class PolarBleService {
         _convertPmdTimestampToHostUtc(
       sampleNs,
     );
+    final ctx = _contextAt(sampleTime);
 
     final sample =
         PolarAccelerationSample(
       timestamp:
           sampleTime,
-      participantId:
-          currentParticipantId,
-      activityIndex:
-          currentActivityIndex,
-      phaseName:
-          currentPhaseName,
+      participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
       xMg: xMg,
       yMg: yMg,
       zMg: zMg,
@@ -3836,12 +3894,13 @@ class PolarBleService {
       // One row per notification keeps every RR interval (a row per second
       // taken from the last value lost the RR of skipped notifications).
       if (bpm > 0 || rrList.isNotEmpty) {
+        final (t, delayMs) = _heartRateTime();
+        final ctx = _contextAt(t);
         recordedSamples.add(
           PolarHrSample(
-            timestamp: DateTime.now().toUtc(),
-            participantId: currentParticipantId,
-            activityIndex: currentActivityIndex,
-            phaseName: currentPhaseName,
+            timestamp: t,
+            bleDelayMs: delayMs,
+            participantId: ctx.participantId, activityIndex: ctx.activityIndex, phaseName: ctx.phaseName,
             heartRateBpm: bpm,
             rrIntervalsMs: rrList,
             hrSource: hrSource,

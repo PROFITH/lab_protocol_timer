@@ -85,7 +85,7 @@ session ends.
 
 | File | Columns | Device |
 |---|---|---|
-| `polar_hr_<id>_<ts>.csv` | `hr_bpm,rr_intervals_ms,hr_source` | H10, Verity |
+| `polar_hr_<id>_<ts>.csv` | `hr_bpm,rr_intervals_ms,hr_source,ble_delay_ms` | H10, Verity |
 | `polar_acc_<id>_<ts>.csv` | `acc_x_mg,acc_y_mg,acc_z_mg,sensor_time_ns` | H10, Verity |
 | `polar_ecg_<id>_<ts>.csv` | `ecg_uv,sensor_time_ns` | H10 |
 | `polar_ppg_<id>_<ts>.csv` | `ppg0,ppg1,ppg2,ambient,sensor_time_ns` (raw 22-bit counts) | Verity |
@@ -93,11 +93,43 @@ session ends.
 | `polar_gyro_<id>_<ts>.csv` | `gyro_x_dps,gyro_y_dps,gyro_z_dps,sensor_time_ns` | Verity |
 | `polar_mag_<id>_<ts>.csv` | `mag_x_gauss,mag_y_gauss,mag_z_gauss,sensor_time_ns` | Verity |
 | `polar_clock_<id>_<ts>.csv` | `arrival_utc,stream,frame_sensor_time_ns,offset_us`: one row per PMD frame, for checking the clock mapping | both |
-| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`) | both |
+| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`; `frames_lost` when the sensor dropped frames, `link_behind` / `link_caught_up` when the link fell more than 2 s behind and caught up) | both |
 
 `sensor_time_ns` is the sensor's own clock before the mapping to the host
 clock; `timestamp_iso` is that time mapped. PPI rows without a sensor time
 share the arrival time of their batch and `index_in_frame` orders them.
+
+### When the Bluetooth link falls behind
+
+A Polar sensor keeps its frames when the link cannot send them as fast as
+it measures (radio interference, another strap nearby, video over the same
+wifi), sends them seconds late and, if the link stays behind, drops some
+(in a test on 02/11/2026 the H10 lost 27 % of its accelerometer frames and no ECG). The live charts
+then stop: they show what has arrived. The files stay right:
+
+- **Times:** the sensor time of each frame is mapped with the lower
+  envelope of `arrival - sensor time` (`lib/services/pmd_clock.dart`): a late
+  frame does not move it, it rises only as fast as two clocks can drift
+  (150 ppm) and comes down at most 90 % as fast as the sensor time runs, so
+  times always increase.
+- **Samples of a frame:** spread evenly between its time and that of the
+  frame before when it is the one just before (the H10 accelerometer set to
+  200 Hz runs at about 203 Hz); after lost frames, with the period measured
+  last.
+- **Phase:** `activity_index` and `phase_name` are those at `timestamp_iso`
+  (when the sample was measured), not at its arrival.
+- **Heart rate** has no sensor time: `timestamp_iso` is the arrival less the
+  delay of the PMD frames of the same link at that moment, written in
+  `ble_delay_ms` (empty when no PMD stream told it).
+- **Lost frames** are missing from the files; `frames_lost` in the
+  connection events says how many and when.
+
+The device panel of the monitor warns while it happens: «Bluetooth con 17 s
+de retraso» and «ACC: 27 % de paquetes perdidos».
+
+A device without the Polar data service (another brand's strap, such as a
+Garmin HRM-Pro+) is not retried: the panel says to choose the H10 or the
+Verity Sense.
 The manifest lists, for each live device, the `signals` requested and the
 `files` that got rows.
 
