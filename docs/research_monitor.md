@@ -43,10 +43,14 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
     `verity_ppi_firmware`. The resting heart rate in `activity_markers.csv`
     keeps its own `method` (`rr` or `hr`).
 - **Cameras**: one recorder per camera of the session. The gear button picks
-  the Windows camera, the resolution (720p, 1080p by default, 4K) and the
-  quality; both are remembered on that computer. Video is recorded with
-  audio from the first microphone Windows lists; if it cannot be opened the
-  camera records without audio and says so.
+  the Windows camera, the resolution (720p, 1080p by default, 4K), the
+  quality and the microphone; all are remembered on that computer. Video is
+  recorded with audio from the Windows default recording device unless
+  another microphone is chosen (one choice for every camera of the
+  computer; a chosen microphone that is no longer connected falls back to
+  the default). If it cannot be opened the camera records without audio and
+  says so. The choice needs the vendored `packages/camera_windows`, since
+  the published plugin always takes the first microphone Windows lists.
   - Windows encodes H.264 at a constant rate, so a file weighs the bitrate
     times its duration. The bitrate follows the size the camera really gives
     (a laptop camera asked for 1080p gives 720p): 0.09 bits per pixel and

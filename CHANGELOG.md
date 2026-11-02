@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Microphone of the video:** the camera dialog of the Research Monitor has a «Micrófono» list. By default the video records the Windows default recording device (before, the first microphone Windows listed, which with DroidCam could be its virtual microphone); another one can be chosen and is remembered on that computer. It needs the vendored `camera_windows` in `packages/camera_windows` (0.2.6+5 with the choice of audio device).
 - **Every signal of the Polar Verity Sense:** besides heart rate and ACC, the Research Monitor now records the raw PPG (`polar_ppg_*`, three channels plus ambient light, 55 Hz), the pulse-to-pulse intervals of Polar's PPI algorithm (`polar_ppi_*`, with its heart rate, error estimate and flags), the gyroscope (`polar_gyro_*`, dps) and the magnetometer (`polar_mag_*`, gauss), each with the sensor's own time and mapped to the host clock like ACC and ECG. The settings of each stream are negotiated with the sensor as the Polar SDK does.
 - **Heart-rate source:** `polar_hr_*` files carry `hr_source` (`h10_ecg_firmware`, `verity_ppg_firmware`), and the PPI rows `verity_ppi_firmware`, so an analysis always knows which device and signal produced an estimate.
 - **Manifest:** each live sensor lists its requested `signals` and the `files` that got rows (optional fields, format 1.1).

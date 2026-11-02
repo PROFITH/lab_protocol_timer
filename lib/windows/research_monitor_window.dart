@@ -523,6 +523,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       await camera.service.loadSettings();
       var preset = camera.service.resolutionPreset;
       var quality = camera.service.quality;
+      // Microphone for the video audio (the claps): the Windows default
+      // unless another one was chosen on this computer.
+      final microphones = await VideoRecordingService.listAudioInputs();
+      String? microphone = VideoRecordingService.audioInputId;
+      if (microphone != null && !microphones.any((m) => m.id == microphone)) {
+        microphone = null;
+      }
+      final defaultMicrophone = microphones.where((m) => m.isDefault).map((m) => m.name).firstOrNull;
 
       // Mostrar diálogo para que elijas qué cámara usar
       if (!mounted) return;
@@ -624,10 +632,39 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       style: TextStyle(color: Colors.white38, fontSize: 11),
                     ),
                     const SizedBox(height: 8),
+                    DropdownButtonFormField<String?>(
+                      initialValue: microphone,
+                      isExpanded: true,
+                      dropdownColor: const Color(0xFF1E293B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'Micrófono',
+                        labelStyle: TextStyle(color: Colors.white54),
+                      ),
+                      items: [
+                        DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text(
+                            defaultMicrophone == null
+                                ? 'Predeterminado de Windows'
+                                : 'Predeterminado de Windows ($defaultMicrophone)',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        for (final option in microphones)
+                          DropdownMenuItem<String?>(
+                            value: option.id,
+                            child: Text(option.name, overflow: TextOverflow.ellipsis),
+                          ),
+                      ],
+                      onChanged: (value) => setDialogState(() => microphone = value),
+                    ),
+                    const SizedBox(height: 8),
                     const Text(
-                      'El vídeo graba también audio (las palmadas) del primer '
-                      'micrófono que da Windows; con DroidCam conviene dejar '
-                      'activado su micrófono virtual o desactivar los demás.',
+                      'El vídeo graba también el audio (las palmadas) de este '
+                      'micrófono. Elige micrófono, resolución y calidad antes '
+                      'de pulsar la cámara; la elección se recuerda en este '
+                      'ordenador.',
                       style: TextStyle(color: Colors.white38, fontSize: 11),
                     ),
                   ],
@@ -657,6 +694,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
       camera.service.resolutionPreset = preset;
       camera.service.quality = quality;
+      VideoRecordingService.audioInputId = microphone;
       unawaited(camera.service.saveSettings());
       final success = await camera.service.initializeCamera(selectedCamera);
       if (!mounted) return;

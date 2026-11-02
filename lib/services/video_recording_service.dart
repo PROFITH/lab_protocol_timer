@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' show Size;
 import 'package:camera/camera.dart';
+import 'package:camera_windows/audio_inputs.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:disk_space_2/disk_space_2.dart';
@@ -155,6 +156,33 @@ class VideoRecordingService {
 
   static const _resolutionKey = 'lpt_video_resolution';
   static const _qualityKey = 'lpt_video_quality';
+  static const _audioInputKey = 'lpt_audio_input';
+
+  /// Microphone the cameras record (Windows endpoint id); null means the
+  /// Windows default recording device. One choice for the whole computer.
+  static String? audioInputId;
+
+  /// Microphones Windows offers, empty off Windows or if they cannot be
+  /// listed (then the camera records the Windows default).
+  static Future<List<AudioInput>> listAudioInputs() async {
+    if (kIsWeb || !Platform.isWindows) return const [];
+    try {
+      return await CameraWindowsAudioInputs.list();
+    } catch (e) {
+      debugPrint('[VIDEO] No se pudieron listar los micrófonos: $e');
+      return const [];
+    }
+  }
+
+  /// Tells the camera plugin which microphone to open next.
+  static Future<void> _applyAudioInput() async {
+    if (kIsWeb || !Platform.isWindows) return;
+    try {
+      await CameraWindowsAudioInputs.select(audioInputId);
+    } catch (e) {
+      debugPrint('[VIDEO] No se pudo elegir el micrófono: $e');
+    }
+  }
 
   /// Resolution and quality chosen last time on this computer.
   Future<void> loadSettings() async {
@@ -164,6 +192,7 @@ class VideoRecordingService {
       final quality = prefs.getString(_qualityKey);
       resolutionPreset = ResolutionPreset.values.firstWhere((p) => p.name == resolution, orElse: () => resolutionPreset);
       this.quality = VideoQuality.values.firstWhere((q) => q.name == quality, orElse: () => this.quality);
+      audioInputId = prefs.getString(_audioInputKey);
     } catch (e) {
       debugPrint('[VIDEO] No se pudieron leer los ajustes de vídeo: $e');
     }
@@ -174,6 +203,12 @@ class VideoRecordingService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_resolutionKey, resolutionPreset.name);
       await prefs.setString(_qualityKey, quality.name);
+      final audioInput = audioInputId;
+      if (audioInput == null) {
+        await prefs.remove(_audioInputKey);
+      } else {
+        await prefs.setString(_audioInputKey, audioInput);
+      }
     } catch (e) {
       debugPrint('[VIDEO] No se pudieron guardar los ajustes de vídeo: $e');
     }
@@ -401,8 +436,9 @@ class VideoRecordingService {
 
       // Crear controlador para la cámara seleccionada, con audio (las
       // palmadas de sincronización). On Windows the audio comes from the
-      // first capture device; if it cannot be opened, the camera is opened
-      // again without audio.
+      // microphone in [audioInputId], or the Windows default recording
+      // device; if it cannot be opened, the camera is opened again without
+      // audio.
       audioUnavailable = _recordWithoutAudio;
       try {
         await _openController(camera, enableAudio: !_recordWithoutAudio);
@@ -492,6 +528,7 @@ class VideoRecordingService {
     required bool enableAudio,
   }) async {
     final key = '${camera.name}|${resolutionPreset.name}';
+    if (enableAudio) await _applyAudioInput();
     await _createController(
       camera,
       enableAudio: enableAudio,
