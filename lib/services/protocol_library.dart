@@ -38,6 +38,7 @@ class RememberedSetup {
 /// the last setup of each participant.
 class ProtocolLibrary {
   static const builtInAssets = [
+    'assets/protocols/run4health_weargap.json',
     'assets/protocols/run4health_base.json',
     'assets/protocols/weargap_day0_base.json',
     'assets/protocols/weargap_day8_base.json',

@@ -48,12 +48,13 @@ void main() {
           expect(protocol.moments, isNotEmpty);
           expect(protocol.activities.every((a) => a.durationSeconds != null),
               isTrue);
-          // RUN4HEALTH looks at how far off the sensors are in the lab data
-          // instead of doing the calibration box (decided on 2026-10-20).
+          // RUN4HEALTH (base) has no calibration box (decided on
+          // 2026-10-20); RUN4HEALTH (WEARGAP) brings back the dodecahedron
+          // at the start and at the end (protocol v2, 2026-11-01).
           expect(protocol.activities.first.isCalibration,
-              protocol.study != 'RUN4HEALTH');
+              protocol.protocolId != 'run4health_base');
           for (final box in protocol.activities.where((a) => a.isCalibration)) {
-            expect(box.faces, 6);
+            expect(box.faces, protocol.protocolId == 'run4health_weargap' ? 12 : 6);
             expect(box.compendiumCode, isNull);
           }
           final ids = protocol.sensors.map((s) => s.sensorId).toList();
@@ -100,6 +101,32 @@ void main() {
       expect(
         r4h.sensors.where((s) => s.freeLiving).map((s) => s.sensorId),
         unorderedEquals(['matrix_wnd', 'sens_thigh', 'verity_arm']),
+      );
+    });
+
+    test('RUN4HEALTH (WEARGAP) has the pilot sensors and the dodecahedron', () {
+      final base = _asset('assets/protocols/run4health_base.json');
+      final p = _asset('assets/protocols/run4health_weargap.json');
+      expect(p.study, 'RUN4HEALTH');
+      expect(p.moments, [_day0, _day8]);
+      // The same 9 activities as the base, between two calibrations.
+      final lab = p.activities.where((a) => !a.isCalibration).toList();
+      expect(lab.map((a) => a.name), base.activities.map((a) => a.name));
+      expect(p.activities.first.isCalibration, isTrue);
+      expect(p.activities.last.isCalibration, isTrue);
+      for (final c in p.activities.where((a) => a.isCalibration)) {
+        expect(c.faces, 12);
+        expect(c.durationSeconds, 480);
+      }
+      // No SENS, no SensWear; Verity Sense only in the lab.
+      final types = p.sensors.map((s) => s.type).toList();
+      expect(types, isNot(contains('sens')));
+      expect(types, isNot(contains('senswear')));
+      expect(types.where((t) => t == 'ax3'), hasLength(3));
+      expect(types.where((t) => t == 'ax6'), hasLength(2));
+      expect(
+        p.sensors.where((s) => s.freeLiving).map((s) => s.sensorId),
+        unorderedEquals(['matrix_wnd', 'ax3_thigh', 'ax6_shoe_l', 'ax6_shoe_r']),
       );
     });
 
