@@ -112,7 +112,7 @@ void main() {
       // negatives, treadmill walking and running, chair stands and the 6MWT,
       // between two calibrations.
       final lab = p.activities.where((a) => !a.isCalibration).toList();
-      expect(lab, hasLength(28));
+      expect(lab, hasLength(29));
       expect(lab.first.name, 'Tumbado en reposo');
       expect(lab.first.restingHr, isTrue);
       expect(lab.last.name, 'Marcha de 6 minutos');

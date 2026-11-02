@@ -42,6 +42,15 @@
       "notes": "Negativo de pasos: cambios de postura y de apoyo, sin desplazarse."
     },
     {
+      "name": "Sentado libre",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 240,
+      "animation": "sit",
+      "instructions": "Siéntate como quieras y haz lo que te apetezca: puedes usar el móvil o el ordenador, hablar o cruzar las piernas.",
+      "notes": "Sentado sin instrucciones y sin golpear el suelo (Jairo, 02/11)."
+    },
+    {
       "name": "Sentado golpeando con el talón",
       "compendium_code": "07023",
       "met": 1.8,
