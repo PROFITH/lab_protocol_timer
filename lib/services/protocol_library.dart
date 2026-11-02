@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/activity_battery.dart';
+import 'lab_redcap_service.dart';
 
 /// Session setup remembered for a participant, so that the closing visit
 /// reuses the sensors (and serials) of the first one.
@@ -111,8 +112,11 @@ class ProtocolLibrary {
     return setups;
   }
 
+  /// Keeps the setup of each participant: [battery] with that participant's
+  /// own sensors (their serials) in place of the layout's, so the closing
+  /// visit gets them back.
   static Future<void> remember(
-    Iterable<({String participantId, String eventName})> participants,
+    Iterable<ParticipantEntry> participants,
     ActivityBattery battery,
   ) async {
     final prefs = await SharedPreferences.getInstance();
@@ -122,9 +126,16 @@ class ProtocolLibrary {
         : jsonDecode(raw) as Map<String, dynamic>;
     final now = DateTime.now();
     for (final p in participants) {
+      final own = p.sensors.isEmpty
+          ? battery
+          : battery.copyWith(sensors: [
+              ...p.sensorsOr(battery.sensors),
+              for (final sensor in battery.sensors)
+                if (sensor.connection == 'video') sensor,
+            ]);
       all[p.participantId] = RememberedSetup(
-        battery: battery,
-        eventName: p.eventName,
+        battery: own,
+        eventName: p.redcapEventName,
         savedAt: now,
       ).toJson();
     }

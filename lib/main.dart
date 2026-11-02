@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 
 import 'config/default_protocol_configuration.dart';
-import 'models/activity_battery.dart';
+import 'models/protocol_configuration.dart';
 import 'services/redcap_connection.dart';
 import 'session/session_controller.dart';
 import 'session/timer_page.dart';
@@ -137,7 +137,7 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
       );
 
   Future<void> _startSession(SessionController controller) async {
-    await openResearchMonitorWindow(controller.battery);
+    await openResearchMonitorWindow(controller.protocolConfiguration);
     final navigator = _navigator.currentState;
     if (navigator == null) {
       controller.dispose();
@@ -173,10 +173,10 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
   }
 }
 
-/// Opens the Research Monitor (or shows the hidden one) for a session.
-Future<void> openResearchMonitorWindow(ActivityBattery? battery) async {
+/// Opens the Research Monitor (or shows the hidden one) for a session with
+/// [configuration] (each participant's sensors and the cameras).
+Future<void> openResearchMonitorWindow(ProtocolConfiguration configuration) async {
   final bridge = ResearchMonitorBridge.instance;
-  final configuration = protocolConfigurationFor(battery);
   try {
     bridge.setProtocolConfiguration(configuration);
     if (await bridge.hasLiveMonitorWindow()) {

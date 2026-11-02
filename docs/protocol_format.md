@@ -2,7 +2,13 @@
 
 ## Setting up a session
 
-The participant screen has a **Configuración de la sesión** block under the participants:
+The start screen goes in three numbered steps. Steps 2 and 3 are inactive (dimmed, no taps) until every participant has an ID, so each participant gets their ID before anything is assigned to them:
+
+1. **Participantes**: ID and visit of each participant (IDs cannot repeat).
+2. **Protocolo y sensores**: the **Configuración de la sesión** block below, then a card per participant with a serial-number field for every sensor of the protocol (cameras are the session's, not a participant's), and the first activity.
+3. **Carpetas de la sesión**: the folder of each participant, proposed as `<data folder>/<study>_<ID>/<visit>` (`R4H_001/D0`) and changeable one by one (**Cambiar**; **Automática** goes back to the proposed one); the data folder itself can be changed too.
+
+The **Configuración de la sesión** block:
 
 1. **Protocolo de actividades**: a list with the base protocols bundled with the app (`assets/protocols/`: RUN4HEALTH, WEARGAP day 0, WEARGAP day 8), the protocols saved on this computer, and "Sin protocolo" (numbered activities that all last the Research Monitor duration, as before). When the visit of the first participant changes, a protocol of the same study meant for that visit replaces the current one (WEARGAP day 0 ↔ day 8).
 2. **Editar actividades y sensores** opens an editor with two tabs:
@@ -11,7 +17,7 @@ The participant screen has a **Configuración de la sesión** block under the pa
    - *Guardar como protocolo* stores the edited protocol on this computer under a name; *Exportar JSON* writes it to a file for another computer. *Usar en esta sesión* applies the changes to this session only.
 3. **Importar JSON** loads a protocol file (format below).
 
-Starting a session warns if a sensor has no serial number, and remembers the setup for each participant. When the same participant ID is typed again (closing visit), its sensors and serials come back: with the same protocol, exactly as used; with another protocol of the study, that protocol's sensor list with the serials of the sensors that have the same ID.
+The sensor list of the protocol is the layout every participant wears; the serial numbers are typed per participant in step 2 (a serial set in the editor is only the default for a session with one participant). Starting a session warns if a sensor has no serial number, and remembers the setup of each participant with their own serials. When the same participant ID is typed again (closing visit), their serials come back, and for the first participant also the protocol: with the same protocol, exactly as used; with another protocol of the study, that protocol's sensor list with the serials of the sensors that have the same ID.
 
 ## Protocol file
 
@@ -44,4 +50,4 @@ A `calibration` segment runs through the same phases as an activity: the static 
 
 ## Session output
 
-The session folder contains `session_manifest.json` in the format read by [SAVES](https://github.com/PROFITH/saves_app/blob/main/docs/session_format.md) (version 1.1), `sync_windows.csv` and `activity_markers.csv`. With a protocol, each activity in the manifest carries `activity_name`, `compendium_code`, `planned_duration_seconds` and, when known, `met`; the manifest carries `protocol`; `sensors` lists every configured sensor (the Polar H10 keeps its live entry and gains its serial), with `device_type`, `placement_label`, `serial`, `sampling_rate_hz`, `range_g` and `free_living` as optional additions to the 1.1 fields; cameras go to `video.cameras`. `lab_activity` in REDCap now also receives `la_mets`. Each attempt in the manifest also carries `redcap_instance`, the `lab_activity` instance it was sent to (one per attempt that is not a calibration segment, in the order of the session, skipped attempts included), so SAVES Studio can send the steps and sit-to-stands counted on the video to the same instance.
+Each participant's folder contains `session_manifest.json` in the format read by [SAVES](https://github.com/PROFITH/saves_app/blob/main/docs/session_format.md) (version 1.1), `sync_windows.csv` and `activity_markers.csv`. A session with several participants writes one folder per participant: the state, event log, markers and sync windows are the same in all of them, each manifest lists its participant under `participants` (the others under `session_participants`) and that participant's sensors keyed by sensor ID (`polar_h10`, never the monitor's `polar_h10@002`), and the Polar files of each participant's live sensors are in their folder; the videos and the video log of the session are copied to every folder. Sessions started before 1.2.0 keep their single folder. With a protocol, each activity in the manifest carries `activity_name`, `compendium_code`, `planned_duration_seconds` and, when known, `met`; the manifest carries `protocol`; `sensors` lists every configured sensor (the Polar H10 keeps its live entry and gains its serial), with `device_type`, `placement_label`, `serial`, `sampling_rate_hz`, `range_g` and `free_living` as optional additions to the 1.1 fields; cameras go to `video.cameras`. `lab_activity` in REDCap now also receives `la_mets`. Each attempt in the manifest also carries `redcap_instance`, the `lab_activity` instance it was sent to (one per attempt that is not a calibration segment, in the order of the session, skipped attempts included), so SAVES Studio can send the steps and sit-to-stands counted on the video to the same instance.

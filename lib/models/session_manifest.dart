@@ -1,5 +1,6 @@
 import '../services/lab_redcap_service.dart';
 import 'activity_battery.dart';
+import 'device_configuration.dart';
 import 'protocol_configuration.dart';
 import 'sync_window.dart';
 
@@ -17,6 +18,11 @@ const _videoExtensions = ['.mp4', '.mov', '.avi'];
 /// Fields beyond the SAVES 1.1 list (`device_type`, `serial`...) are optional
 /// additions, which keep the schema version. Each activity carries the
 /// instance of `lab_activity` it was sent to in REDCap ([redcapInstances]).
+///
+/// With [participantId] the manifest is the one of that participant's
+/// folder: their own sensors (and the cameras the session shares), keyed by
+/// sensor ID, and only them under `participants`; the other participants of
+/// the session go to `session_participants`.
 Map<String, dynamic> buildSessionManifest({
   required String sessionId,
   required DateTime sessionStartTime,
@@ -28,21 +34,30 @@ Map<String, dynamic> buildSessionManifest({
   required ProtocolConfiguration protocolConfiguration,
   ActivityBattery? battery,
   Map<ActivityLog, int> redcapInstances = const {},
+  String? participantId,
 }) {
   final sensors = <String, dynamic>{};
 
-  for (final device in protocolConfiguration.devices) {
+  ParticipantEntry? own;
+  for (final p in participants) {
+    if (participantId != null && p.participantId == participantId) own = p;
+  }
+  final devices = participantId == null
+      ? protocolConfiguration.devices
+      : protocolConfiguration.devicesOf(participantId);
+
+  for (final device in devices) {
     final liveSensors = device.sensors.difference({'video'});
     if (!device.isLive || liveSensors.isEmpty) continue;
 
     // The signals asked to the device and the files that got rows, so SAVES
-    // knows what to look for (`polar_<signal>_<device>_<stamp>.csv`).
+    // knows what to look for (`polar_<signal>_<sensor>_<stamp>.csv`).
     final files = [
       for (final path in generatedFiles)
         path.split(RegExp(r'[\\/]')).last,
-    ].where((name) => name.startsWith('polar_') && name.contains('_${device.deviceId}_')).toList()
+    ].where((name) => name.startsWith('polar_') && name.contains('_${device.sensorId}_')).toList()
       ..sort();
-    sensors[device.deviceId] = {
+    sensors[device.sensorId] = {
       'present': true,
       'timestamp_domain': 'native_plus_host_utc',
       'device_name': device.deviceName,
@@ -55,7 +70,18 @@ Map<String, dynamic> buildSessionManifest({
 
   final cameras = <Map<String, dynamic>>[];
 
-  for (final sensor in battery?.sensors ?? const <SessionSensor>[]) {
+  // The sensors of the folder: the participant's own, with the cameras of
+  // the session, or the whole layout.
+  final layout = battery?.sensors ?? const <SessionSensor>[];
+  final listed = own != null && own.sensors.isNotEmpty
+      ? [
+          ...own.sensorsOr(layout),
+          for (final sensor in layout)
+            if (sensor.connection == 'video') sensor,
+        ]
+      : layout;
+
+  for (final sensor in listed) {
     final details = <String, dynamic>{
       if (sensor.type != 'other') 'device_type': sensor.type,
       if (sensor.dominance != null) 'dominance': sensor.dominance,
@@ -83,12 +109,18 @@ Map<String, dynamic> buildSessionManifest({
     // its entry; the session setup adds its serial and placement. Sessions
     // with a sensor list name the device by its sensor ID; the default
     // configuration names it by type.
+    DeviceConfiguration? liveDevice(String id) {
+      for (final device in devices) {
+        if (device.isLive && device.sensorId == id) return device;
+      }
+      return null;
+    }
+
     final live = sensor.connection == 'live'
-        ? protocolConfiguration.deviceById(sensor.sensorId) ??
-            protocolConfiguration.deviceById(sensor.type)
+        ? liveDevice(sensor.sensorId) ?? liveDevice(sensor.type)
         : null;
-    if (live != null && sensors.containsKey(live.deviceId)) {
-      final entry = sensors[live.deviceId] as Map<String, dynamic>;
+    if (live != null && sensors.containsKey(live.sensorId)) {
+      final entry = sensors[live.sensorId] as Map<String, dynamic>;
       if (sensor.placement != null) entry['placement'] = sensor.placement;
       entry.addAll(details);
       continue;
@@ -116,7 +148,11 @@ Map<String, dynamic> buildSessionManifest({
         if (battery.protocolVersion != null)
           'protocol_version': battery.protocolVersion,
       },
-    'participants': participants.map((p) => p.toJson()).toList(),
+    'participants': [
+      for (final p in own == null ? participants : [own]) p.manifestJson(),
+    ],
+    if (own != null && participants.length > 1)
+      'session_participants': [for (final p in participants) p.participantId],
     'activities': [
       for (final a in activities)
         {

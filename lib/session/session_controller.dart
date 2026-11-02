@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 
 import '../config/default_protocol_configuration.dart';
 import '../models/activity_battery.dart';
+import '../models/protocol_configuration.dart';
 import '../models/session_manifest.dart';
 import '../models/sync_window.dart';
 import '../services/lab_redcap_service.dart';
@@ -150,6 +151,9 @@ class CommandResult {
 /// What was saved at the end of a session, shown to the evaluator.
 class SessionSummary {
   final String directory;
+
+  /// Every folder of the session (one per participant), the main one first.
+  final List<String> directories;
   final int done;
   final int partial;
   final int skipped;
@@ -164,6 +168,7 @@ class SessionSummary {
 
   const SessionSummary({
     required this.directory,
+    this.directories = const [],
     required this.done,
     required this.partial,
     required this.skipped,
@@ -179,6 +184,7 @@ class SessionSummary {
 
   Map<String, dynamic> toJson() => {
         'directory': directory,
+        if (directories.length > 1) 'directories': directories,
         'done': done,
         'partial': partial,
         'skipped': skipped,
@@ -206,6 +212,21 @@ class UnfinishedSession {
           ParticipantEntry.fromJson(Map<String, dynamic>.from(p as Map)),
       ];
 
+  String? get sessionId => state['session_id']?.toString();
+
+  /// The folder of each participant, as the state recorded them.
+  Map<String, Directory> get participantDirectories => {
+        for (final p in participants)
+          if (p.folder != null && p.folder!.isNotEmpty) p.participantId: Directory(p.folder!),
+      };
+
+  /// The main folder of the session: the first participant's.
+  Directory get mainDirectory {
+    final dirs = participantDirectories;
+    if (participants.isEmpty || dirs.isEmpty) return directory;
+    return dirs[participants.first.participantId] ?? directory;
+  }
+
   ActivityBattery? get battery {
     final raw = state['battery'];
     if (raw is! Map) return null;
@@ -228,16 +249,27 @@ class UnfinishedSession {
   }
 
   /// Reads [directory]; null when it holds no session or one that ended.
+  /// The folder of any participant of the session will do: the session is
+  /// resumed from its main folder (the first participant's) when that one
+  /// still exists.
   static Future<UnfinishedSession?> find(String directory) async {
     final state = await SessionStore.readState(directory);
     if (state == null) return null;
     final status = state['status']?.toString();
     if (status == 'finished' || status == 'cancelled') return null;
-    return UnfinishedSession(Directory(directory), state);
+    final session = UnfinishedSession(Directory(directory), state);
+    final main = session.mainDirectory;
+    if (main.path != directory && await main.exists()) {
+      final mainState = await SessionStore.readState(main.path);
+      if (mainState != null && mainState['session_id'] == state['session_id']) {
+        return UnfinishedSession(main, mainState);
+      }
+    }
+    return session;
   }
 
   /// Sessions left open under [root] (`<root>/<participant>/<visit>`),
-  /// newest first.
+  /// newest first. A session with several participants is listed once.
   static Future<List<UnfinishedSession>> scan(String root) async {
     final found = <UnfinishedSession>[];
     final base = Directory(root);
@@ -249,7 +281,11 @@ class UnfinishedSession {
           if (visit is! Directory || visit.path.contains('_cancelada_')) continue;
           try {
             final session = await find(visit.path);
-            if (session != null) found.add(session);
+            if (session == null) continue;
+            final repeated = found.any((s) =>
+                s.directory.path == session.directory.path ||
+                (s.sessionId != null && s.sessionId == session.sessionId));
+            if (!repeated) found.add(session);
           } catch (_) {
             // A half-written or foreign folder: not a session to resume.
           }
@@ -316,7 +352,7 @@ class SessionController extends ChangeNotifier {
     final controller = SessionController(
       participants: saved.participants,
       battery: saved.battery,
-      dataRoot: saved.directory.parent.parent.path,
+      dataRoot: state['data_root']?.toString() ?? saved.directory.parent.parent.path,
       settings: SessionSettings.fromJson(state['settings']),
       operator: state['operator']?.toString(),
       clock: clock,
@@ -348,6 +384,7 @@ class SessionController extends ChangeNotifier {
     controller.store = SessionStore.reopen(
       saved.directory,
       state['file_stamp']?.toString() ?? SessionStore.stampOf(DateTime.now()),
+      participantDirectories: saved.participantDirectories,
     );
     controller.store!.logEvent(
       'session_resumed_after_restart',
@@ -455,6 +492,11 @@ class SessionController extends ChangeNotifier {
   }
 
   String get participantSummary => participants.map((p) => p.participantId).join(';');
+
+  /// The devices of the Research Monitor: each participant's sensors and
+  /// the cameras of the session.
+  ProtocolConfiguration get protocolConfiguration =>
+      protocolConfigurationFor(battery, participants);
 
   String get visitCode => SessionStore.visitCode(
         participants.isEmpty ? '' : participants.first.redcapEventName,
@@ -644,13 +686,28 @@ class SessionController extends ChangeNotifier {
     }
     try {
       if (store == null) {
-        final dir = await SessionStore.chooseFolder(
-          root: dataRoot,
-          study: battery?.study,
-          participants: participants,
-        );
-        store = await SessionStore.create(dir);
-        await _checkWritable(dir);
+        final Directory main;
+        final Map<String, Directory> folders;
+        if (participants.isEmpty) {
+          main = await SessionStore.chooseFolder(
+            root: dataRoot,
+            study: battery?.study,
+            participants: participants,
+          );
+          folders = const {};
+        } else {
+          // One folder per participant; the first one is the session's.
+          folders = await SessionStore.chooseFolders(
+            root: dataRoot,
+            study: battery?.study,
+            participants: participants,
+          );
+          main = folders[participants.first.participantId]!;
+        }
+        store = await SessionStore.create(main, participantDirectories: folders);
+        for (final dir in store!.directories) {
+          await _checkWritable(dir);
+        }
       }
     } catch (e) {
       store = null;
@@ -690,6 +747,9 @@ class SessionController extends ChangeNotifier {
     if (s == null) return;
     await monitor.send(WindowMessages.sessionStarted, {
       'session_dir': s.path,
+      'participant_dirs': {
+        for (final e in s.participantDirectories.entries) e.key: e.value.path,
+      },
       'file_stamp': s.fileStamp,
       'session_id': sessionId,
       'participants': participantSummary,
@@ -962,7 +1022,12 @@ class SessionController extends ChangeNotifier {
         'status': status ?? closing ?? engine.status.name,
         'session_id': sessionId,
         'file_stamp': store?.fileStamp,
-        'participants': participants.map((p) => p.toJson()).toList(),
+        'participants': [
+          for (final p in participants)
+            // With the folder each one got, so the session can be resumed.
+            (store == null ? p : p.copyWith(folder: store!.directoryOf(p.participantId).path)).toJson(),
+        ],
+        'data_root': dataRoot,
         if (operator != null) 'operator': operator,
         if (notes != null) 'notes': notes,
         'battery': battery?.toJson(),
@@ -983,9 +1048,24 @@ class SessionController extends ChangeNotifier {
   List<ActivityLog> get _manifestActivities =>
       engine.logs.where((l) => !l.isSkipped).toList();
 
-  Map<String, dynamic> manifestJson({required String status, List<String> files = const []}) {
+  /// The manifest of the session's main folder (the first participant's).
+  Map<String, dynamic> manifestJson({required String status, List<String> files = const []}) =>
+      manifestJsonFor(
+        participants.isEmpty ? null : participants.first,
+        status: status,
+        files: files,
+      );
+
+  /// The manifest of [participant]'s folder: their sensors, and of the
+  /// files written by the monitor, those in their folder.
+  Map<String, dynamic> manifestJsonFor(
+    ParticipantEntry? participant, {
+    required String status,
+    List<String> files = const [],
+  }) {
     final start = engine.sessionStartUtc ?? DateTime.now().toUtc();
     final end = engine.sessionEndUtc ?? DateTime.now().toUtc();
+    final own = participant == null ? files : _filesOf(participant, files);
     return {
       ...buildSessionManifest(
         sessionId: sessionId ?? 'session',
@@ -994,23 +1074,53 @@ class SessionController extends ChangeNotifier {
         participants: participants,
         activities: _manifestActivities,
         syncWindows: engine.syncWindows,
-        generatedFiles: [..._videoFiles, ...files],
-        protocolConfiguration: protocolConfigurationFor(battery),
+        generatedFiles: [..._videoFiles, ...own],
+        protocolConfiguration: protocolConfiguration,
         battery: battery,
         redcapInstances: LabRedCapService.labActivityInstances(engine.logs),
+        participantId: participant?.participantId,
       ),
       'status': status,
       if (operator != null) 'operator': operator,
       if (notes != null && notes!.isNotEmpty) 'notes': notes,
       'settings': settings.toJson(),
-      if (files.isNotEmpty) 'files': files,
+      if (own.isNotEmpty) 'files': own,
     };
+  }
+
+  /// Of the files the monitor wrote, those in [participant]'s folder (and
+  /// those given without a folder).
+  List<String> _filesOf(ParticipantEntry participant, List<String> files) {
+    final s = store;
+    if (s == null || s.participantDirectories.isEmpty) return files;
+    final own = s.directoryOf(participant.participantId).path;
+    final sep = Platform.pathSeparator;
+    final others = [
+      for (final dir in s.directories)
+        if (dir.path != own) dir.path,
+    ];
+    return [
+      for (final path in files)
+        if (path.startsWith('$own$sep') ||
+            !others.any((other) => path.startsWith('$other$sep')))
+          path,
+    ];
   }
 
   void _writeOutputs({String status = 'in_progress', List<String> files = const []}) {
     final s = store;
     if (s == null) return;
-    s.writeJson(SessionStore.manifestFile, manifestJson(status: status, files: files));
+    if (participants.isEmpty) {
+      s.writeJson(SessionStore.manifestFile, manifestJson(status: status, files: files));
+    } else {
+      for (final p in participants) {
+        s.writeJsonTo(
+          s.directoryOf(p.participantId),
+          SessionStore.manifestFile,
+          manifestJsonFor(p, status: status, files: files),
+        );
+      }
+    }
     s.writeText('activity_markers.csv', activityMarkersCsv(engine.logs));
     s.writeText('sync_windows.csv', syncWindowsCsv(engine.syncWindows));
   }
@@ -1132,6 +1242,7 @@ class SessionController extends ChangeNotifier {
     final end = engine.sessionEndUtc ?? DateTime.now().toUtc();
     return SessionSummary(
       directory: store?.path ?? '',
+      directories: [for (final dir in store?.directories ?? const <Directory>[]) dir.path],
       done: last.values.where((l) => l.completion == ActivityCompletion.complete).length,
       partial: last.values.where((l) => l.completion == ActivityCompletion.partial).length,
       skipped: last.values.where((l) => l.isSkipped).length,
@@ -1195,7 +1306,7 @@ class SessionController extends ChangeNotifier {
     if (!redcapConfigured) {
       // Without REDCap the session stays in its folder only, with the records
       // ready to be sent later from the start screen.
-      s.writeJson(SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
+      s.writeJsonTo(s.directory, SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
       s.logEvent('redcap_skipped', detail: 'Sin token de REDCap en este ordenador');
       await s.drain();
       return null;
@@ -1213,7 +1324,7 @@ class SessionController extends ChangeNotifier {
     s.logEvent(error == null ? 'redcap_sent' : 'redcap_failed', detail: error);
     if (error != null) {
       // What would have been sent, to send it again from the start screen.
-      s.writeJson(SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
+      s.writeJsonTo(s.directory, SavedSessionRedcap.pendingFile, [for (final batch in imports) ...batch]);
     }
     await s.drain();
     if (error == null) await SavedSessionRedcap.markSent(s.directory);
@@ -1225,7 +1336,11 @@ class SessionController extends ChangeNotifier {
     final s = store;
     if (s == null || summary == null) return;
     // The store was closed: reopen it for the log and the records file.
-    final reopened = SessionStore.reopen(s.directory, s.fileStamp);
+    final reopened = SessionStore.reopen(
+      s.directory,
+      s.fileStamp,
+      participantDirectories: s.participantDirectories,
+    );
     store = reopened;
     final error = await _sendRedcap();
     await reopened.close();
@@ -1264,17 +1379,20 @@ class SessionController extends ChangeNotifier {
     onActiveSessionChanged?.call(null);
 
     String? renamed;
-    try {
-      final now = DateTime.now();
-      String two(int v) => v.toString().padLeft(2, '0');
-      // Two cancellations in the same minute get different folders.
-      var target = '${s.path}_cancelada_${two(now.hour)}${two(now.minute)}';
-      for (var n = 2; await Directory(target).exists(); n++) {
-        target = '${s.path}_cancelada_${two(now.hour)}${two(now.minute)}_$n';
+    final now = DateTime.now();
+    String two(int v) => v.toString().padLeft(2, '0');
+    for (final dir in s.directories) {
+      try {
+        // Two cancellations in the same minute get different folders.
+        var target = '${dir.path}_cancelada_${two(now.hour)}${two(now.minute)}';
+        for (var n = 2; await Directory(target).exists(); n++) {
+          target = '${dir.path}_cancelada_${two(now.hour)}${two(now.minute)}_$n';
+        }
+        final moved = (await dir.rename(target)).path;
+        if (dir.path == s.path) renamed = moved;
+      } catch (e) {
+        debugPrint('[SESSION] No se pudo renombrar la carpeta cancelada: $e');
       }
-      renamed = (await s.directory.rename(target)).path;
-    } catch (e) {
-      debugPrint('[SESSION] No se pudo renombrar la carpeta cancelada: $e');
     }
     summary = _summary(redcapSkipped: true);
     _changed();

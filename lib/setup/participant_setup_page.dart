@@ -20,14 +20,43 @@ import 'protocol_editor_page.dart';
 import 'redcap_settings_dialog.dart';
 import 'session_setup_card.dart';
 
+const _accent = Color(0xFF38BDF8);
+const _card = Color(0xFF1E293B);
+const _field = Color(0xFF0F172A);
+const _warning = Color(0xFFFBBF24);
+
+/// One participant of the session as typed in the start screen: ID, visit,
+/// the serial of each sensor they wear and the folder of their files.
 class ParticipantFieldGroup {
   final TextEditingController controller;
   String eventName;
+
+  /// Serial number typed for each sensor of the protocol, by sensor ID.
+  final Map<String, TextEditingController> serials = {};
+
+  /// Folder chosen for this participant; null means the automatic one
+  /// under the data folder.
+  String? folder;
+
+  /// Participant ID whose remembered setup filled the serials.
+  String? rememberedFor;
 
   ParticipantFieldGroup({
     required this.controller,
     this.eventName = 'da_0__visita_inici_arm_1',
   });
+
+  String get id => controller.text.trim();
+
+  TextEditingController serialOf(String sensorId, {String initial = ''}) =>
+      serials.putIfAbsent(sensorId, () => TextEditingController(text: initial));
+
+  void dispose() {
+    controller.dispose();
+    for (final c in serials.values) {
+      c.dispose();
+    }
+  }
 }
 
 // ==========================================
@@ -87,6 +116,10 @@ class SetupPrefs {
 /// and the timer; tests capture it).
 typedef SessionStarter = Future<void> Function(SessionController controller);
 
+/// The start screen, in three steps: the participants (ID and visit), the
+/// protocol with the sensors and serials of each participant, and the
+/// folder of each participant. The second and third steps wait until every
+/// participant has an ID.
 class ParticipantSetupPage extends StatefulWidget {
   const ParticipantSetupPage({
     super.key,
@@ -138,8 +171,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   Map<String, RememberedSetup> _rememberedSetups = {};
   bool _loadingProtocols = true;
 
-  /// Participant whose remembered setup is loaded, and what was loaded.
-  String? _rememberedFor;
+  /// What was loaded automatically for the first participant.
   String? _setupNote;
 
   static const Map<String, String> _defaultEvents = {
@@ -153,6 +185,16 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final events = RedcapConnection.events;
     return events.isEmpty ? _defaultEvents : events;
   }
+
+  /// Every participant has an ID: the protocol and the folders can be set.
+  bool get _participantsReady =>
+      _participants.isNotEmpty && _participants.every((p) => p.id.isNotEmpty);
+
+  /// The sensors each participant wears (the cameras are the session's).
+  List<SessionSensor> get _layoutSensors => [
+        for (final s in _battery?.sensors ?? const <SessionSensor>[])
+          if (s.connection != 'video') s,
+      ];
 
   @override
   void initState() {
@@ -215,18 +257,28 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     } catch (_) {}
   }
 
-  /// Where the first participant's visit would be saved.
-  String get _folderPreview {
+  /// Chooses the folder of one participant's files.
+  Future<void> _chooseParticipantFolder(ParticipantFieldGroup group) async {
+    final chosen = await getDirectoryPath(
+      confirmButtonText: 'Usar esta carpeta',
+      initialDirectory: group.folder ?? _dataRoot,
+    );
+    if (chosen == null || !mounted) return;
+    setState(() => group.folder = chosen);
+  }
+
+  /// Where the files of [group] go: the folder chosen for them, or
+  /// `<root>/<study>_<ID>/<visit>` under the data folder.
+  String _folderOf(ParticipantFieldGroup group) {
+    final custom = group.folder;
+    if (custom != null) return custom;
     final root = _dataRoot ?? '...';
-    if (_participants.isEmpty) return root;
-    final ids = [
-      for (final p in _participants)
-        ParticipantEntry(participantId: p.controller.text.trim().isEmpty ? '<ID>' : p.controller.text.trim(),
-            redcapEventName: p.eventName),
-    ];
-    final sep = Platform.pathSeparator;
-    return '$root$sep${SessionStore.participantFolder(_battery?.study, ids)}$sep'
-        '${SessionStore.visitCode(_participants.first.eventName)}';
+    final id = group.id.isEmpty ? '<ID>' : group.id;
+    return SessionStore.defaultFolder(
+      root,
+      _battery?.study,
+      ParticipantEntry(participantId: id, redcapEventName: group.eventName),
+    );
   }
 
   List<ActivityBattery> get _allProtocols =>
@@ -265,49 +317,141 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
             ) ??
             initial;
       });
-      _applyRememberedSetup();
+      for (final group in _participants) {
+        _onParticipantIdChanged(group);
+      }
     } catch (e) {
       debugPrint('[SETUP] No se pudieron cargar los protocolos: $e');
       if (mounted) setState(() => _loadingProtocols = false);
     }
   }
 
-  /// When the first participant already had a session on this computer, load
-  /// its sensors (and serials) into the protocol of this visit.
-  void _applyRememberedSetup() {
-    if (_loadingProtocols || _participants.isEmpty) return;
-    final first = _participants.first;
-    final id = first.controller.text.trim();
-    if (id == _rememberedFor) return;
+  // ===========================================================================
+  // Serials of each participant
+  // ===========================================================================
+
+  /// The serial field of [sensor] for [group]. A new field starts with the
+  /// participant's remembered serial for that sensor or, when they are the
+  /// only participant, with the serial of the protocol's sensor list.
+  TextEditingController _serialController(ParticipantFieldGroup group, SessionSensor sensor) {
+    final existing = group.serials[sensor.sensorId];
+    if (existing != null) return existing;
+    final remembered = _rememberedSerial(group.id, sensor);
+    final initial = remembered ??
+        (_participants.length == 1 && sensor.hasSerial ? sensor.serial!.trim() : '');
+    return group.serialOf(sensor.sensorId, initial: initial);
+  }
+
+  String? _rememberedSerial(String participantId, SessionSensor sensor) {
+    final remembered = _rememberedSetups[participantId];
+    if (remembered == null) return null;
+    for (final old in remembered.battery.sensors) {
+      if (old.sensorId == sensor.sensorId && old.type == sensor.type && old.hasSerial) {
+        return old.serial!.trim();
+      }
+    }
+    return null;
+  }
+
+  /// The serial typed for [sensor] by [group]; without one, the serial of
+  /// the protocol's sensor when they are the only participant.
+  String? _serialFor(ParticipantFieldGroup group, SessionSensor sensor) {
+    final typed = group.serials[sensor.sensorId]?.text.trim() ?? '';
+    if (typed.isNotEmpty) return typed;
+    if (_participants.length == 1 && sensor.hasSerial) return sensor.serial!.trim();
+    return null;
+  }
+
+  /// Sensors of [group] without a serial number.
+  List<SessionSensor> _missingSerials(ParticipantFieldGroup group) => [
+        for (final sensor in _layoutSensors)
+          if (_serialFor(group, sensor) == null) sensor,
+      ];
+
+  int get _missingSerialCount =>
+      _participants.fold(0, (sum, g) => sum + _missingSerials(g).length);
+
+  /// Fills the serial fields of [group] from a remembered setup.
+  void _fillSerials(ParticipantFieldGroup group, List<SessionSensor> remembered) {
+    for (final sensor in _layoutSensors) {
+      for (final old in remembered) {
+        if (old.sensorId == sensor.sensorId && old.type == sensor.type) {
+          group.serialOf(sensor.sensorId).text = old.hasSerial ? old.serial!.trim() : '';
+        }
+      }
+    }
+  }
+
+  /// The protocol changed: the only participant's empty fields (or those
+  /// still equal to the previous layout) take the serials of the new one.
+  void _syncLayoutSerials(ActivityBattery? previous, ActivityBattery? next) {
+    if (_participants.length != 1 || next == null) return;
+    final group = _participants.single;
+    final before = {for (final s in previous?.sensors ?? const <SessionSensor>[]) s.sensorId: s};
+    for (final sensor in next.sensors) {
+      if (sensor.connection == 'video' || !sensor.hasSerial) continue;
+      final field = group.serials[sensor.sensorId];
+      if (field == null) continue;
+      final text = field.text.trim();
+      final old = before[sensor.sensorId];
+      if (text.isEmpty || (old != null && old.hasSerial && text == old.serial!.trim())) {
+        field.text = sensor.serial!.trim();
+      }
+    }
+  }
+
+  void _setBattery(ActivityBattery? next) {
+    final previous = _battery;
+    _battery = next;
+    _syncLayoutSerials(previous, next);
+  }
+
+  /// The ID of [group] changed: a participant who already had a session on
+  /// this computer gets their serials back (the first one also brings back
+  /// the protocol of that session for this visit).
+  void _onParticipantIdChanged(ParticipantFieldGroup group) {
+    if (!mounted) return;
+    setState(() {});
+    if (_loadingProtocols || !_participants.contains(group)) return;
+    final id = group.id;
+    if (id == group.rememberedFor) return;
+    final isFirst = group == _participants.first;
 
     final remembered = _rememberedSetups[id];
     if (remembered == null) {
-      if (_rememberedFor != null) {
-        // Another participant: back to the plain protocol of this visit.
+      if (group.rememberedFor != null) {
+        // Another participant: empty serials and, for the first one, back
+        // to the plain protocol of this visit.
         setState(() {
-          _rememberedFor = null;
-          _setupNote = null;
-          final plain = _protocolById(_battery?.protocolId);
-          if (plain != null) _battery = plain;
+          group.rememberedFor = null;
+          for (final field in group.serials.values) {
+            field.clear();
+          }
+          if (isFirst) {
+            _setupNote = null;
+            final plain = _protocolById(_battery?.protocolId);
+            if (plain != null) _setBattery(plain);
+          }
         });
       }
       return;
     }
 
-    final saved = _protocolById(remembered.battery.protocolId) ??
-        remembered.battery;
-    final protocol =
-        ProtocolLibrary.forMoment(saved, first.eventName, _allProtocols) ??
-            saved;
     final visit = _eventOptions[remembered.eventName] ?? remembered.eventName;
     final when = remembered.savedAt.toLocal();
     String two(int v) => v.toString().padLeft(2, '0');
 
     setState(() {
-      _battery = ProtocolLibrary.applyRemembered(protocol, remembered);
-      _rememberedFor = id;
-      _setupNote = 'Sensores y números de serie de la sesión anterior de $id '
-          '($visit, ${two(when.day)}/${two(when.month)} ${two(when.hour)}:${two(when.minute)}).';
+      group.rememberedFor = id;
+      if (isFirst) {
+        final saved = _protocolById(remembered.battery.protocolId) ?? remembered.battery;
+        final protocol =
+            ProtocolLibrary.forMoment(saved, group.eventName, _allProtocols) ?? saved;
+        _setBattery(ProtocolLibrary.applyRemembered(protocol, remembered));
+        _setupNote = 'Sensores y números de serie de la sesión anterior de $id '
+            '($visit, ${two(when.day)}/${two(when.month)} ${two(when.hour)}:${two(when.minute)}).';
+      }
+      _fillSerials(group, remembered.battery.sensors);
     });
   }
 
@@ -317,11 +461,11 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
     final next = ProtocolLibrary.forMoment(_battery!, moment, _allProtocols);
     if (next == null || next.protocolId == _battery!.protocolId) return;
-    final remembered = _rememberedSetups[_rememberedFor];
+    final remembered = _rememberedSetups[item.rememberedFor];
     setState(() {
-      _battery = remembered != null
+      _setBattery(remembered != null
           ? ProtocolLibrary.applyRemembered(next, remembered)
-          : ProtocolLibrary.carrySensorDetails(next, _battery!.sensors);
+          : ProtocolLibrary.carrySensorDetails(next, _battery!.sensors));
     });
   }
 
@@ -330,13 +474,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final selected = _protocolById(id);
     setState(() {
       _setupNote = null;
-      _rememberedFor = null;
-      _battery = selected == null
+      _setBattery(selected == null
           ? (id == null ? null : _battery)
           : ProtocolLibrary.carrySensorDetails(
               selected,
               _battery?.sensors ?? const [],
-            );
+            ));
     });
   }
 
@@ -365,9 +508,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       ),
     );
     if (edited == null || !mounted) return;
-    setState(() => _battery = edited);
+    setState(() => _setBattery(edited));
   }
-
   /// Sends to REDCap a saved session whose records did not get there (no
   /// token on this computer, the app was closed, there was no network or
   /// the REDCap project needed a change).
@@ -388,7 +530,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: _card,
         title: Text(error == null ? 'Sesión enviada a REDCap' : 'No se pudo enviar'),
         content: SelectableText(error ?? 'REDCap ya tiene los registros de $chosen.'),
         actions: [
@@ -433,7 +575,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: _card,
         title: Text(summary.title),
         content: SizedBox(
           width: 640,
@@ -452,7 +594,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: _card,
         title: const Text('Borrar protocolo guardado'),
         content: Text(
           '¿Borrar «${battery.displayName}» de este ordenador? '
@@ -477,27 +619,23 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     if (!mounted) return;
     setState(() {
       _customProtocols = custom;
-      _battery = _builtInProtocols.isEmpty ? null : _builtInProtocols.first;
+      _setBattery(_builtInProtocols.isEmpty ? null : _builtInProtocols.first);
     });
   }
 
   void _addParticipantField([String initialId = '', String? initialEvent]) {
-    setState(() {
-      _participants.add(
-        ParticipantFieldGroup(
-          controller: TextEditingController(text: initialId)
-            ..addListener(_applyRememberedSetup),
-          eventName: initialEvent ?? _eventOptions.keys.first,
-        ),
-      );
-    });
+    final group = ParticipantFieldGroup(
+      controller: TextEditingController(text: initialId),
+      eventName: initialEvent ?? _eventOptions.keys.first,
+    );
+    group.controller.addListener(() => _onParticipantIdChanged(group));
+    setState(() => _participants.add(group));
   }
 
   void _removeParticipantField(int index) {
     if (_participants.length > 1) {
       setState(() {
-        _participants[index].controller.dispose();
-        _participants.removeAt(index);
+        _participants.removeAt(index).dispose();
       });
     }
   }
@@ -506,7 +644,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   void dispose() {
     RedcapConnection.changes.removeListener(_onRedcapChanged);
     for (final p in _participants) {
-      p.controller.dispose();
+      p.dispose();
     }
     _activityController.dispose();
     _operatorController.dispose();
@@ -553,7 +691,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: _card,
         title: const Row(
           children: [
             Icon(Icons.history_rounded, color: Color(0xFFFBBF24)),
@@ -628,7 +766,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E293B),
+        backgroundColor: _card,
         title: Text(title),
         content: Text(message),
         actions: [
@@ -657,10 +795,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       final battery = ActivityBattery.parse(await file.readAsString());
       if (!mounted) return;
       setState(() {
-        _battery = battery;
+        _setBattery(battery);
         _setupNote = 'Importado de ${file.name}. Para tenerlo en la lista, '
             'ábrelo en «Editar» y guárdalo como protocolo.';
-        _rememberedFor = null;
       });
     } on FormatException catch (e) {
       if (!mounted) return;
@@ -670,36 +807,53 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     }
   }
 
+  /// The participants as the session gets them: ID, visit, their sensors
+  /// with the serials typed for them and the folder chosen for them.
+  List<ParticipantEntry> _entries() {
+    final layout = _layoutSensors;
+    return [
+      for (final group in _participants)
+        ParticipantEntry(
+          participantId: group.id,
+          redcapEventName: group.eventName,
+          sensors: [
+            for (final sensor in layout)
+              if (_serialFor(group, sensor) case final serial?)
+                sensor.copyWith(serial: serial)
+              else
+                sensor.copyWith(clearSerial: true),
+          ],
+          folder: group.folder,
+        ),
+    ];
+  }
+
   Future<void> _submitAndStart() async {
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
+    if (!_participantsReady) return;
 
-    final List<ParticipantEntry> entries = _participants.map((p) {
-      return ParticipantEntry(
-        participantId: p.controller.text.trim(),
-        redcapEventName: p.eventName,
-      );
-    }).toList();
-
+    final entries = _entries();
     final activity =
         int.tryParse(_activityController.text.trim()) ?? 1;
 
     final battery = _sessionBattery;
     if (battery != null) {
-      final missing = battery.sensors
-          .where((s) => s.connection != 'video' && !s.hasSerial)
-          .map((s) => s.sensorId)
-          .toList();
+      final missing = [
+        for (final group in _participants)
+          if (_missingSerials(group) case final sensors when sensors.isNotEmpty)
+            '${group.id}: ${sensors.map((s) => s.sensorId).join(', ')}',
+      ];
       if (missing.isNotEmpty) {
         final proceed = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
+            backgroundColor: _card,
             title: const Text('Faltan números de serie'),
             content: Text(
-              'Sin número de serie: ${missing.join(', ')}.\n\n'
-              'Se pueden añadir en «Editar actividades y sensores». '
+              'Sin número de serie:\n${missing.join('\n')}\n\n'
+              'Se escriben en «Protocolo y sensores», junto a cada participante. '
               '¿Empezar igualmente?',
             ),
             actions: [
@@ -719,12 +873,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
       // The closing visit of these participants starts from this setup
       // (the sync cue is this computer's choice, not part of it).
-      await ProtocolLibrary.remember(
-        entries.map(
-          (e) => (participantId: e.participantId, eventName: e.redcapEventName),
-        ),
-        _battery ?? battery,
-      );
+      await ProtocolLibrary.remember(entries, _battery ?? battery);
     }
 
     if (!mounted) return;
@@ -782,7 +931,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: _card,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Row(
@@ -818,8 +967,223 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     );
   }
 
+  // ===========================================================================
+  // Screen
+  // ===========================================================================
+
+  InputDecoration _decoration({
+    required String label,
+    String? hint,
+    IconData? icon,
+    Color fill = _field,
+    double radius = 12,
+  }) =>
+      InputDecoration(
+        labelText: label,
+        labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
+        hintText: hint,
+        hintStyle: const TextStyle(color: Colors.white24),
+        prefixIcon: icon == null ? null : Icon(icon, color: _accent, size: 20),
+        filled: true,
+        fillColor: fill,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(radius), borderSide: BorderSide.none),
+      );
+
+  Widget _participantCard(int index) {
+    final item = _participants[index];
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'PARTICIPANTE #${index + 1}',
+                style: const TextStyle(
+                  color: _accent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              if (_participants.length > 1)
+                IconButton(
+                  icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
+                  onPressed: () => _removeParticipantField(index),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  tooltip: 'Eliminar participante',
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: item.controller,
+            textCapitalization: TextCapitalization.characters,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 15,
+            ),
+            decoration: _decoration(
+              label: 'ID / CÓDIGO *',
+              hint: 'Ej. 1, 2, 3,...',
+              icon: Icons.person_pin_rounded,
+            ),
+            validator: (val) {
+              final id = (val ?? '').trim();
+              if (id.isEmpty) return 'Requerido';
+              if (_participants.where((p) => p.id == id).length > 1) return 'ID repetido';
+              return null;
+            },
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            // Built again when the visits of the project change.
+            key: ValueKey('visit-${identityHashCode(item)}-${_eventOptions.keys.join('|')}'),
+            initialValue: item.eventName,
+            dropdownColor: _card,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+            decoration: _decoration(label: 'MEDICIÓN / VISITA', icon: Icons.event_repeat_rounded),
+            items: _eventOptions.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
+            onChanged: (val) {
+              if (val != null) _onMomentChanged(item, val);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The serial of each sensor of the protocol, for one participant.
+  Widget _participantSensorsCard(ParticipantFieldGroup group, int index) {
+    final layout = _layoutSensors;
+    final missing = _missingSerials(group).length;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.watch_rounded, color: _accent, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'SENSORES DE ${group.id.isEmpty ? 'PARTICIPANTE #${index + 1}' : group.id}',
+                  style: const TextStyle(
+                    color: _accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+              ),
+              if (layout.isNotEmpty)
+                Text(
+                  missing == 0 ? 'Todos con número de serie' : '$missing sin número de serie',
+                  style: TextStyle(color: missing == 0 ? Colors.white54 : _warning, fontSize: 12),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (layout.isEmpty)
+            const Text(
+              'El protocolo no tiene sensores.',
+              style: TextStyle(color: Colors.white54, fontSize: 12),
+            )
+          else
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final sensor in layout)
+                  SizedBox(
+                    width: 282,
+                    child: TextFormField(
+                      key: ValueKey('serial-${identityHashCode(group)}-${sensor.sensorId}'),
+                      controller: _serialController(group, sensor),
+                      onChanged: (_) => setState(() {}),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                      decoration: _decoration(
+                        label: sensor.displayName,
+                        hint: 'Número de serie',
+                      ).copyWith(isDense: true),
+                    ),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// The folder of one participant's files.
+  Widget _folderRow(ParticipantFieldGroup group, int index) {
+    final custom = group.folder != null;
+    final visit = _eventOptions[group.eventName] ?? group.eventName;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.folder_rounded, color: _accent, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${group.id.isEmpty ? 'PARTICIPANTE #${index + 1}' : group.id} · $visit',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                SelectableText(
+                  _folderOf(group),
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                if (custom)
+                  const Text(
+                    'Carpeta elegida a mano (no la automática de la carpeta de datos).',
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+              ],
+            ),
+          ),
+          if (custom)
+            TextButton(
+              onPressed: () => setState(() => group.folder = null),
+              child: const Text('Automática'),
+            ),
+          TextButton(
+            onPressed: () => _chooseParticipantFolder(group),
+            child: const Text('Cambiar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final ready = _participantsReady;
+    final count = _participants.length;
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -839,26 +1203,29 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                   key: _formKey,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.all(18),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: const Color(0xFF38BDF8).withAlpha(30),
-                          border: Border.all(
-                            color: const Color(0xFF38BDF8).withAlpha(100),
-                            width: 2,
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(18),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _accent.withAlpha(30),
+                            border: Border.all(
+                              color: _accent.withAlpha(100),
+                              width: 2,
+                            ),
                           ),
-                        ),
-                        child: const Icon(
-                          Icons.groups_rounded,
-                          size: 54,
-                          color: Color(0xFF38BDF8),
+                          child: const Icon(
+                            Icons.groups_rounded,
+                            size: 54,
+                            color: _accent,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 20),
                       const Text(
-                        'PARTICIPANTES A EVALUAR',
+                        'NUEVA SESIÓN',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 22,
@@ -867,204 +1234,171 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                           color: Colors.white,
                         ),
                       ),
-                      const SizedBox(height: 6),
                       const SizedBox(height: 28),
 
-                      // Dynamic list of participants
-                      ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _participants.length,
-                        separatorBuilder: (context, index) => const SizedBox(height: 14),
-                        itemBuilder: (context, index) {
-                          final item = _participants[index];
-                          return Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1E293B),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.white12),
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(
-                                      'PARTICIPANTE #${index + 1}',
-                                      style: const TextStyle(
-                                        color: Color(0xFF38BDF8),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 1.1,
-                                      ),
-                                    ),
-                                    if (_participants.length > 1)
-                                      IconButton(
-                                        icon: const Icon(Icons.remove_circle_outline, color: Colors.redAccent, size: 20),
-                                        onPressed: () => _removeParticipantField(index),
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        tooltip: 'Eliminar participante',
-                                      ),
-                                  ],
-                                ),
-                                const SizedBox(height: 10),
-                                TextFormField(
-                                  controller: item.controller,
-                                  textCapitalization: TextCapitalization.characters,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 15,
-                                  ),
-                                  decoration: InputDecoration(
-                                    labelText: 'ID / CÓDIGO *',
-                                    labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
-                                    hintText: 'Ej. 1, 2, 3,...',
-                                    hintStyle: const TextStyle(color: Colors.white24),
-                                    prefixIcon: const Icon(Icons.person_pin_rounded, color: Color(0xFF38BDF8), size: 20),
-                                    filled: true,
-                                    fillColor: const Color(0xFF0F172A),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                                  ),
-                                  validator: (val) => (val == null || val.trim().isEmpty) ? 'Requerido' : null,
-                                ),
-                                const SizedBox(height: 10),
-                                DropdownButtonFormField<String>(
-                                  // Built again when the visits of the project change.
-                                  key: ValueKey('visit-${identityHashCode(item)}-${_eventOptions.keys.join('|')}'),
-                                  initialValue: item.eventName,
-                                  dropdownColor: const Color(0xFF1E293B),
-                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                                  decoration: InputDecoration(
-                                    labelText: 'MEDICIÓN / VISITA',
-                                    labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
-                                    prefixIcon: const Icon(Icons.event_repeat_rounded, color: Color(0xFF38BDF8), size: 20),
-                                    filled: true,
-                                    fillColor: const Color(0xFF0F172A),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                                  ),
-                                  items: _eventOptions.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
-                                  onChanged: (val) {
-                                    if (val != null) _onMomentChanged(item, val);
-                                  },
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: _addParticipantField,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF38BDF8),
-                          side: const BorderSide(color: Color(0xFF38BDF8)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        ),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('Añadir Otro Participante'),
-                      ),
-
-                      const SizedBox(height: 20),
-                      TextFormField(
-                        controller: _activityController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
-                        decoration: InputDecoration(
-                          labelText: 'ACTIVIDAD INICIAL *',
-                          labelStyle: const TextStyle(color: Color(0xFF38BDF8), fontSize: 13, fontWeight: FontWeight.bold),
-                          hintText: 'Ej. 1',
-                          prefixIcon: const Icon(Icons.pin_rounded, color: Color(0xFF38BDF8)),
-                          filled: true,
-                          fillColor: const Color(0xFF1E293B),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                        ),
-                        validator: (value) {
-                          final numVal = int.tryParse(value ?? '');
-                          if (numVal == null || numVal < 1) return 'Debe ser mínimo 1';
-                          return null;
-                        },
-                      ),
-
-                      const SizedBox(height: 20),
-                      SessionSetupCard(
-                        protocols: _allProtocols,
-                        battery: _sessionBattery,
-                        modified: _batteryModified,
-                        note: _setupNote,
-                        loading: _loadingProtocols,
-                        onSelect: _selectProtocol,
-                        onEdit: _editProtocol,
-                        onImport: _loadBattery,
-                        onReset: _batteryModified
-                            ? () => _selectProtocol(_battery?.protocolId)
-                            : null,
-                        onDeleteCustom: _customProtocols.any(
-                                (p) => p.protocolId == _battery?.protocolId)
-                            ? _deleteCustomProtocol
-                            : null,
-                        onSyncKind: _chooseSyncKind,
-                      ),
-
-                      const SizedBox(height: 20),
-                      TextFormField(
-                        controller: _operatorController,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                        decoration: InputDecoration(
-                          labelText: 'EVALUADOR/A',
-                          labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
-                          hintText: 'Nombre o iniciales (va a REDCap y al manifiesto)',
-                          hintStyle: const TextStyle(color: Colors.white24),
-                          prefixIcon: const Icon(Icons.badge_rounded, color: Color(0xFF38BDF8), size: 20),
-                          filled: true,
-                          fillColor: const Color(0xFF1E293B),
-                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Container(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF1E293B),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: Row(
+                      // 1. Participants
+                      _SetupSection(
+                        number: 1,
+                        title: 'PARTICIPANTES',
+                        enabled: true,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const Icon(Icons.folder_rounded, color: Color(0xFF38BDF8), size: 20),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            for (var i = 0; i < count; i++) ...[
+                              if (i > 0) const SizedBox(height: 14),
+                              _participantCard(i),
+                            ],
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: OutlinedButton.icon(
+                                onPressed: _addParticipantField,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: _accent,
+                                  side: const BorderSide(color: _accent),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                ),
+                                icon: const Icon(Icons.add_rounded),
+                                label: const Text('Añadir Otro Participante'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      // 2. Protocol and sensors of each participant
+                      _SetupSection(
+                        number: 2,
+                        title: 'PROTOCOLO Y SENSORES',
+                        enabled: ready,
+                        hint: 'Escribe el ID de cada participante para configurar el protocolo.',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SessionSetupCard(
+                              protocols: _allProtocols,
+                              battery: _sessionBattery,
+                              modified: _batteryModified,
+                              note: _setupNote,
+                              loading: _loadingProtocols,
+                              missingSerials: _missingSerialCount,
+                              onSelect: _selectProtocol,
+                              onEdit: _editProtocol,
+                              onImport: _loadBattery,
+                              onReset: _batteryModified
+                                  ? () => _selectProtocol(_battery?.protocolId)
+                                  : null,
+                              onDeleteCustom: _customProtocols.any(
+                                      (p) => p.protocolId == _battery?.protocolId)
+                                  ? _deleteCustomProtocol
+                                  : null,
+                              onSyncKind: _chooseSyncKind,
+                            ),
+                            if (_battery != null) ...[
+                              const SizedBox(height: 14),
+                              for (var i = 0; i < count; i++) ...[
+                                if (i > 0) const SizedBox(height: 10),
+                                _participantSensorsCard(_participants[i], i),
+                              ],
+                              const SizedBox(height: 6),
+                              const Text(
+                                'Cada participante lleva los sensores del protocolo; su número de serie se '
+                                'escribe aquí y va al manifiesto y a REDCap. Las cámaras son de la sesión.',
+                                style: TextStyle(color: Colors.white38, fontSize: 11),
+                              ),
+                            ],
+                            const SizedBox(height: 14),
+                            TextFormField(
+                              controller: _activityController,
+                              keyboardType: TextInputType.number,
+                              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+                              decoration: _decoration(
+                                label: 'ACTIVIDAD INICIAL *',
+                                hint: 'Ej. 1',
+                                icon: Icons.pin_rounded,
+                                fill: _card,
+                                radius: 16,
+                              ),
+                              validator: (value) {
+                                final numVal = int.tryParse(value ?? '');
+                                if (numVal == null || numVal < 1) return 'Debe ser mínimo 1';
+                                return null;
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      // 3. One folder per participant
+                      _SetupSection(
+                        number: 3,
+                        title: 'CARPETAS DE LA SESIÓN',
+                        enabled: ready,
+                        hint: 'Escribe el ID de cada participante para elegir las carpetas.',
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (var i = 0; i < count; i++) ...[
+                              if (i > 0) const SizedBox(height: 10),
+                              _folderRow(_participants[i], i),
+                            ],
+                            const SizedBox(height: 10),
+                            Container(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+                              decoration: BoxDecoration(
+                                color: _card.withAlpha(160),
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Row(
                                 children: [
-                                  const Text(
-                                    'CARPETA DE LA SESIÓN',
-                                    style: TextStyle(color: Colors.white60, fontSize: 12),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  AnimatedBuilder(
-                                    animation: Listenable.merge([for (final p in _participants) p.controller]),
-                                    builder: (context, _) => SelectableText(
-                                      _folderPreview,
-                                      style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                                  const Icon(Icons.folder_open_rounded, color: Colors.white38, size: 20),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'CARPETA DE DATOS (carpetas automáticas)',
+                                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        SelectableText(
+                                          _dataRoot ?? '...',
+                                          style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        const Text(
+                                          'Cada participante tiene su carpeta: marcas, Polar, vídeo y manifiesto para SAVES '
+                                          'se guardan ahí mientras ocurre. Mejor un disco local (no una carpeta sincronizada).',
+                                          style: TextStyle(color: Colors.white38, fontSize: 11),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 2),
-                                  const Text(
-                                    'Todo se guarda aquí mientras ocurre: marcas, Polar, vídeo y manifiesto para SAVES. '
-                                    'Mejor un disco local (no una carpeta sincronizada).',
-                                    style: TextStyle(color: Colors.white38, fontSize: 11),
-                                  ),
+                                  TextButton(onPressed: _chooseDataRoot, child: const Text('Cambiar')),
                                 ],
                               ),
                             ),
-                            TextButton(onPressed: _chooseDataRoot, child: const Text('Cambiar')),
                           ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+                      TextFormField(
+                        controller: _operatorController,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+                        decoration: _decoration(
+                          label: 'EVALUADOR/A',
+                          hint: 'Nombre o iniciales (va a REDCap y al manifiesto)',
+                          icon: Icons.badge_rounded,
+                          fill: _card,
+                          radius: 16,
                         ),
                       ),
                       const SizedBox(height: 14),
@@ -1075,15 +1409,15 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                         width: double.infinity,
                         height: 54,
                         child: FilledButton.icon(
-                          onPressed: _starting ? null : _submitAndStart,
+                          onPressed: _starting || !ready ? null : _submitAndStart,
                           style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF38BDF8),
+                            backgroundColor: _accent,
                             foregroundColor: Colors.black,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                           ),
                           icon: const Icon(Icons.arrow_forward_rounded, size: 24),
                           label: Text(
-                            'COMENZAR SESIÓN (${_participants.length} SUJETO${_participants.length > 1 ? 'S' : ''})',
+                            'COMENZAR SESIÓN ($count SUJETO${count > 1 ? 'S' : ''})',
                             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.2),
                           ),
                         ),
@@ -1125,6 +1459,80 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One numbered step of the start screen. A step that is not [enabled]
+/// yet is shown dimmed, takes no taps and says what it waits for.
+class _SetupSection extends StatelessWidget {
+  const _SetupSection({
+    required this.number,
+    required this.title,
+    required this.enabled,
+    required this.child,
+    this.hint,
+  });
+
+  final int number;
+  final String title;
+  final bool enabled;
+  final Widget child;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 28,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: enabled ? _accent : Colors.white12,
+              ),
+              child: Text(
+                '$number',
+                style: TextStyle(
+                  color: enabled ? Colors.black : Colors.white38,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              title,
+              style: TextStyle(
+                color: enabled ? Colors.white : Colors.white38,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.6,
+              ),
+            ),
+          ],
+        ),
+        if (!enabled && hint != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 38, top: 4),
+            child: Text(
+              hint!,
+              key: ValueKey('setup_section_${number}_hint'),
+              style: const TextStyle(color: _warning, fontSize: 12),
+            ),
+          ),
+        const SizedBox(height: 12),
+        ExcludeFocus(
+          excluding: !enabled,
+          child: AbsorbPointer(
+            absorbing: !enabled,
+            child: Opacity(opacity: enabled ? 1 : 0.4, child: child),
+          ),
+        ),
+      ],
     );
   }
 }
