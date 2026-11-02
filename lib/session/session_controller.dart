@@ -457,9 +457,10 @@ class SessionController extends ChangeNotifier {
   List<SensorCalibration> calibrationsOf(ParticipantEntry participant) => [
         for (final s in participant.sensors)
           if (s.connection == 'offline') ...[
-            if (CalibrationStore.forDevice(calibrations, s.type, s.serial) case final c?)
-              SensorCalibration(s, s.serial!.trim(), 'lab', c),
-            if (s.hasFreeLivingSerial)
+            if (s.inLab)
+              if (CalibrationStore.forDevice(calibrations, s.type, s.serial) case final c?)
+                SensorCalibration(s, s.serial!.trim(), 'lab', c),
+            if (s.inFreeLiving && s.hasFreeLivingSerial)
               if (CalibrationStore.forDevice(calibrations, s.type, s.freeLivingSerial) case final c?)
                 SensorCalibration(s, s.freeLivingSerial!.trim(), 'free_living', c),
           ],

@@ -69,6 +69,7 @@ Map<String, dynamic> buildSessionManifest({
   }
 
   final cameras = <Map<String, dynamic>>[];
+  final freeLivingDevices = <Map<String, dynamic>>[];
 
   // The sensors of the folder: the participant's own, with the cameras of
   // the session, or the whole layout.
@@ -93,9 +94,21 @@ Map<String, dynamic> buildSessionManifest({
       if (sensor.samplingRateHz != null)
         'sampling_rate_hz': sensor.samplingRateHz,
       if (sensor.rangeG != null) 'range_g': sensor.rangeG,
-      if (sensor.freeLiving) 'free_living': true,
-      if (sensor.hasFreeLivingSerial) 'free_living_serial': sensor.freeLivingSerial!.trim(),
+      if (sensor.use != SensorUse.lab) 'use': sensor.use,
+      if (sensor.inFreeLiving && sensor.hasFreeLivingSerial)
+        'free_living_serial': sensor.freeLivingSerial!.trim(),
     };
+
+    // A device only for the free-living days is not in the session: it is
+    // listed apart, with its serial, so the folder says what was taken home.
+    if (!sensor.inLab) {
+      freeLivingDevices.add({
+        'sensor_id': sensor.sensorId,
+        if (sensor.placement != null) 'placement': sensor.placement,
+        ...details,
+      });
+      continue;
+    }
 
     if (sensor.connection == 'video') {
       cameras.add({
@@ -172,5 +185,6 @@ Map<String, dynamic> buildSessionManifest({
       if (cameras.isNotEmpty) 'cameras': cameras,
     },
     'sensors': sensors,
+    if (freeLivingDevices.isNotEmpty) 'free_living_devices': freeLivingDevices,
   };
 }

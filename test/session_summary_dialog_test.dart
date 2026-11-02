@@ -9,14 +9,16 @@ import 'package:lab_protocol_timer/windows/session_console.dart';
 void main() {
   final battery = ActivityBattery.parse(File('test/fixtures/run4health_base_v2.json').readAsStringSync());
 
-  test('after the session the lab sensors are downloaded and the free-living ones restarted', () {
+  test('after the session every lab sensor is downloaded and the free-living set is put on', () {
+    // The fixture's old `free_living: true` reads as used in both.
     final after = SensorsAfterSession(battery.sensors);
-    expect(after.download.map((s) => s.sensorId), ['ax3_wnd', 'ax3_wd', 'ax3_thigh']);
-    expect(after.downloadAndRestart.map((s) => s.sensorId), ['matrix_wnd', 'sens_thigh']);
-    expect(after.startFreeLiving.map((s) => s.sensorId), ['verity_arm']);
+    expect(after.download.map((s) => s.sensorId),
+        ['matrix_wnd', 'ax3_wnd', 'ax3_wd', 'sens_thigh', 'ax3_thigh']);
+    expect(after.downloadAndRestart, isEmpty);
+    expect(after.startFreeLiving.map((s) => s.sensorId), ['matrix_wnd', 'sens_thigh', 'verity_arm']);
     expect(after.withoutSerial, hasLength(5));
 
-    final matrix = after.downloadAndRestart.first;
+    final matrix = after.download.first;
     expect(SensorsAfterSession.fileNameFor(matrix, '/data/R4H_001/D0'), 'R4H_001_D0_matrix_wnd');
     expect(
       SensorsAfterSession.fileNameFor(matrix, r'C:\Users\lab\Documents\lab_protocol_timer_sesiones\R4H_001\D0'),
@@ -52,10 +54,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('ANTES DE QUE SE VAYA EL PARTICIPANTE'), findsOneWidget);
-    expect(find.textContaining('Descarga y copia a la carpeta de la sesión: Axivity AX3'), findsOneWidget);
-    expect(find.textContaining('vuelve a inicializar para la vida libre: Parmay Matrix'), findsOneWidget);
+    expect(find.textContaining('Descarga y copia a la carpeta de la sesión: Parmay Matrix'), findsOneWidget);
+    expect(find.textContaining('Ponle el juego de vida libre'), findsOneWidget);
     expect(find.textContaining('Parmay Matrix · Muñeca no dominante'), findsWidgets);
-    expect(find.textContaining('Inicia su grabación de vida libre'), findsOneWidget);
     expect(find.textContaining('R4H_001_D0_matrix_wnd'), findsOneWidget);
   });
 }

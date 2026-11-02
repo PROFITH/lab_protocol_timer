@@ -121,10 +121,12 @@ void main() {
 
     await tester.tap(find.text('Polar H10 · Pecho'));
     await tester.pumpAndSettle();
-    // Serial numbers go with each participant, not in the protocol, and
-    // there is no free-living switch: every device is downloaded.
+    // Serial numbers go with each participant, not in the protocol; the
+    // protocol says what each sensor is for.
     expect(find.widgetWithText(TextFormField, 'Número de serie'), findsNothing);
-    expect(find.textContaining('vida libre'), findsNothing);
+    expect(find.byKey(const Key('sensor_use')), findsOneWidget);
+    await tester.tap(find.text('Ambos'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Aceptar'));
     await tester.pumpAndSettle();
 
@@ -141,5 +143,6 @@ void main() {
     expect(result?.sensors, hasLength(8));
     expect(result?.sensors.firstWhere((s) => s.type == 'polar_h10').sensorId,
         'polar_h10');
+    expect(result?.sensors.firstWhere((s) => s.type == 'polar_h10').use, SensorUse.both);
   });
 }

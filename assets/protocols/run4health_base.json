@@ -1,6 +1,6 @@
 {
   "protocol_id": "run4health_base",
-  "protocol_version": "4",
+  "protocol_version": "5",
   "title": "RUN4HEALTH (base)",
   "study": "RUN4HEALTH",
   "moments": [
@@ -359,7 +359,8 @@
       "placement": "wrist",
       "dominance": "non_dominant",
       "sampling_rate_hz": 25,
-      "range_g": 8
+      "range_g": 8,
+      "use": "both"
     },
     {
       "sensor_id": "ax3_wnd",
@@ -382,7 +383,8 @@
       "type": "sens",
       "placement": "thigh",
       "sampling_rate_hz": 12.5,
-      "range_g": 2
+      "range_g": 2,
+      "use": "both"
     },
     {
       "sensor_id": "ax6_shoe_l",
@@ -390,7 +392,8 @@
       "placement": "shoe",
       "side": "left",
       "sampling_rate_hz": 100,
-      "range_g": 16
+      "range_g": 16,
+      "use": "both"
     },
     {
       "sensor_id": "ax6_shoe_r",
@@ -398,7 +401,8 @@
       "placement": "shoe",
       "side": "right",
       "sampling_rate_hz": 100,
-      "range_g": 16
+      "range_g": 16,
+      "use": "both"
     },
     {
       "sensor_id": "polar_h10",

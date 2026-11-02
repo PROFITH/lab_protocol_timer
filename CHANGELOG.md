@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-11-02
+
+### Added
+
+- **Use of each sensor in the protocol:** the sensor editor has «Uso»: Laboratorio, Vida libre or Ambos (`use` in the protocol file: `lab`, `free_living`, `both`; an older `free_living: true` reads as `both`). Step 2 asks each participant for the serials the protocol needs: the laboratory one for laboratory sensors and the one taken home for free-living sensors (the «Vida libre» field is no longer shown for every offline sensor). A sensor only for free living is not in the session (not in the monitor, nor under `sensors` of the manifest) and is listed under `free_living_devices`.
+- **Built-in protocols:** day 0 has the free-living set as `use: both`: RUN4HEALTH (v5) Matrix, SENS motion and both AX6; WEARGAP (v4) SensWear, thigh AX3, both AX6 and the Polar H10. Day 8 protocols are laboratory only.
+- The session summary says to download every laboratory sensor and to put on the free-living set.
+
 ## [1.3.1] - 2026-11-02
 
 ### Added
