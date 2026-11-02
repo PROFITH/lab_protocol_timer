@@ -340,6 +340,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                   '${formatDecimal(s.samplingRateHz)} Hz',
                 if (s.rangeG != null) '±${formatDecimal(s.rangeG)} g',
                 if (s.connection == 'live') 'en directo',
+                if (s.connection != 'video') SensorUse.label(s.use),
               ].join(' · ');
               return Card(
                 color: _card,
@@ -814,6 +815,7 @@ class _SensorDialogState extends State<_SensorDialog> {
       ? SensorDominance.nonDominant
       : widget.initial!.dominance;
   late String? _side = widget.initial?.side;
+  late String _use = widget.initial?.use ?? SensorUse.lab;
   late final _id = TextEditingController(
     text: widget.initial?.sensorId ?? _suggestedId(),
   );
@@ -887,6 +889,7 @@ class _SensorDialogState extends State<_SensorDialog> {
         serial: base?.serial,
         samplingRateHz: parseDecimal(_rate.text),
         rangeG: parseDecimal(_range.text),
+        use: sensorTypeByKey(_type).connection == 'video' ? SensorUse.lab : _use,
         deviceNameOverride: _type == 'other' ? base?.deviceNameOverride : null,
         timestampDomainOverride:
             _type == base?.type ? base?.timestampDomainOverride : null,
@@ -1006,6 +1009,30 @@ class _SensorDialogState extends State<_SensorDialog> {
                   ],
                 ),
                 const SizedBox(height: 12),
+                if (type.connection != 'video') ...[
+                  const Text('Uso', style: TextStyle(fontSize: 12, color: Colors.white60)),
+                  const SizedBox(height: 4),
+                  SegmentedButton<String>(
+                    key: const Key('sensor_use'),
+                    segments: const [
+                      ButtonSegment(value: SensorUse.lab, label: Text('Laboratorio')),
+                      ButtonSegment(value: SensorUse.freeLiving, label: Text('Vida libre')),
+                      ButtonSegment(value: SensorUse.both, label: Text('Ambos')),
+                    ],
+                    selected: {_use},
+                    onSelectionChanged: (v) => setState(() => _use = v.first),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    switch (_use) {
+                      SensorUse.freeLiving => 'Solo se lo lleva a casa: no está en la sesión.',
+                      SensorUse.both => 'Uno en el laboratorio y otro para casa, cada uno con su número de serie.',
+                      _ => 'Se pone en el laboratorio y se descarga al terminar.',
+                    },
+                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 if (type.connection == 'offline' && !type.fixedSettings)
                   Row(
                     children: [

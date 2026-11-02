@@ -1639,16 +1639,15 @@ Future<void> showSessionSummaryDialog(
                   const SizedBox(height: 4),
                   if (after.download.isNotEmpty)
                     line(Icons.download_rounded, _amber,
-                        'Descarga y copia a la carpeta de la sesión: ${names(after.download)}. '
-                        'Para la vida libre van otros dispositivos, cada uno con su número de serie.'),
+                        'Descarga y copia a la carpeta de la sesión: ${names(after.download)}.'),
                   if (after.downloadAndRestart.isNotEmpty)
                     line(Icons.restart_alt_rounded, _amber,
                         'Descarga, copia a la carpeta y vuelve a inicializar para la vida libre: '
                         '${names(after.downloadAndRestart)}.'),
                   if (after.startFreeLiving.isNotEmpty)
                     line(Icons.play_circle_outline_rounded, _amber,
-                        'Inicia su grabación de vida libre (lo del laboratorio ya está en la carpeta): '
-                        '${names(after.startFreeLiving)}.'),
+                        'Ponle el juego de vida libre (otros dispositivos, ya grabando y calibrados, '
+                        'con su número de serie): ${names(after.startFreeLiving)}.'),
                   if (unnamed.isNotEmpty)
                     line(Icons.drive_file_rename_outline_rounded, Colors.white70,
                         'Sin número de serie en la configuración: nombra sus archivos ${unnamed.join(', ')} '

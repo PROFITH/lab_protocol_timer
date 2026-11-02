@@ -1,3 +1,19 @@
+/// What a sensor of the protocol is for.
+class SensorUse {
+  SensorUse._();
+
+  static const lab = 'lab';
+  static const freeLiving = 'free_living';
+  static const both = 'both';
+  static const values = [lab, freeLiving, both];
+
+  static String label(String use) => switch (use) {
+        freeLiving => 'Vida libre',
+        both => 'Laboratorio y vida libre',
+        _ => 'Laboratorio',
+      };
+}
+
 /// Kind of device that can be worn or used in a laboratory session.
 class SensorType {
   final String key;
@@ -309,12 +325,18 @@ class SessionSensor {
   final double? samplingRateHz;
   final double? rangeG;
 
-  /// Keeps recording after the visit (free-living days). Older protocols;
-  /// since 1.3.0 every device is downloaded and replaced.
-  final bool freeLiving;
+  /// What the sensor is for in the protocol: [SensorUse.lab] (worn in the
+  /// laboratory session), [SensorUse.freeLiving] (a device taken home for
+  /// the free-living days) or [SensorUse.both] (one of each, with their own
+  /// serial numbers: every device is downloaded after the visit and
+  /// replaced).
+  final String use;
 
-  /// Serial of the device of the same kind and place that the participant
-  /// takes home for the free-living days (it replaces this one).
+  bool get inLab => use != SensorUse.freeLiving;
+  bool get inFreeLiving => use != SensorUse.lab;
+
+  /// Serial of the device taken home for the free-living days ([serial] is
+  /// the one worn in the laboratory).
   final String? freeLivingSerial;
 
   bool get hasFreeLivingSerial => freeLivingSerial?.trim().isNotEmpty ?? false;
@@ -334,7 +356,7 @@ class SessionSensor {
     this.serial,
     this.samplingRateHz,
     this.rangeG,
-    this.freeLiving = false,
+    this.use = SensorUse.lab,
     this.freeLivingSerial,
     this.deviceNameOverride,
     this.timestampDomainOverride,
@@ -406,7 +428,7 @@ class SessionSensor {
     String? serial,
     double? samplingRateHz,
     double? rangeG,
-    bool? freeLiving,
+    String? use,
     String? freeLivingSerial,
     bool clearFreeLivingSerial = false,
     bool clearSerial = false,
@@ -423,7 +445,7 @@ class SessionSensor {
         samplingRateHz:
             clearSamplingRate ? null : samplingRateHz ?? this.samplingRateHz,
         rangeG: clearRange ? null : rangeG ?? this.rangeG,
-        freeLiving: freeLiving ?? this.freeLiving,
+        use: use ?? this.use,
         freeLivingSerial: clearFreeLivingSerial ? null : freeLivingSerial ?? this.freeLivingSerial,
         deviceNameOverride: deviceNameOverride,
         timestampDomainOverride: timestampDomainOverride,
@@ -438,7 +460,7 @@ class SessionSensor {
         if (hasSerial) 'serial': serial!.trim(),
         if (samplingRateHz != null) 'sampling_rate_hz': samplingRateHz,
         if (rangeG != null) 'range_g': rangeG,
-        if (freeLiving) 'free_living': true,
+        if (use != SensorUse.lab) 'use': use,
         if (hasFreeLivingSerial) 'free_living_serial': freeLivingSerial!.trim(),
         if (deviceNameOverride != null) 'device_name': deviceNameOverride,
         if (timestampDomainOverride != null)
@@ -510,7 +532,9 @@ class SessionSensor {
       serial: json['serial']?.toString(),
       samplingRateHz: number('sampling_rate_hz'),
       rangeG: number('range_g'),
-      freeLiving: json['free_living'] == true,
+      // Older files: `free_living: true` was a sensor that stayed on.
+      use: choice('use', SensorUse.values) ??
+          (json['free_living'] == true ? SensorUse.both : SensorUse.lab),
       freeLivingSerial: json['free_living_serial']?.toString(),
       // Older files name the device and its clock themselves.
       deviceNameOverride:
@@ -531,15 +555,13 @@ class SensorsAfterSession {
   SensorsAfterSession(Iterable<SessionSensor> sensors)
       : download = [
           for (final s in sensors)
-            if (s.connection == 'offline' && !s.freeLiving) s,
+            if (s.connection == 'offline' && s.inLab) s,
         ],
-        downloadAndRestart = [
-          for (final s in sensors)
-            if (s.connection == 'offline' && s.freeLiving) s,
-        ],
+        downloadAndRestart = const [],
+        // The free-living set: other devices, each with its own serial.
         startFreeLiving = [
           for (final s in sensors)
-            if (s.connection == 'live' && s.freeLiving) s,
+            if (s.inFreeLiving && s.connection != 'video') s,
         ];
 
   final List<SessionSensor> download;

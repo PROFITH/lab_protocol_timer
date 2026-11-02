@@ -1,6 +1,6 @@
 {
   "protocol_id": "weargap_day0_base",
-  "protocol_version": "3",
+  "protocol_version": "4",
   "title": "WEARGAP día 0 (base)",
   "study": "WEARGAP",
   "moments": [
@@ -118,7 +118,8 @@
       "sensor_id": "senswear_wnd",
       "type": "senswear",
       "placement": "wrist",
-      "dominance": "non_dominant"
+      "dominance": "non_dominant",
+      "use": "both"
     },
     {
       "sensor_id": "matrix_wnd",
@@ -133,7 +134,8 @@
       "type": "ax3",
       "placement": "thigh",
       "sampling_rate_hz": 100,
-      "range_g": 8
+      "range_g": 8,
+      "use": "both"
     },
     {
       "sensor_id": "ax6_shoe_l",
@@ -141,7 +143,8 @@
       "placement": "shoe",
       "side": "left",
       "sampling_rate_hz": 100,
-      "range_g": 16
+      "range_g": 16,
+      "use": "both"
     },
     {
       "sensor_id": "ax6_shoe_r",
@@ -149,12 +152,14 @@
       "placement": "shoe",
       "side": "right",
       "sampling_rate_hz": 100,
-      "range_g": 16
+      "range_g": 16,
+      "use": "both"
     },
     {
       "sensor_id": "polar_h10",
       "type": "polar_h10",
-      "placement": "chest"
+      "placement": "chest",
+      "use": "both"
     },
     {
       "sensor_id": "cam_room",

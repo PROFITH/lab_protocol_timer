@@ -298,12 +298,19 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final typed = <CalibrationDevice>{
       for (final group in _participants)
         for (final s in offline) ...[
-          if (_serialFor(group, s) case final serial?) CalibrationDevice(s.type, serial),
-          if (group.freeLivingSerialFor(s.sensorId) case final serial?) CalibrationDevice(s.type, serial),
+          if (s.inLab)
+            if (_serialFor(group, s) case final serial?) CalibrationDevice(s.type, serial),
+          if (s.inFreeLiving)
+            if (group.freeLivingSerialFor(s.sensorId) case final serial?) CalibrationDevice(s.type, serial),
         ],
     };
     if (typed.isNotEmpty) return typed.toList();
-    return [for (final s in offline) CalibrationDevice(s.type, '')];
+    return [
+      for (final s in offline) ...[
+        if (s.inLab) CalibrationDevice(s.type, ''),
+        if (s.inFreeLiving) CalibrationDevice(s.type, ''),
+      ],
+    ];
   }
 
   /// Offline sensors of [entries] without a calibration of today, as
@@ -312,11 +319,12 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         for (final p in entries)
           for (final s in p.sensors)
             if (s.connection == 'offline' && s.type != 'other') ...[
-              if (CalibrationStore.forDevice(records, s.type, s.serial) == null)
+              if (s.inLab && CalibrationStore.forDevice(records, s.type, s.serial) == null)
                 '${p.participantId}: ${s.displayName}${s.hasSerial ? ' (${s.serial!.trim()})' : ' (sin número de serie)'}',
-              if (s.hasFreeLivingSerial &&
+              if (s.inFreeLiving &&
                   CalibrationStore.forDevice(records, s.type, s.freeLivingSerial) == null)
-                '${p.participantId}: ${s.displayName}, vida libre (${s.freeLivingSerial!.trim()})',
+                '${p.participantId}: ${s.displayName}, vida libre'
+                    '${s.hasFreeLivingSerial ? ' (${s.freeLivingSerial!.trim()})' : ' (sin número de serie)'}',
             ],
       ];
 
@@ -447,10 +455,15 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     return null;
   }
 
-  /// Sensors of [group] without a serial number.
-  List<SessionSensor> _missingSerials(ParticipantFieldGroup group) => [
-        for (final sensor in _layoutSensors)
-          if (_serialFor(group, sensor) == null) sensor,
+  /// Devices of [group] without a serial number: the laboratory one of
+  /// each laboratory sensor and the free-living one of each free-living
+  /// sensor, as sensor IDs (`ax6_shoe_l (vida libre)`).
+  List<String> _missingSerials(ParticipantFieldGroup group) => [
+        for (final sensor in _layoutSensors) ...[
+          if (sensor.inLab && _serialFor(group, sensor) == null) sensor.sensorId,
+          if (sensor.inFreeLiving && group.freeLivingSerialFor(sensor.sensorId) == null)
+            '${sensor.sensorId} (vida libre)',
+        ],
       ];
 
   int get _missingSerialCount =>
@@ -905,7 +918,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
           redcapEventName: group.eventName,
           sensors: [
             for (final sensor in layout)
-              (switch (_serialFor(group, sensor)) {
+              (switch (sensor.inLab ? _serialFor(group, sensor) : null) {
                 final serial? => sensor.copyWith(serial: serial),
                 null => sensor.copyWith(clearSerial: true),
               })
@@ -962,7 +975,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       final missing = [
         for (final group in _participants)
           if (_missingSerials(group) case final sensors when sensors.isNotEmpty)
-            '${group.id}: ${sensors.map((s) => s.sensorId).join(', ')}',
+            '${group.id}: ${sensors.join(', ')}',
       ];
       if (missing.isNotEmpty) {
         final proceed = await showDialog<bool>(
@@ -1236,6 +1249,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        if (sensor.inLab)
                         TextFormField(
                           key: ValueKey('serial-${identityHashCode(group)}-${sensor.sensorId}'),
                           controller: _serialController(group, sensor),
@@ -1246,18 +1260,22 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                             hint: 'Número de serie',
                           ).copyWith(isDense: true),
                         ),
-                        // The device of the same kind taken home for the
-                        // free-living days, so its calibration reaches this
-                        // participant too.
-                        if (sensor.connection == 'offline' && sensor.type != 'other') ...[
-                          const SizedBox(height: 4),
+                        // The device taken home for the free-living days
+                        // (another one, with its own serial), so its
+                        // calibration reaches this participant too.
+                        if (sensor.inFreeLiving) ...[
+                          if (sensor.inLab) const SizedBox(height: 4),
                           TextFormField(
                             key: ValueKey('fl-serial-${identityHashCode(group)}-${sensor.sensorId}'),
                             controller: _freeLivingSerialController(group, sensor),
                             onChanged: (_) => setState(() {}),
-                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            style: TextStyle(
+                              color: sensor.inLab ? Colors.white70 : Colors.white,
+                              fontSize: sensor.inLab ? 12 : 13,
+                              fontWeight: sensor.inLab ? null : FontWeight.w600,
+                            ),
                             decoration: _decoration(
-                              label: 'Vida libre (opcional)',
+                              label: sensor.inLab ? 'Vida libre' : '${sensor.displayName} · vida libre',
                               hint: 'Número de serie del que se lleva',
                             ).copyWith(isDense: true),
                           ),

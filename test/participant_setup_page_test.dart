@@ -63,6 +63,9 @@ void main() {
     expect(find.byKey(const ValueKey('setup_section_3_hint')), findsNothing);
     expect(startButton(tester).onPressed, isNotNull);
     expect(find.text('SENSORES DE $id'), findsOneWidget);
+    // Day 0: the protocol's free-living set (Matrix, SENS and both AX6)
+    // asks for the serial of the device the participant takes home.
+    expect(find.widgetWithText(TextFormField, 'Vida libre'), findsNWidgets(4));
     expect(find.textContaining('R4H_$id${Platform.pathSeparator}D0'), findsOneWidget);
 
     if (choose != null) {

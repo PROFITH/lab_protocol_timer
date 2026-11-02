@@ -47,7 +47,7 @@ calibraciones/
 
 ## In each session
 
-Before the participant arrives, calibrate both sets: the devices worn in the laboratory and those the participant takes home for the free-living days (in the same calibration or in two). In step 2 each offline sensor has, under its serial number, an optional **Vida libre** field for the serial of the device that replaces it at home.
+Before the participant arrives, calibrate both sets: the devices worn in the laboratory and those the participant takes home for the free-living days (in the same calibration or in two). The protocol says what each sensor is for (**Uso** in the sensor editor: laboratory, free living or both), and step 2 asks each participant for the serial of each device: the laboratory one and, for the sensors used in free living, the one taken home (**Vida libre**).
 
 When a session starts, each offline sensor of each participant takes the latest complete calibration of the last 12 h that has its type and serial, and so does its free-living device. The calibration **moves** to the participant's folder: each participant whose sensors it has gets a copy (so each folder stands on its own for SAVES), and then it is deleted from `calibraciones/` (unless a copy failed). What stays in `calibraciones/` was not used by any session: a cancelled calibration, or one whose devices did not match. Each participant's folder then has:
 

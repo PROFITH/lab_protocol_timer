@@ -52,7 +52,11 @@ void main() {
           // screen (2026-11-02): no protocol has calibration activities,
           // and every sensor is downloaded and replaced for free living.
           expect(protocol.activities.any((a) => a.isCalibration), isFalse);
-          expect(protocol.sensors.any((s) => s.freeLiving), isFalse);
+          // Day 0 has the free-living set (sensors used in both); day 8
+          // only the laboratory one.
+          final day8 = protocol.moments.any((m) => m.startsWith('da_8'));
+          expect(protocol.sensors.any((s) => s.inFreeLiving), day8 ? isFalse : isTrue,
+              reason: protocol.protocolId);
           final ids = protocol.sensors.map((s) => s.sensorId).toList();
           expect(ids.toSet(), hasLength(ids.length));
           expect(protocol.sensors.any((s) => s.type == 'other'), isFalse);
@@ -246,7 +250,15 @@ void main() {
           sensorId: 'sens_thigh',
           type: 'sens',
           placement: 'thigh',
-          freeLiving: true,
+          use: SensorUse.both,
+          freeLivingSerial: 'S9',
+        ),
+        const SessionSensor(
+          sensorId: 'ax6_home',
+          type: 'ax6',
+          placement: 'shoe',
+          use: SensorUse.freeLiving,
+          freeLivingSerial: 'H1',
         ),
         const SessionSensor(
           sensorId: 'polar_h10',
@@ -276,7 +288,15 @@ void main() {
         'sampling_rate_hz': 100.0,
         'range_g': 8.0,
       });
-      expect(manifest(battery)['sensors']['sens_thigh']['free_living'], isTrue);
+      final sens = manifest(battery)['sensors']['sens_thigh'];
+      expect(sens['use'], 'both');
+      expect(sens['free_living_serial'], 'S9');
+      // A device only for the free-living days is not in the session.
+      expect((manifest(battery)['sensors'] as Map).containsKey('ax6_home'), isFalse);
+      final home = (manifest(battery)['free_living_devices'] as List).single;
+      expect(home['sensor_id'], 'ax6_home');
+      expect(home['free_living_serial'], 'H1');
+      expect(home['use'], 'free_living');
     });
 
     test('the H10 keeps its live entry and gains the serial', () {

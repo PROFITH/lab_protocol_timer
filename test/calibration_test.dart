@@ -110,6 +110,7 @@ void main() {
             type: 'ax6',
             placement: 'shoe',
             serial: 'A1',
+            use: SensorUse.both,
             freeLivingSerial: 'B2',
           ),
           SessionSensor(sensorId: 'ax3_wnd', type: 'ax3', placement: 'wrist', serial: 'Z0'),

@@ -56,7 +56,11 @@ ProtocolConfiguration protocolConfigurationFor(
   ActivityBattery? battery, [
   List<ParticipantEntry> participants = const [],
 ]) {
-  final layout = battery?.sensors ?? const <SessionSensor>[];
+  // Devices only for the free-living days are not in the session.
+  final layout = [
+    for (final s in battery?.sensors ?? const <SessionSensor>[])
+      if (s.inLab) s,
+  ];
   if (layout.isEmpty) return defaultProtocolConfiguration;
 
   DeviceConfiguration device(SessionSensor sensor, {String? participantId, bool several = false}) =>
@@ -88,6 +92,7 @@ ProtocolConfiguration protocolConfigurationFor(
     devices: [
       for (final participant in participants)
         for (final sensor in participant.sensorsOr(layout))
+          if (sensor.inLab)
           device(sensor, participantId: participant.participantId, several: several),
       for (final sensor in layout)
         if (sensor.connection == 'video') device(sensor),
