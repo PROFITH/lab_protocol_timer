@@ -94,6 +94,7 @@ Map<String, dynamic> buildSessionManifest({
         'sampling_rate_hz': sensor.samplingRateHz,
       if (sensor.rangeG != null) 'range_g': sensor.rangeG,
       if (sensor.freeLiving) 'free_living': true,
+      if (sensor.hasFreeLivingSerial) 'free_living_serial': sensor.freeLivingSerial!.trim(),
     };
 
     if (sensor.connection == 'video') {

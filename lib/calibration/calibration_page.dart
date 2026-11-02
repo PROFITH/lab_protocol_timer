@@ -256,7 +256,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
                   '1. Configura y pon a grabar todos los sensores offline (AX3, AX6, SENS, Matrix…).',
                   '2. Mételos en la espuma del dodecaedro y ciérralo.',
                   '3. Déjalo sobre una mesa firme con la cara 1 hacia arriba.',
-                  '4. Pulsa «Empezar». Primero ${program.stillSeconds ~/ 60} min quieto y tres golpes secos; '
+                  '4. Pulsa «Empezar». A los ${program.stillSeconds} s, tres golpes secos; '
                       'después cada cara ${program.faceSeconds} s, de la 1 a la ${program.faces}.',
                   '5. Tres pitidos avisan de cada giro; al último gira y deja la cara que se dice hacia arriba. '
                       'No toques la mesa mientras está quieto.',
@@ -319,7 +319,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
       children: [
         Text(
           switch (step.kind) {
-            CalibrationStepKind.still => 'QUIETO, CARA 1 ARRIBA',
+            CalibrationStepKind.still => 'CARA 1 ARRIBA, PREPÁRATE',
             CalibrationStepKind.knock => 'TRES GOLPES SECOS',
             CalibrationStepKind.face => 'CARA ${step.face} ARRIBA',
           },
@@ -449,7 +449,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
   }
 
   String _nextLabel(CalibrationStep next) => switch (next.kind) {
-        CalibrationStepKind.still => 'quieto',
+        CalibrationStepKind.still => 'cara 1 arriba',
         CalibrationStepKind.knock => 'tres golpes secos',
         CalibrationStepKind.face => 'gira a la cara ${next.face}',
       };

@@ -2,7 +2,8 @@
 /// alone, before the participants arrive or after they leave: the sensors
 /// are already recording, inside the dodecahedron (or a rigid box).
 enum CalibrationStepKind {
-  /// The object lies still with face 1 up.
+  /// Face 1 up, getting ready for the first knocks (10 s; the 2-min still
+  /// start was dropped in 1.3.1).
   still,
 
   /// Three sharp knocks on the table: a common mark in every sensor.
@@ -30,7 +31,7 @@ class CalibrationProgram {
   CalibrationProgram({
     this.faces = 12,
     int? faceSeconds,
-    this.stillSeconds = 120,
+    this.stillSeconds = 10,
     this.knockSeconds = 10,
   }) : faceSeconds = faceSeconds ?? (faces == 12 ? 40 : 60) {
     var t = 0;
@@ -39,7 +40,7 @@ class CalibrationProgram {
       t += seconds;
     }
 
-    add(CalibrationStepKind.still, stillSeconds, face: 1);
+    if (stillSeconds > 0) add(CalibrationStepKind.still, stillSeconds, face: 1);
     add(CalibrationStepKind.knock, knockSeconds, face: 1);
     for (var f = 1; f <= faces; f++) {
       add(CalibrationStepKind.face, this.faceSeconds, face: f);
@@ -78,17 +79,20 @@ class CalibrationProgram {
   /// Instruction for the technician during [step].
   String instruction(CalibrationStep step) => switch (step.kind) {
         CalibrationStepKind.still =>
-          'Dodecaedro quieto sobre la mesa con la cara 1 hacia arriba. No toques la mesa.',
-        CalibrationStepKind.knock => identical(step, steps[1])
-            ? 'Da tres golpes secos con el dodecaedro sobre la mesa y déjalo otra vez con la cara 1 hacia arriba.'
+          'Dodecaedro sobre la mesa con la cara 1 hacia arriba. Prepárate: al último pitido, tres golpes secos.',
+        CalibrationStepKind.knock => identical(step, _firstKnock)
+            ? 'Con la cara 1 hacia arriba, da tres golpes secos con el dodecaedro sobre la mesa y déjalo quieto.'
             : 'Da tres golpes secos con el dodecaedro sobre la mesa. Después ya puedes sacar los sensores.',
         CalibrationStepKind.face =>
           'Cara ${step.face} hacia arriba. Quieto, sin tocar la mesa.',
       };
 
+  CalibrationStep get _firstKnock =>
+      steps.firstWhere((s) => s.kind == CalibrationStepKind.knock);
+
   /// What is said when [step] starts.
   String announcement(CalibrationStep step) => switch (step.kind) {
-        CalibrationStepKind.still => 'Calibración. Cara 1 arriba, quieto.',
+        CalibrationStepKind.still => 'Calibración. Cara 1 arriba. En $stillSeconds segundos, tres golpes secos.',
         CalibrationStepKind.knock => 'Tres golpes secos.',
         CalibrationStepKind.face => 'Cara ${step.face}.',
       };

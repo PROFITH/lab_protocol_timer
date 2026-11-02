@@ -18,13 +18,13 @@ void main() {
   setUp(() => root = Directory.systemTemp.createTempSync('lpt_calib_'));
   tearDown(() => root.deleteSync(recursive: true));
 
-  test('the 12-face program: 2 min still, knocks, 40 s per face, knocks', () {
+  test('the 12-face program: 10 s to get ready, knocks, 40 s per face, knocks', () {
     final p = CalibrationProgram();
-    expect(p.totalSeconds, 120 + 10 + 12 * 40 + 10);
+    expect(p.totalSeconds, 10 + 10 + 12 * 40 + 10);
     expect(p.stepAt(0)!.kind, CalibrationStepKind.still);
-    expect(p.stepAt(125)!.kind, CalibrationStepKind.knock);
-    expect(p.stepAt(130)!.face, 1);
-    expect(p.stepAt(130 + 11 * 40 + 1)!.face, 12);
+    expect(p.stepAt(10)!.kind, CalibrationStepKind.knock);
+    expect(p.stepAt(20)!.face, 1);
+    expect(p.stepAt(20 + 11 * 40 + 1)!.face, 12);
     expect(p.stepAt(p.totalSeconds.toDouble()), isNull);
     expect(CalibrationProgram(faces: 6).faceSeconds, 60);
     // The instructions are for the technician, never for a participant.
@@ -96,12 +96,22 @@ void main() {
     final batch = await writeCalibration(now.subtract(const Duration(hours: 1)), [
       const CalibrationDevice('ax6', 'A1'),
     ]);
+    // The free-living set, calibrated apart before the participant came.
+    final home = await writeCalibration(now.subtract(const Duration(minutes: 40)), [
+      const CalibrationDevice('ax6', 'B2'),
+    ]);
     final participants = [
       ParticipantEntry(
         participantId: '001',
         redcapEventName: 'da_0__visita_inici_arm_1',
         sensors: const [
-          SessionSensor(sensorId: 'ax6_shoe_l', type: 'ax6', placement: 'shoe', serial: 'A1'),
+          SessionSensor(
+            sensorId: 'ax6_shoe_l',
+            type: 'ax6',
+            placement: 'shoe',
+            serial: 'A1',
+            freeLivingSerial: 'B2',
+          ),
           SessionSensor(sensorId: 'ax3_wnd', type: 'ax3', placement: 'wrist', serial: 'Z0'),
         ],
       ),
@@ -111,7 +121,7 @@ void main() {
       participants: participants,
       battery: null,
       dataRoot: root.path,
-      calibrations: [batch],
+      calibrations: [home, batch],
       clock: FakeSessionClock(),
       importRecords: (_) async => null,
       redcapConfigured: false,
@@ -123,19 +133,28 @@ void main() {
     expect(File('$dir2/${batch.fileName}').existsSync(), isFalse);
     // Moved, not copied: it is only in the participant's folder now.
     expect(batch.file.existsSync(), isFalse);
+    expect(File('$dir1/${home.fileName}').existsSync(), isTrue);
+    expect(home.file.existsSync(), isFalse);
 
     final manifest = c.manifestJsonFor(participants.first, status: 'complete');
     final calib = manifest['calibrations'] as List;
-    expect(calib.single['sensor_id'], 'ax6_shoe_l');
-    expect(calib.single['serial'], 'A1');
-    expect(calib.single['file'], batch.fileName);
+    expect(calib.map((e) => e['sensor_id']), ['ax6_shoe_l', 'ax6_shoe_l']);
+    expect(calib.map((e) => '${e['set']}:${e['serial']}:${e['file']}'), [
+      'lab:A1:${batch.fileName}',
+      'free_living:B2:${home.fileName}',
+    ]);
+    final sensors = manifest['sensors'] as Map;
+    expect(sensors['ax6_shoe_l']['free_living_serial'], 'B2');
 
     final session = c.redcapImports()[1].first;
     expect(session['ws_calibration'], '1');
     expect(session['ws_calib_start'], LabRedCapService.formatRedcapDateTime(batch.start));
 
     final state = jsonDecode(jsonEncode(c.stateJson()));
-    expect((state['calibrations'] as List).single['devices'], ['ax6:A1']);
+    expect((state['calibrations'] as List).map((c) => c['devices']), [
+      ['ax6:B2'],
+      ['ax6:A1'],
+    ]);
     c.dispose();
   });
 
@@ -174,7 +193,7 @@ void main() {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
       await tester.pump();
     }
-    expect(audio.said.first, 'Calibración. Cara 1 arriba, quieto.');
+    expect(audio.said.first, 'Calibración. Cara 1 arriba. En 5 segundos, tres golpes secos.');
 
     for (var i = 0; i < program.totalSeconds * 10 + 5 && !popped; i++) {
       clock.advance(const Duration(milliseconds: 100));
