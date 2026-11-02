@@ -1,0 +1,235 @@
+{
+  "protocol_id": "run4health_day8_base",
+  "protocol_version": "1",
+  "title": "RUN4HEALTH (base), día 8",
+  "study": "RUN4HEALTH",
+  "moments": [
+    "da_8__visita_final_arm_1"
+  ],
+  "sync": {
+    "kind": "clap",
+    "auto": "every_static"
+  },
+  "ask_rpe": true,
+  "lap_mode": false,
+  "activities": [
+    {
+      "name": "Dodecaedro de calibración inicial",
+      "kind": "calibration",
+      "duration_seconds": 480,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 12,
+      "notes": "Con los sensores recién cargados que se ponen el Día 8, ya grabando y antes de colocarlos. Dodecaedro quieto 2 min con la cara 1 arriba, tres golpes secos, 12 caras de 40 s y tres golpes al final. Sin dodecaedro impreso, caja rígida y 6 caras."
+    },
+    {
+      "name": "Tumbado en reposo",
+      "compendium_code": "07011",
+      "met": 1.0,
+      "duration_seconds": 300,
+      "animation": "lie",
+      "instructions": "Túmbate boca arriba, relajado. No hables ni te muevas.",
+      "wait_before": true,
+      "resting_hr": true,
+      "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos."
+    },
+    {
+      "name": "Sentarse y levantarse 5 veces, intento 1",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 30,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces, lo más rápido que puedas. Al terminar, quédate sentado y quieto.",
+      "notes": "Cronometrar desde la señal hasta que se sienta por quinta vez (también se mide en el vídeo). Si termina antes de los 30 s, se queda sentado y quieto."
+    },
+    {
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 5 veces, intento 2",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces, lo más rápido que puedas. Al terminar, quédate sentado y quieto.",
+      "notes": "Igual que el intento 1."
+    },
+    {
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s, intento 1",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "redcap": {
+        "done_field": "chairstand_realiza",
+        "start_field": "chairstand_start",
+        "rpe_before_field": "rpe_chairstand_pre",
+        "rpe_after_field": "rpe_chairstand_post",
+        "fields": [
+          {
+            "field": "chairstand_repeticiones",
+            "label": "Repeticiones completas",
+            "type": "integer",
+            "min": 0,
+            "max": 80
+          },
+          {
+            "field": "incidencia_chairstand",
+            "label": "Incidencias",
+            "type": "choice",
+            "choices": {
+              "0": "Sin incidencias",
+              "1": "Detenido por fatiga",
+              "2": "Dolor/Molestia",
+              "3": "No completado"
+            },
+            "default": "0"
+          }
+        ]
+      },
+      "notes": "Sentado en el centro de la silla, brazos cruzados. Cuenta las repeticiones completas. Este intento rellena chairstand_* en REDCap; el intento 2 queda en lab_activity."
+    },
+    {
+      "name": "Pausa sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 60,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s, intento 2",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 30,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "notes": "Cuenta las repeticiones completas."
+    },
+    {
+      "name": "Sentado quieto tras las pruebas",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto.",
+      "notes": "Recuperación de la FC tras las pruebas (TFM del PPG)."
+    },
+    {
+      "name": "Juego por parejas: tocar la rodilla del otro",
+      "compendium_code": "15135",
+      "met": 5.8,
+      "duration_seconds": 180,
+      "animation": "stand",
+      "instructions": "Intenta tocar la rodilla de tu compañero sin que te toque la tuya.",
+      "wait_before": true,
+      "notes": "Solo con dos participantes a la vez. Sin empujones, en suelo despejado. Sirve de calentamiento para Cooper, que guía healthy_tracker fuera de esta sesión."
+    },
+    {
+      "name": "Dodecaedro de calibración final",
+      "kind": "calibration",
+      "duration_seconds": 480,
+      "prep_seconds": 120,
+      "post_seconds": 30,
+      "faces": 12,
+      "notes": "Tras la prueba de Cooper (healthy_tracker), al quitar los sensores de laboratorio, sin conectar ningún Axivity al USB. Misma secuencia que la inicial.",
+      "wait_before": true
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "matrix_wnd",
+      "type": "matrix",
+      "placement": "wrist",
+      "dominance": "non_dominant",
+      "free_living": true
+    },
+    {
+      "sensor_id": "ax3_wnd",
+      "type": "ax3",
+      "placement": "wrist",
+      "dominance": "non_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_wd",
+      "type": "ax3",
+      "placement": "wrist",
+      "dominance": "dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_thigh",
+      "type": "ax3",
+      "placement": "thigh",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax6_shoe_l",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "left",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "ax6_shoe_r",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "right",
+      "free_living": true,
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "polar_h10",
+      "type": "polar_h10",
+      "placement": "chest"
+    },
+    {
+      "sensor_id": "verity_arm",
+      "type": "verity_sense",
+      "placement": "upper_arm",
+      "dominance": "non_dominant"
+    },
+    {
+      "sensor_id": "cam_room",
+      "type": "camera",
+      "placement": "room"
+    }
+  ]
+}

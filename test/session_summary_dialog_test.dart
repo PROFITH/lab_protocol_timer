@@ -7,7 +7,7 @@ import 'package:lab_protocol_timer/windows/monitor_session.dart';
 import 'package:lab_protocol_timer/windows/session_console.dart';
 
 void main() {
-  final battery = ActivityBattery.parse(File('assets/protocols/run4health_base.json').readAsStringSync());
+  final battery = ActivityBattery.parse(File('test/fixtures/run4health_base_v2.json').readAsStringSync());
 
   test('after the session the lab sensors are downloaded and the free-living ones restarted', () {
     final after = SensorsAfterSession(battery.sensors);

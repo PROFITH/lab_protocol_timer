@@ -333,6 +333,10 @@ class BatteryActivity {
   /// Fields of the visit's REDCap record that this activity fills.
   final ActivityRecordMapping? redcap;
 
+  /// Wait (lap) before this activity until the evaluator starts it, also
+  /// when the session runs without lap mode: a change of machine or place.
+  final bool waitBefore;
+
   const BatteryActivity({
     required this.name,
     this.kind = ActivityKind.activity,
@@ -347,6 +351,7 @@ class BatteryActivity {
     this.animation,
     this.restingHr = false,
     this.redcap,
+    this.waitBefore = false,
   });
 
   bool get isCalibration => kind == ActivityKind.calibration;
@@ -369,6 +374,7 @@ class BatteryActivity {
     String? animation,
     bool? restingHr,
     ActivityRecordMapping? redcap,
+    bool? waitBefore,
     bool clearCompendium = false,
     bool clearDuration = false,
     bool clearPrep = false,
@@ -395,6 +401,7 @@ class BatteryActivity {
         animation: clearAnimation ? null : animation ?? this.animation,
         restingHr: restingHr ?? this.restingHr,
         redcap: redcap ?? this.redcap,
+        waitBefore: waitBefore ?? this.waitBefore,
       );
 
   Map<String, dynamic> toJson() => {
@@ -411,6 +418,7 @@ class BatteryActivity {
         if (animation != null) 'animation': animation,
         if (restingHr) 'resting_hr': true,
         if (redcap != null) 'redcap': redcap!.toJson(),
+        if (waitBefore) 'wait_before': true,
       };
 
   factory BatteryActivity.fromJson(Map<String, dynamic> json) {
@@ -452,6 +460,7 @@ class BatteryActivity {
           ? ActivityRecordMapping.fromJson(
               Map<String, dynamic>.from(json['redcap'] as Map))
           : null,
+      waitBefore: json['wait_before'] == true,
     );
   }
 }
@@ -484,6 +493,11 @@ class ActivityBattery {
   /// Asks the effort (0-10) after every activity.
   final bool askRpe;
 
+  /// Lap mode of sessions run with this protocol: false runs the activities
+  /// one after another and waits only before those marked `wait_before`.
+  /// Null leaves the Research Monitor setting.
+  final bool? lapMode;
+
   const ActivityBattery({
     required this.protocolId,
     this.protocolVersion,
@@ -494,6 +508,7 @@ class ActivityBattery {
     this.sensors = const [],
     this.sync = const SyncSettings(),
     this.askRpe = true,
+    this.lapMode,
   });
 
   String get displayName => title ?? protocolId;
@@ -538,6 +553,7 @@ class ActivityBattery {
     List<SessionSensor>? sensors,
     SyncSettings? sync,
     bool? askRpe,
+    bool? lapMode,
   }) =>
       ActivityBattery(
         protocolId: protocolId ?? this.protocolId,
@@ -549,6 +565,7 @@ class ActivityBattery {
         sensors: sensors ?? this.sensors,
         sync: sync ?? this.sync,
         askRpe: askRpe ?? this.askRpe,
+        lapMode: lapMode ?? this.lapMode,
       );
 
   Map<String, dynamic> toJson() => {
@@ -559,6 +576,7 @@ class ActivityBattery {
         if (moments.isNotEmpty) 'moments': moments,
         'sync': sync.toJson(),
         'ask_rpe': askRpe,
+        if (lapMode != null) 'lap_mode': lapMode,
         'activities': activities.map((a) => a.toJson()).toList(),
         if (sensors.isNotEmpty)
           'sensors': sensors.map((s) => s.toJson()).toList(),
@@ -606,6 +624,7 @@ class ActivityBattery {
       sensors: sensors,
       sync: SyncSettings.fromJson(json['sync']),
       askRpe: json['ask_rpe'] as bool? ?? true,
+      lapMode: json['lap_mode'] as bool?,
     );
   }
 

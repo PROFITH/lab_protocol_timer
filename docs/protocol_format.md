@@ -23,12 +23,14 @@ See the base protocols in [`../assets/protocols/`](../assets/protocols/) and [`b
 | `protocol_version` | no | Version of the battery |
 | `title`, `study` | no | Name in the list; study whose protocols replace each other when the visit changes |
 | `moments` | no | REDCap events the protocol is meant for (empty: any) |
+| `lap_mode` | no | `false`: activities follow one after another and the session waits only before an activity with `wait_before` and after the last one; `true`: it waits after every activity; missing: the Research Monitor setting |
 | `activities[]` | yes | In order; activity 1 of the session is the first item |
 | `activities[].name` | yes | Read aloud at the start of the activity and shown in the Research Monitor |
 | `activities[].kind` | no | `activity` (default) or `calibration` |
 | `activities[].compendium_code`, `met` | no | Five-digit 2024 Compendium code and its MET |
 | `activities[].duration_seconds` | no | Main-phase duration; when missing, the Research Monitor duration is used |
 | `activities[].prep_seconds`, `post_seconds` | no | Static phases before and after; when missing, the Research Monitor values |
+| `activities[].wait_before` | no | `true`: the session waits (lap) before this activity until the evaluator starts it, also with `lap_mode` false. For a change of machine or place |
 | `activities[].faces` | no | Calibration: box faces announced during the main phase (default 6) |
 | `activities[].notes` | no | Notes for the evaluators, not read aloud |
 | `sensors[]` | no | `sensor_id`, `type`, `placement`, `dominance`, `side`, `serial`, `sampling_rate_hz`, `range_g`, `free_living` |

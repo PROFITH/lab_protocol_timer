@@ -44,6 +44,9 @@ class ActivityPlan {
   final String? instructions;
   final bool restingHr;
 
+  /// Wait for the evaluator before this activity, also without lap mode.
+  final bool waitBefore;
+
   const ActivityPlan({
     required this.index,
     this.name,
@@ -58,6 +61,7 @@ class ActivityPlan {
     this.animation = 'stand',
     this.instructions,
     this.restingHr = false,
+    this.waitBefore = false,
   });
 
   bool get isCalibration => kind == 'calibration';
@@ -614,12 +618,8 @@ class ProtocolEngine {
     switch (phase) {
       case SessionPhase.prep:
         _logSkipped(events, activityIndex);
-        final next = activityIndex + 1;
-        if (lastIndex != null && next > lastIndex!) {
-          _enterWait(events, next, overflow: Duration.zero);
-        } else {
-          _startActivity(events, next);
-        }
+        _goOn(events, activityIndex + 1, overflow: Duration.zero,
+            alwaysStart: true);
       case SessionPhase.wait:
         if (!hasNext) {
           return [const EngineRefused('No quedan actividades que saltar')];
@@ -706,15 +706,30 @@ class ProtocolEngine {
         _logMain(events, reason: reason, overflow: overflow);
         _enterPhase(events, SessionPhase.post, overflow);
       case SessionPhase.post:
-        final next = activityIndex + 1;
-        final last = lastIndex != null && next > lastIndex!;
-        if (lapMode || last) {
-          _enterWait(events, next, overflow: overflow);
-        } else {
-          _startActivity(events, next, overflow: overflow);
-        }
+        _goOn(events, activityIndex + 1, overflow: overflow);
       case SessionPhase.wait:
         break;
+    }
+  }
+
+  /// After an activity: the wait before [next], or [next] straight away
+  /// when the session runs without lap mode and [next] needs no wait.
+  /// [alwaysStart] keeps the old rule of a skip, which never waits in lap
+  /// mode.
+  void _goOn(
+    List<EngineEvent> events,
+    int next, {
+    required Duration overflow,
+    bool alwaysStart = false,
+  }) {
+    final last = lastIndex != null && next > lastIndex!;
+    final wait = last ||
+        _planFor(next).waitBefore ||
+        (lapMode && !alwaysStart);
+    if (wait) {
+      _enterWait(events, next, overflow: overflow);
+    } else {
+      _startActivity(events, next, overflow: overflow);
     }
   }
 

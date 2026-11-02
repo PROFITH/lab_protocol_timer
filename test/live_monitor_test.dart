@@ -18,7 +18,7 @@ ActivityBattery _asset(String path) =>
 void main() {
   group('Research Monitor devices', () {
     test('lists every sensor of the session; H10 and Verity are live', () {
-      final battery = _asset('assets/protocols/run4health_base.json');
+      final battery = _asset('test/fixtures/run4health_base_v2.json');
       final configuration = protocolConfigurationFor(battery);
 
       expect(configuration.devices.map((d) => d.deviceId),
@@ -54,7 +54,7 @@ void main() {
     });
 
     test('the manifest lists the Verity Sense as a live sensor', () {
-      final battery = _asset('assets/protocols/run4health_base.json');
+      final battery = _asset('test/fixtures/run4health_base_v2.json');
       final start = DateTime.utc(2026, 10, 27, 8);
       final manifest = buildSessionManifest(
         sessionId: 's',

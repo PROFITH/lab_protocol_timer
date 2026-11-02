@@ -22,7 +22,7 @@ void main() {
   testWidgets('render monitor console', (tester) async {
     if (out == null) return;
     await tester.runAsync(loadFonts);
-    final battery = ActivityBattery.parse(File('assets/protocols/run4health_base.json').readAsStringSync());
+    final battery = ActivityBattery.parse(File('test/fixtures/run4health_base_v2.json').readAsStringSync());
     final root = await tester.runAsync(() => Directory.systemTemp.createTemp('lpt_console_'));
     final clock = FakeSessionClock();
     final session = MonitorSession();

@@ -7,7 +7,7 @@ import 'package:lab_protocol_timer/setup/protocol_editor_page.dart';
 import 'package:lab_protocol_timer/setup/session_setup_card.dart';
 
 ActivityBattery _r4h() => ActivityBattery.parse(
-      File('assets/protocols/run4health_base.json').readAsStringSync(),
+      File('test/fixtures/run4health_base_v2.json').readAsStringSync(),
     );
 
 Widget _app(Widget child) => MaterialApp(

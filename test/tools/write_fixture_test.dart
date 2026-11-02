@@ -14,7 +14,7 @@ void main() {
 
   test('write a session folder', () async {
     if (out == null) return;
-    final base = ActivityBattery.parse(File('assets/protocols/run4health_base.json').readAsStringSync());
+    final base = ActivityBattery.parse(File('test/fixtures/run4health_base_v2.json').readAsStringSync());
     // Jumps where the posture allows them, claps lying and sitting.
     final battery = base.copyWith(sync: base.sync.copyWith(kind: SyncKind.jump));
     final clock = FakeSessionClock(DateTime.utc(2026, 10, 21, 8, 30));

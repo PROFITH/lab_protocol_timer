@@ -20,7 +20,7 @@ void main() {
   ];
 
   setUpAll(() {
-    battery = ActivityBattery.parse(File('assets/protocols/run4health_base.json').readAsStringSync());
+    battery = ActivityBattery.parse(File('test/fixtures/run4health_base_v2.json').readAsStringSync());
   });
 
   setUp(() async {

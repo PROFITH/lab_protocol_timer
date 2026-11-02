@@ -48,13 +48,12 @@ void main() {
           expect(protocol.moments, isNotEmpty);
           expect(protocol.activities.every((a) => a.durationSeconds != null),
               isTrue);
-          // RUN4HEALTH (base) has no calibration box (decided on
-          // 2026-10-20); RUN4HEALTH (WEARGAP) brings back the dodecahedron
-          // at the start and at the end (protocol v2, 2026-11-01).
-          expect(protocol.activities.first.isCalibration,
-              protocol.protocolId != 'run4health_base');
+          // Every built-in protocol starts with a calibration box. The
+          // RUN4HEALTH protocols use the 12-face dodecahedron (protocol v2,
+          // 2026-11-01); WEARGAP keeps the 6-orientation box.
+          expect(protocol.activities.first.isCalibration, isTrue);
           for (final box in protocol.activities.where((a) => a.isCalibration)) {
-            expect(box.faces, protocol.protocolId == 'run4health_weargap' ? 12 : 6);
+            expect(box.faces, protocol.study == 'RUN4HEALTH' ? 12 : 6);
             expect(box.compendiumCode, isNull);
           }
           final ids = protocol.sensors.map((s) => s.sensorId).toList();
@@ -73,45 +72,84 @@ void main() {
       });
     }
 
-    test('RUN4HEALTH follows its collection protocol', () {
+    test('RUN4HEALTH (base) day 0 follows the lab battery of 2026-11-02', () {
       final r4h = _asset('assets/protocols/run4health_base.json');
       final lab = r4h.activities.where((a) => !a.isCalibration).toList();
 
-      expect(r4h.moments, [_day0, _day8]);
+      expect(r4h.moments, [_day0]);
+      // Activities run one after another; the session waits only where
+      // the participant changes machine or place.
+      expect(r4h.lapMode, isFalse);
+      expect(r4h.activities.first.isCalibration, isTrue);
+      expect(r4h.activities.last.isCalibration, isTrue);
       expect(lab.first.name, 'Tumbado en reposo');
       expect(lab.first.durationSeconds, 300);
-      expect(lab[lab.length - 2].durationSeconds, 30);
-      expect(lab.last.name, 'Marcha de 6 minutos');
-      expect(lab.last.durationSeconds, 360);
-      expect(r4h.activities.any((a) => a.isCalibration), isFalse);
-      expect(lab, hasLength(r4h.activities.length));
-      // Resting heart rate and the two fitness tests go to REDCap.
       expect(lab.first.restingHr, isTrue);
-      expect(lab[lab.length - 2].redcap?.doneField, 'chairstand_realiza');
-      expect(lab.last.redcap?.fields.map((f) => f.field),
-          containsAll(['circuito_m', 'vueltas_6mwt', 'adicional_6mwt']));
+      expect(lab.map((a) => a.name), contains('Sentado libre'));
+      // No sweeping and no bags: one kettlebell in each hand.
+      expect(lab.any((a) => a.name.toLowerCase().contains('barrer')), isFalse);
+      expect(lab.any((a) => a.name.contains('kettlebell')), isTrue);
+      // Sit-to-stand: each attempt and each minute of rest is its own step.
+      final sts = lab.where((a) => a.name.startsWith('Sentarse y levantarse'));
+      expect(sts, hasLength(4));
+      expect(
+          lab.where((a) => a.name == 'Pausa sentado').map((a) => a.durationSeconds),
+          [60, 60, 60]);
+      expect(lab.where((a) => a.redcap?.doneField == 'chairstand_realiza'),
+          hasLength(1));
+      // Waits: the first treadmill stage, the bike, the rest, the first
+      // running stage, the recovery and the final box.
+      final waits = r4h.activities.where((a) => a.waitBefore).map((a) => a.name);
+      expect(waits, [
+        'Tumbado en reposo',
+        'Caminar en cinta 3,0 km/h',
+        'Bicicleta 60 rpm, carga ligera',
+        'Descanso sentado',
+        'Correr en cinta 8 km/h',
+        'Recuperación sentado',
+        'Dodecaedro de calibración final',
+      ]);
+      // Treadmill stages follow on without preparation, so the lap pressed
+      // when the treadmill starts is the start of the first stage.
+      final belt = lab.where((a) => a.name.contains('en cinta')).toList();
+      expect(belt, hasLength(13));
+      expect(belt.every((a) => a.prepSeconds == 0), isTrue);
+      // No Cooper or 6-minute walk on day 0: running and Cooper never on
+      // the same day.
+      expect(lab.any((a) => a.name.contains('Cooper')), isFalse);
+      expect(lab.any((a) => a.name.contains('6 minutos')), isFalse);
       expect(r4h.sync.kind, SyncKind.clap);
       expect(r4h.sync.auto, AutoSync.everyStatic);
       for (final a in lab) {
         expect(a.instructions, isNotNull, reason: a.name);
         expect(activityAnimations, contains(a.animation), reason: a.name);
       }
-      // No SensWear or portable calorimeter in the pilot.
       expect(r4h.sensors.map((s) => s.type), isNot(contains('senswear')));
       expect(
         r4h.sensors.where((s) => s.freeLiving).map((s) => s.sensorId),
-        unorderedEquals(['matrix_wnd', 'sens_thigh', 'verity_arm']),
+        unorderedEquals(['matrix_wnd', 'ax3_thigh', 'ax6_shoe_l', 'ax6_shoe_r']),
       );
     });
 
+    test('RUN4HEALTH (base) day 8 is short and leaves room for Cooper', () {
+      final d8 = _asset('assets/protocols/run4health_day8_base.json');
+      final d0 = _asset('assets/protocols/run4health_base.json');
+      final lab = d8.activities.where((a) => !a.isCalibration).toList();
+      expect(d8.moments, [_day8]);
+      expect(d8.lapMode, isFalse);
+      expect(d8.sensors.map((s) => s.sensorId), d0.sensors.map((s) => s.sensorId));
+      expect(lab.first.restingHr, isTrue);
+      expect(lab.any((a) => a.name.contains('en cinta')), isFalse);
+      expect(lab.last.name, startsWith('Juego por parejas'));
+      // The final box waits: Cooper runs outside, guided by healthy_tracker.
+      expect(d8.activities.last.isCalibration, isTrue);
+      expect(d8.activities.last.waitBefore, isTrue);
+    });
+
     test('RUN4HEALTH (WEARGAP) has the pilot sensors and the dodecahedron', () {
-      final base = _asset('assets/protocols/run4health_base.json');
       final p = _asset('assets/protocols/run4health_weargap.json');
       expect(p.study, 'RUN4HEALTH');
       expect(p.moments, [_day0, _day8]);
-      // The same 9 activities as the base, between two calibrations.
-      final lab = p.activities.where((a) => !a.isCalibration).toList();
-      expect(lab.map((a) => a.name), base.activities.map((a) => a.name));
       expect(p.activities.first.isCalibration, isTrue);
       expect(p.activities.last.isCalibration, isTrue);
       for (final c in p.activities.where((a) => a.isCalibration)) {
@@ -151,7 +189,9 @@ void main() {
         ];
 
     test('keeps a protocol that applies to the visit', () {
-      expect(ProtocolLibrary.forMoment(r4h, _day8, all), same(r4h));
+      final r8 = all.firstWhere((p) => p.protocolId == 'run4health_day8_base');
+      expect(ProtocolLibrary.forMoment(r4h, _day8, all), same(r8));
+      expect(ProtocolLibrary.forMoment(r8, _day0, all), same(r4h));
       expect(ProtocolLibrary.forMoment(w8, _day0, all), same(w0));
     });
 
@@ -220,7 +260,7 @@ void main() {
           )),
         ) as Map<String, dynamic>;
 
-    final battery = _asset('assets/protocols/run4health_base.json').copyWith(
+    final battery = _asset('test/fixtures/run4health_base_v2.json').copyWith(
       sensors: [
         const SessionSensor(
           sensorId: 'ax3_wnd',
