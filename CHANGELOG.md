@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-02
+
+### Added
+
+- **Calibración:** a button of the start screen opens the calibration of the offline sensors, done by the technician before the participants arrive or after they leave (the instructions are addressed to them). A drawing of the dodecahedron turns to the face that goes up, three beeps come before each turn and the face is said aloud: 2 min still with face 1 up, three knocks, faces 1 to 12 for 40 s each (or a 6-face box, 60 s each), three knocks; about 10 min. Cancelling asks first.
+- **Calibration by device:** the screen lists the devices in the dodecahedron with their serial numbers (proposed from the serials typed for the participants). Each calibration is a CSV `calibraciones/calibracion_<date>.csv` with the times of every face, and `calibraciones/calibraciones_dispositivos.csv` keeps one row per device and calibration, to follow each serial over time. When a session starts, each participant's folder gets a copy of the calibrations of their sensors, the manifest lists the calibration of each sensor (`calibrations`: sensor ID, type, serial, file, start, end, faces) and REDCap gets `ws_calibration`, `ws_calib_start` and `ws_calib_end`. Calibrating in batches works: each sensor takes the latest calibration of the last 12 h with its serial.
+- **Warning before an uncalibrated session:** «¿Seguro que quieres empezar la sesión sin haber calibrado los sensores?», listing the offline sensors of each participant without a calibration of today.
+- **Proposed settings:** the sensor editor proposes the sampling rate and range from the device and its place: AX3 100 Hz ±8 g, AX6 and anything on a shoe 100 Hz ±16 g, Matrix 25 Hz ±8 g (with a note: gyroscope, real-time heart rate and temperature on, about 7 days and 8 h), SENS motion fixed at 12.5 Hz and not editable.
+
+### Changed
+
+- **Folders:** step 3 chooses only the parent folder and lists below it, in small type, the folder each participant gets (`<parent>/<study>_<ID>/<visit>`). Choosing a folder per participant is gone.
+- **Sensor editor:** no serial number (they are typed per participant) and no «sigue puesto en vida libre» switch: every device is downloaded after the visit and replaced by the free-living ones, each with its own serial. The session summary says so.
+- **Built-in protocols:** no calibration segments (the «Dodecaedro de calibración» activities are gone, and the editor no longer adds a calibration box); no sensor marked as free living. RUN4HEALTH has SENS motion on the thigh instead of the AX3. Versions: RUN4HEALTH day 0 v4, day 8 v2, WEARGAP day 0 and day 8 v3.
+
 ## [1.2.0] - 2026-11-02
 
 ### Changed

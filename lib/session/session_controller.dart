@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import '../calibration/calibration_store.dart';
 import '../config/default_protocol_configuration.dart';
 import '../models/activity_battery.dart';
 import '../models/protocol_configuration.dart';
@@ -313,6 +314,7 @@ class SessionController extends ChangeNotifier {
     required this.dataRoot,
     this.settings = const SessionSettings(),
     this.operator,
+    List<CalibrationRecord> calibrations = const [],
     int startIndex = 1,
     SessionClock? clock,
     SessionAudio? audio,
@@ -321,6 +323,7 @@ class SessionController extends ChangeNotifier {
     this.onActiveSessionChanged,
     bool? redcapConfigured,
   })  : participants = List.unmodifiable(participants),
+        calibrations = List.unmodifiable(calibrations),
         _redcapConfigured = redcapConfigured,
         clock = clock ?? SystemSessionClock(),
         audio = audio ?? SilentAudio(),
@@ -355,6 +358,10 @@ class SessionController extends ChangeNotifier {
       dataRoot: state['data_root']?.toString() ?? saved.directory.parent.parent.path,
       settings: SessionSettings.fromJson(state['settings']),
       operator: state['operator']?.toString(),
+      calibrations: [
+        for (final c in state['calibrations'] as List? ?? const [])
+          if (_calibrationFromState(c) case final r?) r,
+      ],
       clock: clock,
       audio: audio,
       monitor: monitor,
@@ -401,6 +408,57 @@ class SessionController extends ChangeNotifier {
   final String dataRoot;
   SessionSettings settings;
   final String? operator;
+
+  /// Calibrations of the sensors done today before the session
+  /// (Calibración screen), by serial number. Each participant's folder gets
+  /// a copy of those of their sensors.
+  final List<CalibrationRecord> calibrations;
+
+  static Map<String, dynamic> _calibrationJson(CalibrationRecord c) => {
+        'file': c.file.path,
+        'start_utc': c.start.toUtc().toIso8601String(),
+        'end_utc': c.end.toUtc().toIso8601String(),
+        'faces': c.faces,
+        'devices': [for (final d in c.devices) d.code],
+      };
+
+  static CalibrationRecord? _calibrationFromState(Object? json) {
+    if (json is! Map) return null;
+    final start = DateTime.tryParse(json['start_utc']?.toString() ?? '');
+    final end = DateTime.tryParse(json['end_utc']?.toString() ?? '');
+    if (start == null || end == null) return null;
+    return CalibrationRecord(
+      file: File(json['file']?.toString() ?? ''),
+      start: start,
+      end: end,
+      faces: int.tryParse(json['faces']?.toString() ?? '') ?? 0,
+      completed: true,
+      devices: [
+        for (final d in json['devices'] as List? ?? const [])
+          if (CalibrationDevice.parse(d.toString()) case final device?) device,
+      ],
+    );
+  }
+
+  /// Calibration of each offline sensor of [participant] that has one.
+  Map<SessionSensor, CalibrationRecord> calibrationsOf(ParticipantEntry participant) => {
+        for (final s in participant.sensors)
+          if (s.connection == 'offline')
+            if (CalibrationStore.forDevice(calibrations, s.type, s.serial) case final c?) s: c,
+      };
+
+  /// Start of the first and end of the last calibration used.
+  ({DateTime start, DateTime end})? get _calibrationSpan {
+    final used = {
+      for (final p in participants) ...calibrationsOf(p).values,
+    };
+    if (used.isEmpty) return null;
+    return (
+      start: used.map((c) => c.start).reduce((a, b) => a.isBefore(b) ? a : b),
+      end: used.map((c) => c.end).reduce((a, b) => a.isAfter(b) ? a : b),
+    );
+  }
+
   final SessionClock clock;
   final SessionAudio audio;
   final MonitorLink monitor;
@@ -709,6 +767,7 @@ class SessionController extends ChangeNotifier {
         for (final dir in store!.directories) {
           await _checkWritable(dir);
         }
+        await _copyCalibration();
       }
     } catch (e) {
       store = null;
@@ -733,6 +792,30 @@ class SessionController extends ChangeNotifier {
     _handle(events);
     _changed(saveState: true, outputs: true);
     return const CommandResult.ok();
+  }
+
+  /// Puts in each participant's folder a copy of the calibration CSVs of
+  /// their sensors, so each folder stands on its own.
+  Future<void> _copyCalibration() async {
+    final s = store;
+    if (s == null || calibrations.isEmpty) return;
+    for (final p in participants) {
+      final dir = s.directoryOf(p.participantId);
+      final mine = calibrationsOf(p);
+      for (final c in mine.values.toSet()) {
+        try {
+          await CalibrationStore.copyInto(c, [dir]);
+        } catch (e) {
+          s.logEvent('calibration_copy_failed', detail: '${p.participantId}: $e');
+        }
+      }
+      for (final MapEntry(key: sensor, value: c) in mine.entries) {
+        s.logEvent(
+          'calibration',
+          detail: '${p.participantId} ${sensor.sensorId} ${sensor.serial?.trim()}: ${c.fileName}',
+        );
+      }
+    }
   }
 
   static Future<void> _checkWritable(Directory dir) async {
@@ -1030,6 +1113,8 @@ class SessionController extends ChangeNotifier {
         ],
         'data_root': dataRoot,
         if (operator != null) 'operator': operator,
+        if (calibrations.isNotEmpty)
+          'calibrations': [for (final c in calibrations) _calibrationJson(c)],
         if (notes != null) 'notes': notes,
         'battery': battery?.toJson(),
         'settings': settings.toJson(),
@@ -1083,6 +1168,21 @@ class SessionController extends ChangeNotifier {
       ),
       'status': status,
       if (operator != null) 'operator': operator,
+      // Calibration of each sensor, by serial number; the times of each
+      // face are in the CSV, copied next to this manifest.
+      if (participant != null && calibrationsOf(participant).isNotEmpty)
+        'calibrations': [
+          for (final MapEntry(key: sensor, value: c) in calibrationsOf(participant).entries)
+            {
+              'sensor_id': sensor.sensorId,
+              'device_type': sensor.type,
+              'serial': sensor.serial?.trim(),
+              'file': c.fileName,
+              'start_utc': c.start.toUtc().toIso8601String(),
+              'end_utc': c.end.toUtc().toIso8601String(),
+              'faces': c.faces,
+            },
+        ],
       if (notes != null && notes!.isNotEmpty) 'notes': notes,
       'settings': settings.toJson(),
       if (own.isNotEmpty) 'files': own,
@@ -1276,6 +1376,7 @@ class SessionController extends ChangeNotifier {
       notes: notes,
       operator: operator,
       pendingRpeBefore: Map.of(engine.rpeBefore),
+      calibration: _calibrationSpan,
     );
   }
 

@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../calibration/calibration_page.dart';
+import '../calibration/calibration_store.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/phone_records_import.dart';
@@ -33,10 +35,6 @@ class ParticipantFieldGroup {
 
   /// Serial number typed for each sensor of the protocol, by sensor ID.
   final Map<String, TextEditingController> serials = {};
-
-  /// Folder chosen for this participant; null means the automatic one
-  /// under the data folder.
-  String? folder;
 
   /// Participant ID whose remembered setup filled the serials.
   String? rememberedFor;
@@ -146,6 +144,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   final _activityController = TextEditingController(text: '1');
   final _operatorController = TextEditingController();
   String? _dataRoot;
+
+  /// Calibration of the sensors done today under the data folder.
+  List<CalibrationRecord> _calibrations = const [];
   bool _starting = false;
   bool _sendingSaved = false;
 
@@ -241,6 +242,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       if (operator != null && _operatorController.text.isEmpty) _operatorController.text = operator;
       if (syncKind != null && _syncKind == null) _syncKind = SyncKind.parse(syncKind);
     });
+    await _loadCalibration();
     if (widget.checkUnfinished) await _checkUnfinishedSessions();
   }
 
@@ -250,28 +252,80 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       initialDirectory: _dataRoot,
     );
     if (chosen == null || !mounted) return;
-    setState(() => _dataRoot = chosen);
+    setState(() {
+      _dataRoot = chosen;
+      _calibrations = const [];
+    });
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(SetupPrefs.dataRoot, chosen);
     } catch (_) {}
+    await _loadCalibration();
   }
 
-  /// Chooses the folder of one participant's files.
-  Future<void> _chooseParticipantFolder(ParticipantFieldGroup group) async {
-    final chosen = await getDirectoryPath(
-      confirmButtonText: 'Usar esta carpeta',
-      initialDirectory: group.folder ?? _dataRoot,
+  /// Looks for today's calibrations under the data folder.
+  Future<void> _loadCalibration() async {
+    final root = _dataRoot;
+    if (root == null) return;
+    var found = const <CalibrationRecord>[];
+    try {
+      found = await CalibrationStore.recentBefore(root, DateTime.now());
+    } catch (_) {}
+    if (!mounted || root != _dataRoot) return;
+    setState(() => _calibrations = found);
+  }
+
+  /// Devices proposed for the dodecahedron: the offline sensors of the
+  /// session with the serials typed so far (each one once), or the
+  /// protocol's offline sensors without serial when none is typed yet.
+  List<CalibrationDevice> _devicesToCalibrate() {
+    final offline = [
+      for (final s in _layoutSensors)
+        if (s.connection == 'offline' && s.type != 'other') s,
+    ];
+    final typed = <CalibrationDevice>{
+      for (final group in _participants)
+        for (final s in offline)
+          if (_serialFor(group, s) case final serial?) CalibrationDevice(s.type, serial),
+    };
+    if (typed.isNotEmpty) return typed.toList();
+    return [for (final s in offline) CalibrationDevice(s.type, '')];
+  }
+
+  /// Offline sensors of [entries] without a calibration of today, as
+  /// «P01: AX6 · Pie izquierdo (1234)».
+  List<String> _uncalibrated(List<ParticipantEntry> entries, List<CalibrationRecord> records) => [
+        for (final p in entries)
+          for (final s in p.sensors)
+            if (s.connection == 'offline' &&
+                s.type != 'other' &&
+                CalibrationStore.forDevice(records, s.type, s.serial) == null)
+              '${p.participantId}: ${s.displayName}${s.hasSerial ? ' (${s.serial!.trim()})' : ' (sin número de serie)'}',
+      ];
+
+  Future<void> _calibrate() async {
+    final root = _dataRoot ?? await SetupPrefs.defaultDataRoot();
+    try {
+      await Directory(root).create(recursive: true);
+    } catch (_) {}
+    if (!mounted) return;
+    final record = await Navigator.of(context).push<CalibrationRecord>(
+      MaterialPageRoute(
+        builder: (_) => CalibrationPage(
+          dataRoot: root,
+          audio: widget.audioFactory(),
+          initialDevices: _devicesToCalibrate(),
+        ),
+      ),
     );
-    if (chosen == null || !mounted) return;
-    setState(() => group.folder = chosen);
+    if (!mounted) return;
+    if (record != null && _dataRoot == null) setState(() => _dataRoot = root);
+    await _loadCalibration();
   }
 
-  /// Where the files of [group] go: the folder chosen for them, or
-  /// `<root>/<study>_<ID>/<visit>` under the data folder.
+  /// Where the files of [group] go: `<root>/<study>_<ID>/<visit>` under
+  /// the parent folder.
   String _folderOf(ParticipantFieldGroup group) {
-    final custom = group.folder;
-    if (custom != null) return custom;
     final root = _dataRoot ?? '...';
     final id = group.id.isEmpty ? '<ID>' : group.id;
     return SessionStore.defaultFolder(
@@ -823,7 +877,6 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               else
                 sensor.copyWith(clearSerial: true),
           ],
-          folder: group.folder,
         ),
     ];
   }
@@ -837,6 +890,35 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     final entries = _entries();
     final activity =
         int.tryParse(_activityController.text.trim()) ?? 1;
+
+    final root = _dataRoot ?? await SetupPrefs.defaultDataRoot();
+    final calibrations = await CalibrationStore.recentBefore(root, DateTime.now());
+    if (!mounted) return;
+    final uncalibrated = _uncalibrated(entries, calibrations);
+    if (calibrations.isEmpty || uncalibrated.isNotEmpty) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Sensores sin calibrar'),
+          content: Text(
+            '¿Seguro que quieres empezar la sesión sin haber calibrado los sensores?\n\n'
+            '${calibrations.isEmpty ? 'No hay ninguna calibración de hoy en la carpeta de la sesión.' : 'Sin calibración de hoy:\n${uncalibrated.join('\n')}'}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Volver'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Empezar sin calibrar'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
 
     final battery = _sessionBattery;
     if (battery != null) {
@@ -878,7 +960,6 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
     if (!mounted) return;
 
-    final root = _dataRoot ?? await SetupPrefs.defaultDataRoot();
     try {
       await Directory(root).create(recursive: true);
     } catch (e) {
@@ -902,6 +983,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       participants: entries,
       battery: battery,
       dataRoot: root,
+      calibrations: calibrations,
       // A protocol can run its activities one after another (lap_mode false).
       settings: SessionSettings(lapMode: battery?.lapMode ?? true),
       operator: operator.isEmpty ? null : operator,
@@ -1132,10 +1214,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     );
   }
 
-  /// The folder of one participant's files.
-  Widget _folderRow(ParticipantFieldGroup group, int index) {
-    final custom = group.folder != null;
-    final visit = _eventOptions[group.eventName] ?? group.eventName;
+  /// The parent folder and, below, the folder each participant gets.
+  Widget _foldersCard() {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
       decoration: BoxDecoration(
@@ -1144,38 +1224,103 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         border: Border.all(color: Colors.white12),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.folder_rounded, color: _accent, size: 20),
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(Icons.folder_rounded, color: _accent, size: 20),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '${group.id.isEmpty ? 'PARTICIPANTE #${index + 1}' : group.id} · $visit',
-                  style: const TextStyle(color: Colors.white60, fontSize: 12),
+                const Text(
+                  'CARPETA MADRE',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 2),
                 SelectableText(
-                  _folderOf(group),
+                  _dataRoot ?? '...',
+                  key: const Key('data_root'),
                   style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
-                if (custom)
-                  const Text(
-                    'Carpeta elegida a mano (no la automática de la carpeta de datos).',
-                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                const SizedBox(height: 8),
+                const Text(
+                  'Se crearán:',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                for (final group in _participants)
+                  SelectableText(
+                    _folderOf(group),
+                    style: const TextStyle(color: Colors.white54, fontSize: 11),
                   ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Marcas, Polar, vídeo, calibración y manifiesto para SAVES se guardan ahí mientras ocurre. '
+                  'Mejor un disco local (no una carpeta sincronizada).',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
               ],
             ),
           ),
-          if (custom)
-            TextButton(
-              onPressed: () => setState(() => group.folder = null),
-              child: const Text('Automática'),
+          TextButton(onPressed: _chooseDataRoot, child: const Text('Cambiar')),
+        ],
+      ),
+    );
+  }
+
+  /// Calibration of the offline sensors before the session.
+  Widget _calibrationCard() {
+    final calibrations = _calibrations;
+    final c = calibrations.isEmpty ? null : calibrations.first;
+    final missing = _participantsReady ? _uncalibrated(_entries(), calibrations).length : 0;
+    String two(int v) => v.toString().padLeft(2, '0');
+    String hhmm(DateTime t) => '${two(t.toLocal().hour)}:${two(t.toLocal().minute)}';
+    final devices = {for (final r in calibrations) ...r.devices}.length;
+    final status = c == null
+        ? 'Sin calibrar hoy. Hazla antes de que llegue el participante, con los sensores ya grabando.'
+        : '${calibrations.length == 1 ? 'Calibración' : '${calibrations.length} calibraciones'} de hoy '
+            '(la última ${hhmm(c.start)}–${hhmm(c.end)}), $devices '
+            '${devices == 1 ? 'dispositivo' : 'dispositivos'}. '
+            '${missing > 0 ? 'Faltan $missing ${missing == 1 ? 'sensor' : 'sensores'} de los participantes.' : 'Se copia a la carpeta de cada participante.'}';
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c == null || missing > 0 ? _warning.withAlpha(120) : Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            c == null || missing > 0 ? Icons.warning_amber_rounded : Icons.check_circle_rounded,
+            color: c == null || missing > 0 ? _warning : _accent,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'CALIBRACIÓN DE LOS SENSORES',
+                  style: TextStyle(color: Colors.white60, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  status,
+                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
-          TextButton(
-            onPressed: () => _chooseParticipantFolder(group),
-            child: const Text('Cambiar'),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            key: const Key('calibrate'),
+            onPressed: _starting ? null : _calibrate,
+            icon: const Icon(Icons.threed_rotation_rounded, size: 18),
+            label: const Text('Calibración'),
           ),
         ],
       ),
@@ -1342,51 +1487,11 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                         number: 3,
                         title: 'CARPETAS DE LA SESIÓN',
                         enabled: ready,
-                        hint: 'Escribe el ID de cada participante para elegir las carpetas.',
+                        hint: 'Escribe el ID de cada participante para ver sus carpetas.',
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            for (var i = 0; i < count; i++) ...[
-                              if (i > 0) const SizedBox(height: 10),
-                              _folderRow(_participants[i], i),
-                            ],
-                            const SizedBox(height: 10),
-                            Container(
-                              padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
-                              decoration: BoxDecoration(
-                                color: _card.withAlpha(160),
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                              child: Row(
-                                children: [
-                                  const Icon(Icons.folder_open_rounded, color: Colors.white38, size: 20),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        const Text(
-                                          'CARPETA DE DATOS (carpetas automáticas)',
-                                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        SelectableText(
-                                          _dataRoot ?? '...',
-                                          style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        const Text(
-                                          'Cada participante tiene su carpeta: marcas, Polar, vídeo y manifiesto para SAVES '
-                                          'se guardan ahí mientras ocurre. Mejor un disco local (no una carpeta sincronizada).',
-                                          style: TextStyle(color: Colors.white38, fontSize: 11),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  TextButton(onPressed: _chooseDataRoot, child: const Text('Cambiar')),
-                                ],
-                              ),
-                            ),
+                            _foldersCard(),
                           ],
                         ),
                       ),
@@ -1405,6 +1510,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                       ),
                       const SizedBox(height: 14),
                       _redcapCard(),
+                      const SizedBox(height: 14),
+                      _calibrationCard(),
 
                       const SizedBox(height: 28),
                       SizedBox(

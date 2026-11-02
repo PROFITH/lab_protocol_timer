@@ -6,18 +6,20 @@ The start screen goes in three numbered steps. Steps 2 and 3 are inactive (dimme
 
 1. **Participantes**: ID and visit of each participant (IDs cannot repeat).
 2. **Protocolo y sensores**: the **Configuración de la sesión** block below, then a card per participant with a serial-number field for every sensor of the protocol (cameras are the session's, not a participant's), and the first activity.
-3. **Carpetas de la sesión**: the folder of each participant, proposed as `<data folder>/<study>_<ID>/<visit>` (`R4H_001/D0`) and changeable one by one (**Cambiar**; **Automática** goes back to the proposed one); the data folder itself can be changed too.
+3. **Carpetas de la sesión**: only the parent folder is chosen (**Cambiar**); below it, in small type, the folders that will be created, one per participant: `<parent>/<study>_<ID>/<visit>` (for `…\test`, `…\test\R4H_1\D0` and `…\test\R4H_2\D0`).
+
+Under the REDCap card, **Calibración** opens the calibration of the offline sensors, done by the technician before the participants arrive or after they leave (see [`calibration.md`](calibration.md)). Starting a session asks «¿Seguro que quieres empezar la sesión sin haber calibrado los sensores?» when an offline sensor of a participant has no calibration of today, and lists them.
 
 The **Configuración de la sesión** block:
 
 1. **Protocolo de actividades**: a list with the base protocols bundled with the app (`assets/protocols/`: RUN4HEALTH, WEARGAP day 0, WEARGAP day 8), the protocols saved on this computer, and "Sin protocolo" (numbered activities that all last the Research Monitor duration, as before). When the visit of the first participant changes, a protocol of the same study meant for that visit replaces the current one (WEARGAP day 0 ↔ day 8).
 2. **Editar actividades y sensores** opens an editor with two tabs:
-   - *Actividades*: add, remove, duplicate and drag to reorder. Each activity has a name (read aloud), a Compendium code picked from the bundled 2024 Compendium (the MET comes with it), a duration, optional static phases that override the Research Monitor values, and notes for the evaluators. *Añadir caja de calibración* adds a calibration box segment.
-   - *Sensores*: type (Axivity AX3/AX6, ActiGraph GT3X, GENEActiv, Parmay Matrix, SENS motion, SensWear, Polar H10, Polar Verity Sense, camera, other), placement with optional dominance (dominant / non-dominant) and side (left / right), serial number, sampling rate, range and whether it stays on for the free-living days. The sensor ID (`ax3_wnd`, `ax3_wnd_r`, `ax6_shoe_l`, `gt3x_hip_r`...) is suggested from type, placement, dominance and side and is the key in the manifest and in file names.
+   - *Actividades*: add, remove, duplicate and drag to reorder. Each activity has a name (read aloud), a Compendium code picked from the bundled 2024 Compendium (the MET comes with it), a duration, optional static phases that override the Research Monitor values, and notes for the evaluators. Calibration is not an activity any more (a calibration segment of an older protocol can still be edited).
+   - *Sensores*: type (Axivity AX3/AX6, ActiGraph GT3X, GENEActiv, Parmay Matrix, SENS motion, SensWear, Polar H10, Polar Verity Sense, camera, other), placement with optional dominance (dominant / non-dominant) and side (left / right), and, for the offline ones, sampling rate and range, proposed from the device and its place (AX3 100 Hz ±8 g, AX6 and anything on a shoe 100 Hz ±16 g, Matrix 25 Hz ±8 g with gyroscope, real-time heart rate and temperature, SENS motion fixed at 12.5 Hz and not editable). Serial numbers are not typed here but for each participant; every device is downloaded after the visit and replaced by the free-living ones. The sensor ID (`ax3_wnd`, `ax3_wnd_r`, `ax6_shoe_l`, `gt3x_hip_r`...) is suggested from type, placement, dominance and side and is the key in the manifest and in file names.
    - *Guardar como protocolo* stores the edited protocol on this computer under a name; *Exportar JSON* writes it to a file for another computer. *Usar en esta sesión* applies the changes to this session only.
 3. **Importar JSON** loads a protocol file (format below).
 
-The sensor list of the protocol is the layout every participant wears; the serial numbers are typed per participant in step 2 (a serial set in the editor is only the default for a session with one participant). Starting a session warns if a sensor has no serial number, and remembers the setup of each participant with their own serials. When the same participant ID is typed again (closing visit), their serials come back, and for the first participant also the protocol: with the same protocol, exactly as used; with another protocol of the study, that protocol's sensor list with the serials of the sensors that have the same ID.
+The sensor list of the protocol is the layout every participant wears; the serial numbers are typed per participant in step 2. Starting a session warns if a sensor has no serial number, and remembers the setup of each participant with their own serials. When the same participant ID is typed again (closing visit), their serials come back, and for the first participant also the protocol: with the same protocol, exactly as used; with another protocol of the study, that protocol's sensor list with the serials of the sensors that have the same ID.
 
 ## Protocol file
 
@@ -39,16 +41,16 @@ See the base protocols in [`../assets/protocols/`](../assets/protocols/) and [`b
 | `activities[].wait_before` | no | `true`: the session waits (lap) before this activity until the evaluator starts it, also with `lap_mode` false. For a change of machine or place |
 | `activities[].faces` | no | Calibration: box faces announced during the main phase (default 6) |
 | `activities[].notes` | no | Notes for the evaluators, not read aloud |
-| `sensors[]` | no | `sensor_id`, `type`, `placement`, `dominance`, `side`, `serial`, `sampling_rate_hz`, `range_g`, `free_living` |
+| `sensors[]` | no | `sensor_id`, `type`, `placement`, `dominance`, `side`, `serial`, `sampling_rate_hz`, `range_g` (`free_living` of older files is still read) |
 | `offline_sensors[]` | no | Older format: `sensor_id`, `device_name`, `placement`, `timestamp_domain` |
 
 `type` is one of `ax3`, `ax6`, `actigraph_gt3x`, `geneactiv`, `matrix`, `sens`, `senswear`, `polar_h10`, `verity_sense`, `camera`, `other`; `placement` one of `wrist`, `upper_arm`, `chest`, `hip`, `thigh`, `ankle`, `shoe`, `room`, `other`; `dominance` `dominant` or `non_dominant` and `side` `left` or `right`, both optional for every placement (leave them out when they do not apply, e.g. the chest strap). Older files with `wrist_non_dominant`, `wrist_dominant`, `shoe_left` or `shoe_right` still load and are split into placement, dominance and side. The manifest writes `placement`, `dominance`, `side` and a readable `placement_label` ("Muñeca no dominante, izquierda").
 
 Activities beyond the end of the list fall back to numbered activities with the Research Monitor duration. The protocol is saved with the local backup, so a resumed session keeps it.
 
-## Calibration box segments
+## Calibration box segments (older protocols)
 
-A `calibration` segment runs through the same phases as an activity: the static start phase is the box lying still (2 min in the base protocols) with SINCRONIZAR for the three taps, the main phase announces "Gire la caja. Cara n." on each face, and the static end phase takes the closing taps. Calibration segments are not activities in REDCap: the first one fills `ws_calibration`, `ws_calib_start` and `ws_calib_end`, they get no `lab_activity` instance or `act_<n>` slot, and they count as time between activities in `protocol_feasibility`. They are in the manifest and in `activity_markers.csv` with `activity_kind: calibration`.
+Since 1.3.0 the calibration is done before the session ([`calibration.md`](calibration.md)) and the base protocols have no calibration segments; its times fill `ws_calibration`, `ws_calib_start` and `ws_calib_end`. A protocol file with a `calibration` segment still runs: such a segment runs through the same phases as an activity: the static start phase is the box lying still (2 min in the base protocols) with SINCRONIZAR for the three taps, the main phase announces "Gire la caja. Cara n." on each face, and the static end phase takes the closing taps. Calibration segments are not activities in REDCap: the first one fills `ws_calibration`, `ws_calib_start` and `ws_calib_end`, they get no `lab_activity` instance or `act_<n>` slot, and they count as time between activities in `protocol_feasibility`. They are in the manifest and in `activity_markers.csv` with `activity_kind: calibration`.
 
 ## Session output
 

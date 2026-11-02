@@ -339,9 +339,10 @@ class LabRedCapService {
   /// instance per attempt, so the 10-activity limit does not apply) plus the
   /// session link in `wearable_session`.
   ///
-  /// Calibration box segments are not activities: the first one fills
-  /// `ws_calibration`, `ws_calib_start` and `ws_calib_end`, and the rest stay
-  /// in the session manifest. Skipped attempts and the activities of the
+  /// The calibration done before the session ([calibration], from the
+  /// Calibración screen) fills `ws_calibration`, `ws_calib_start` and
+  /// `ws_calib_end`; without one, the first calibration box segment of an
+  /// older protocol does, and the rest stay in the session manifest. Skipped attempts and the activities of the
   /// protocol that were never reached ([notDone]) are sent as "No
   /// realizada" without times. Calculated fields (`la_duration_s`,
   /// `ws_bmi`...) are never sent: REDCap rejects the whole import.
@@ -355,11 +356,16 @@ class LabRedCapService {
     int? cameras,
     String? operator,
     String? notes,
+    ({DateTime start, DateTime end})? calibration,
   }) {
     final records = <Map<String, dynamic>>[];
-    final calibration = activities
+    final segment = activities
         .where((a) => a.isCalibration && !a.isSkipped)
         .firstOrNull;
+    final calib = calibration ??
+        (segment == null
+            ? null
+            : (start: segment.activityStartTime, end: segment.activityEndTime));
     final instances = labActivityInstances([...activities, ...notDone]);
     final labActivities = instances.keys.toList();
     final resting = activities
@@ -379,11 +385,10 @@ class LabRedCapService {
         if (cameras != null) 'ws_video_cameras': cameras.toString(),
         if (notes != null && notes.trim().isNotEmpty)
           'ws_incidents': notes.trim(),
-        if (calibration != null) ...{
+        if (calib != null) ...{
           'ws_calibration': '1',
-          'ws_calib_start':
-              formatRedcapDateTime(calibration.activityStartTime),
-          'ws_calib_end': formatRedcapDateTime(calibration.activityEndTime),
+          'ws_calib_start': formatRedcapDateTime(calib.start),
+          'ws_calib_end': formatRedcapDateTime(calib.end),
         },
         if (resting != null) ...{
           'ws_hr_rest': resting.restingHrBpm.toString(),
@@ -530,6 +535,7 @@ class LabRedCapService {
     String? notes,
     String? operator,
     Map<int, int> pendingRpeBefore = const {},
+    ({DateTime start, DateTime end})? calibration,
   }) {
     final effective = effectiveAttempts(logs)
         .values
@@ -563,6 +569,7 @@ class LabRedCapService {
       cameras: cameras,
       operator: operator,
       notes: notes,
+      calibration: calibration,
     );
 
     final mapped = battery == null

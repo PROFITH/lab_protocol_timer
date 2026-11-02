@@ -19,6 +19,12 @@ class SensorType {
   final double? defaultSamplingRateHz;
   final double? defaultRangeG;
 
+  /// The device records at its own fixed rate and range (SENS motion).
+  final bool fixedSettings;
+
+  /// What else to set up on the device, shown in the protocol editor.
+  final String? setupNote;
+
   const SensorType({
     required this.key,
     required this.label,
@@ -28,6 +34,8 @@ class SensorType {
     required this.redcapCode,
     this.defaultSamplingRateHz,
     this.defaultRangeG,
+    this.fixedSettings = false,
+    this.setupNote,
   });
 }
 
@@ -101,6 +109,13 @@ const sensorTypes = <SensorType>[
     timestampDomain: 'device_clock_utc',
     idPrefix: 'matrix',
     redcapCode: '3',
+    // 25 Hz and ±8 g give 7 days and 8 h of recording; more and it falls
+    // under 7 days (Jairo, 2026-11-02).
+    defaultSamplingRateHz: 25,
+    defaultRangeG: 8,
+    setupNote: 'Acelerómetro y giroscopio a 25 Hz y ±8 g, frecuencia cardiaca en tiempo real '
+        '(realTime) y temperatura activada: unos 7 días y 8 h de registro. '
+        'Con más frecuencia baja de 7 días.',
   ),
   SensorType(
     key: 'sens',
@@ -109,6 +124,11 @@ const sensorTypes = <SensorType>[
     timestampDomain: 'device_clock_utc',
     idPrefix: 'sens',
     redcapCode: '4',
+    defaultSamplingRateHz: 12.5,
+    defaultRangeG: 2,
+    fixedSettings: true,
+    setupNote: 'No se configura: graba a 12,5 Hz (rango ±2 g según el laboratorio; '
+        'comprobar en la ficha del fabricante). Se descarga después.',
   ),
   SensorType(
     key: 'senswear',
@@ -230,6 +250,23 @@ String placementShortOf(String? placement, String? dominance, String? side) {
   return parts.join('_');
 }
 
+/// Sampling rate and range proposed for a new sensor, from its type and
+/// where it goes: Axivity at 100 Hz (±8 g; ±16 g on the shoe, where impacts
+/// are larger and steps are lost at 50 Hz). Live sensors (Polar) and cameras
+/// get null: the app negotiates the Polar settings itself.
+({double? samplingRateHz, double? rangeG}) proposedSettings(
+    String type, String? placement) {
+  final t = sensorTypeByKey(type);
+  if (t.connection != 'offline') return (samplingRateHz: null, rangeG: null);
+  if (type == 'ax3' || type == 'ax6') {
+    return (
+      samplingRateHz: 100,
+      rangeG: placement == 'shoe' || type == 'ax6' ? 16 : 8,
+    );
+  }
+  return (samplingRateHz: t.defaultSamplingRateHz, rangeG: t.defaultRangeG);
+}
+
 SensorType sensorTypeByKey(String key) => sensorTypes.firstWhere(
       (t) => t.key == key,
       orElse: () => sensorTypes.last,
@@ -328,7 +365,8 @@ class SessionSensor {
   bool get hasSerial => serial != null && serial!.trim().isNotEmpty;
 
   /// Device and place, for lists read by the evaluator.
-  String get displayName => placementLabel == null ? deviceName : '$deviceName · $placementLabel';
+  String get displayName =>
+      placementLabel == null ? deviceName : '$deviceName · $placementLabel';
 
   /// ID made of the type prefix and the placement code (`ax3_wnd`), with a
   /// number when [taken] already has it.
@@ -495,7 +533,8 @@ class SensorsAfterSession {
   final List<SessionSensor> downloadAndRestart;
   final List<SessionSensor> startFreeLiving;
 
-  bool get isEmpty => download.isEmpty && downloadAndRestart.isEmpty && startFreeLiving.isEmpty;
+  bool get isEmpty =>
+      download.isEmpty && downloadAndRestart.isEmpty && startFreeLiving.isEmpty;
 
   /// Downloaded sensors without a serial number: SAVES finds their files by
   /// the sensor ID in the file name.
@@ -508,7 +547,8 @@ class SensorsAfterSession {
   /// from the session folder (`…/R4H_001/D0` → `R4H_001_D0_matrix_wnd`).
   static String? fileNameFor(SessionSensor sensor, String? sessionDir) {
     if (sessionDir == null) return null;
-    final parts = sessionDir.split(RegExp(r'[\\/]')).where((p) => p.isNotEmpty).toList();
+    final parts =
+        sessionDir.split(RegExp(r'[\\/]')).where((p) => p.isNotEmpty).toList();
     if (parts.length < 2) return null;
     return '${parts[parts.length - 2]}_${parts.last}_${sensor.sensorId}';
   }

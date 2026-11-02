@@ -42,20 +42,17 @@ void main() {
           }
         });
 
-        test('has durations, calibration boxes and unique sensors', () {
+        test('has durations, no calibration boxes and unique sensors', () {
           expect(protocol.title, isNotNull);
           expect(protocol.study, isNotNull);
           expect(protocol.moments, isNotEmpty);
           expect(protocol.activities.every((a) => a.durationSeconds != null),
               isTrue);
-          // Every built-in protocol starts with a calibration box. The
-          // RUN4HEALTH protocols use the 12-face dodecahedron (protocol v2,
-          // 2026-11-01); WEARGAP keeps the 6-orientation box.
-          expect(protocol.activities.first.isCalibration, isTrue);
-          for (final box in protocol.activities.where((a) => a.isCalibration)) {
-            expect(box.faces, protocol.study == 'RUN4HEALTH' ? 12 : 6);
-            expect(box.compendiumCode, isNull);
-          }
+          // The calibration is done before the session, from its own
+          // screen (2026-11-02): no protocol has calibration activities,
+          // and every sensor is downloaded and replaced for free living.
+          expect(protocol.activities.any((a) => a.isCalibration), isFalse);
+          expect(protocol.sensors.any((s) => s.freeLiving), isFalse);
           final ids = protocol.sensors.map((s) => s.sensorId).toList();
           expect(ids.toSet(), hasLength(ids.length));
           expect(protocol.sensors.any((s) => s.type == 'other'), isFalse);
@@ -80,8 +77,6 @@ void main() {
       // Activities run one after another; the session waits only where
       // the participant changes machine or place.
       expect(r4h.lapMode, isFalse);
-      expect(r4h.activities.first.isCalibration, isTrue);
-      expect(r4h.activities.last.isCalibration, isTrue);
       expect(lab.first.name, 'Tumbado en reposo');
       expect(lab.first.durationSeconds, 300);
       expect(lab.first.restingHr, isTrue);
@@ -107,7 +102,6 @@ void main() {
         'Descanso sentado',
         'Correr en cinta 8 km/h',
         'Recuperación sentado',
-        'Dodecaedro de calibración final',
       ]);
       // Treadmill stages follow on without preparation, so the lap pressed
       // when the treadmill starts is the start of the first stage.
@@ -125,10 +119,10 @@ void main() {
         expect(activityAnimations, contains(a.animation), reason: a.name);
       }
       expect(r4h.sensors.map((s) => s.type), isNot(contains('senswear')));
-      expect(
-        r4h.sensors.where((s) => s.freeLiving).map((s) => s.sensorId),
-        unorderedEquals(['matrix_wnd', 'ax3_thigh', 'ax6_shoe_l', 'ax6_shoe_r']),
-      );
+      // SENS motion on the thigh, with its own patches (2026-11-02).
+      final thigh = r4h.sensors.singleWhere((s) => s.placement == 'thigh');
+      expect(thigh.type, 'sens');
+      expect(thigh.connection, 'offline');
     });
 
     test('RUN4HEALTH (base) day 8 is short and leaves room for Cooper', () {
@@ -141,9 +135,7 @@ void main() {
       expect(lab.first.restingHr, isTrue);
       expect(lab.any((a) => a.name.contains('en cinta')), isFalse);
       expect(lab.last.name, startsWith('Juego por parejas'));
-      // The final box waits: Cooper runs outside, guided by healthy_tracker.
-      expect(d8.activities.last.isCalibration, isTrue);
-      expect(d8.activities.last.waitBefore, isTrue);
+      expect(d8.activities.any((a) => a.isCalibration), isFalse);
     });
 
     test('WEARGAP has a day 0 and a day 8 protocol', () {
