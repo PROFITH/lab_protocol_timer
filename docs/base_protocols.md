@@ -30,14 +30,14 @@ Source: lab battery agreed with Jairo on 2026-11-02 (TFG/TFM document). Particip
 | 13 | Sentado, golpeando con el talón | 07023 | | 2:00 |
 | 14 | De pie, golpeando con la puntera | 07041 | | 2:00 |
 | 15-22 | ⏸ Treadmill walking, 2:00 each: 3.0, 4.5, 6.0 km/h; 4.5 km/h at 5 % and 10 %; 4.5 km/h with a kettlebell in each hand; typing on the phone; holding the handrail | 17346… | | 16:00 |
-| 23-24 | ⏸ Bicicleta 60 rpm and 90 rpm, light load | 01214 / 01216 | | 4:00 |
+| 23-24 | ⏸ Bicicleta 60 rpm and 90 rpm, 1 W/kg body mass (easy; only pedal cycles are counted) | 01216 | | 4:00 |
 | 25 | ⏸ Descanso sentado | 07021 | | 3:00 |
 | 26-30 | ⏸ Treadmill running, 2:00 each: 8, 10, 12, 14 km/h; 10 km/h at 5 % | 12030… | | 10:00 |
 | 31 | ⏸ Recuperación sentado | 07021 | | 3:00 |
 | 32 | ⏸ Dodecaedro de calibración final | – | – | 8:00 |
 
 - The sit-to-stand fills `chairstand_*` from the first 30-s attempt only.
-- **[revisar]** Kettlebell weight and bike watts are marked `[PENDIENTE]` in the activity notes.
+- Kettlebells: 4 kg in each hand (3 kg if there are none of 4), like a shopping bag. 01216 (60 W) is the closest code to 1 W/kg for most runners.
 - Sensors as in RUN4HEALTH (WEARGAP): Matrix (non-dominant wrist, free living), AX3 on both wrists, AX3 thigh and AX6 on both shoes (free living), Polar H10, Verity Sense (arm), room camera. No SENS and no SensWear.
 
 ## RUN4HEALTH (base), day 8 (`run4health_day8_base`)

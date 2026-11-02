@@ -239,7 +239,7 @@
       "post_seconds": 0,
       "animation": "treadmill",
       "instructions": "Camina con una kettlebell en cada mano, como si llevaras bolsas.",
-      "notes": "[PENDIENTE: peso de las kettlebells]. Dárselas al empezar el tramo y recogerlas al acabar."
+      "notes": "Una kettlebell de 4 kg en cada mano (o 3 kg si no hay de 4), como una bolsa de la compra; solo interesa el movimiento de llevar un objeto. Dárselas al empezar el tramo y recogerlas al acabar."
     },
     {
       "name": "Caminar en cinta 4,5 km/h escribiendo en el móvil",
@@ -264,20 +264,21 @@
     },
     {
       "name": "Bicicleta 60 rpm, carga ligera",
-      "compendium_code": "01214",
-      "met": 4.0,
+      "compendium_code": "01216",
+      "met": 5.0,
       "duration_seconds": 120,
       "prep_seconds": 30,
       "post_seconds": 0,
       "animation": "cycle",
       "instructions": "Pedalea a 60 revoluciones por minuto.",
       "wait_before": true,
-      "notes": "[PENDIENTE: carga en vatios]. Fase quieta sentado en la bici, sin pedalear. Los dos tramos van seguidos."
+      "notes": "Carga: 1 W/kg de peso corporal, redondeada a 5 W (p. ej., 65 kg = 65 W); esfuerzo fácil, solo se cuentan las pedaladas. Fase quieta sentado en la bici, sin pedalear. Los dos tramos van seguidos."
     },
     {
       "name": "Bicicleta 90 rpm, carga ligera",
       "compendium_code": "01216",
       "met": 5.0,
+      "notes": "Misma carga que a 60 rpm (1 W/kg de peso corporal).",
       "duration_seconds": 120,
       "prep_seconds": 0,
       "post_seconds": 30,
