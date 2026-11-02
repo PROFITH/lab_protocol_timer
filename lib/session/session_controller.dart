@@ -76,6 +76,18 @@ class SessionSettings {
   }
 }
 
+/// The calibration of one device of a participant: [set] is `lab` (worn in
+/// the laboratory, [SessionSensor.serial]) or `free_living` (taken home,
+/// [SessionSensor.freeLivingSerial]).
+class SensorCalibration {
+  const SensorCalibration(this.sensor, this.serial, this.set, this.calibration);
+
+  final SessionSensor sensor;
+  final String serial;
+  final String set;
+  final CalibrationRecord calibration;
+}
+
 /// Sounds of the participant screen.
 enum SessionSound {
   /// One beep of the 3-2-1 before a clap or a jump.
@@ -440,17 +452,23 @@ class SessionController extends ChangeNotifier {
     );
   }
 
-  /// Calibration of each offline sensor of [participant] that has one.
-  Map<SessionSensor, CalibrationRecord> calibrationsOf(ParticipantEntry participant) => {
+  /// Calibration of each offline device of [participant] that has one:
+  /// the one worn in the laboratory and the one for the free-living days.
+  List<SensorCalibration> calibrationsOf(ParticipantEntry participant) => [
         for (final s in participant.sensors)
-          if (s.connection == 'offline')
-            if (CalibrationStore.forDevice(calibrations, s.type, s.serial) case final c?) s: c,
-      };
+          if (s.connection == 'offline') ...[
+            if (CalibrationStore.forDevice(calibrations, s.type, s.serial) case final c?)
+              SensorCalibration(s, s.serial!.trim(), 'lab', c),
+            if (s.hasFreeLivingSerial)
+              if (CalibrationStore.forDevice(calibrations, s.type, s.freeLivingSerial) case final c?)
+                SensorCalibration(s, s.freeLivingSerial!.trim(), 'free_living', c),
+          ],
+      ];
 
   /// Start of the first and end of the last calibration used.
   ({DateTime start, DateTime end})? get _calibrationSpan {
     final used = {
-      for (final p in participants) ...calibrationsOf(p).values,
+      for (final p in participants) ...calibrationsOf(p).map((c) => c.calibration),
     };
     if (used.isEmpty) return null;
     return (
@@ -805,7 +823,7 @@ class SessionController extends ChangeNotifier {
     for (final p in participants) {
       final dir = s.directoryOf(p.participantId);
       final mine = calibrationsOf(p);
-      for (final c in mine.values.toSet()) {
+      for (final c in mine.map((m) => m.calibration).toSet()) {
         try {
           await CalibrationStore.copyInto(c, [dir]);
           used.add(c);
@@ -814,10 +832,10 @@ class SessionController extends ChangeNotifier {
           s.logEvent('calibration_copy_failed', detail: '${p.participantId}: $e');
         }
       }
-      for (final MapEntry(key: sensor, value: c) in mine.entries) {
+      for (final m in mine) {
         s.logEvent(
           'calibration',
-          detail: '${p.participantId} ${sensor.sensorId} ${sensor.serial?.trim()}: ${c.fileName}',
+          detail: '${p.participantId} ${m.sensor.sensorId} ${m.set} ${m.serial}: ${m.calibration.fileName}',
         );
       }
     }
@@ -1186,15 +1204,16 @@ class SessionController extends ChangeNotifier {
       // face are in the CSV, copied next to this manifest.
       if (participant != null && calibrationsOf(participant).isNotEmpty)
         'calibrations': [
-          for (final MapEntry(key: sensor, value: c) in calibrationsOf(participant).entries)
+          for (final m in calibrationsOf(participant))
             {
-              'sensor_id': sensor.sensorId,
-              'device_type': sensor.type,
-              'serial': sensor.serial?.trim(),
-              'file': c.fileName,
-              'start_utc': c.start.toUtc().toIso8601String(),
-              'end_utc': c.end.toUtc().toIso8601String(),
-              'faces': c.faces,
+              'sensor_id': m.sensor.sensorId,
+              'device_type': m.sensor.type,
+              'serial': m.serial,
+              'set': m.set,
+              'file': m.calibration.fileName,
+              'start_utc': m.calibration.start.toUtc().toIso8601String(),
+              'end_utc': m.calibration.end.toUtc().toIso8601String(),
+              'faces': m.calibration.faces,
             },
         ],
       if (notes != null && notes!.isNotEmpty) 'notes': notes,

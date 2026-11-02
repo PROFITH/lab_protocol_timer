@@ -49,9 +49,21 @@ class ParticipantFieldGroup {
   TextEditingController serialOf(String sensorId, {String initial = ''}) =>
       serials.putIfAbsent(sensorId, () => TextEditingController(text: initial));
 
+  /// Serial of the device taken home for the free-living days, by sensor ID
+  /// (offline sensors only).
+  final Map<String, TextEditingController> freeLivingSerials = {};
+
+  TextEditingController freeLivingSerialOf(String sensorId, {String initial = ''}) =>
+      freeLivingSerials.putIfAbsent(sensorId, () => TextEditingController(text: initial));
+
+  String? freeLivingSerialFor(String sensorId) {
+    final typed = freeLivingSerials[sensorId]?.text.trim() ?? '';
+    return typed.isEmpty ? null : typed;
+  }
+
   void dispose() {
     controller.dispose();
-    for (final c in serials.values) {
+    for (final c in [...serials.values, ...freeLivingSerials.values]) {
       c.dispose();
     }
   }
@@ -285,8 +297,10 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     ];
     final typed = <CalibrationDevice>{
       for (final group in _participants)
-        for (final s in offline)
+        for (final s in offline) ...[
           if (_serialFor(group, s) case final serial?) CalibrationDevice(s.type, serial),
+          if (group.freeLivingSerialFor(s.sensorId) case final serial?) CalibrationDevice(s.type, serial),
+        ],
     };
     if (typed.isNotEmpty) return typed.toList();
     return [for (final s in offline) CalibrationDevice(s.type, '')];
@@ -297,10 +311,13 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   List<String> _uncalibrated(List<ParticipantEntry> entries, List<CalibrationRecord> records) => [
         for (final p in entries)
           for (final s in p.sensors)
-            if (s.connection == 'offline' &&
-                s.type != 'other' &&
-                CalibrationStore.forDevice(records, s.type, s.serial) == null)
-              '${p.participantId}: ${s.displayName}${s.hasSerial ? ' (${s.serial!.trim()})' : ' (sin número de serie)'}',
+            if (s.connection == 'offline' && s.type != 'other') ...[
+              if (CalibrationStore.forDevice(records, s.type, s.serial) == null)
+                '${p.participantId}: ${s.displayName}${s.hasSerial ? ' (${s.serial!.trim()})' : ' (sin número de serie)'}',
+              if (s.hasFreeLivingSerial &&
+                  CalibrationStore.forDevice(records, s.type, s.freeLivingSerial) == null)
+                '${p.participantId}: ${s.displayName}, vida libre (${s.freeLivingSerial!.trim()})',
+            ],
       ];
 
   Future<void> _calibrate() async {
@@ -396,6 +413,20 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     return group.serialOf(sensor.sensorId, initial: initial);
   }
 
+  /// The free-living serial field of [sensor] for [group], starting with
+  /// the participant's remembered one.
+  TextEditingController _freeLivingSerialController(ParticipantFieldGroup group, SessionSensor sensor) {
+    final existing = group.freeLivingSerials[sensor.sensorId];
+    if (existing != null) return existing;
+    String initial = '';
+    for (final old in _rememberedSetups[group.id]?.battery.sensors ?? const <SessionSensor>[]) {
+      if (old.sensorId == sensor.sensorId && old.type == sensor.type && old.hasFreeLivingSerial) {
+        initial = old.freeLivingSerial!.trim();
+      }
+    }
+    return group.freeLivingSerialOf(sensor.sensorId, initial: initial);
+  }
+
   String? _rememberedSerial(String participantId, SessionSensor sensor) {
     final remembered = _rememberedSetups[participantId];
     if (remembered == null) return null;
@@ -431,6 +462,8 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       for (final old in remembered) {
         if (old.sensorId == sensor.sensorId && old.type == sensor.type) {
           group.serialOf(sensor.sensorId).text = old.hasSerial ? old.serial!.trim() : '';
+          group.freeLivingSerialOf(sensor.sensorId).text =
+              old.hasFreeLivingSerial ? old.freeLivingSerial!.trim() : '';
         }
       }
     }
@@ -872,10 +905,14 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
           redcapEventName: group.eventName,
           sensors: [
             for (final sensor in layout)
-              if (_serialFor(group, sensor) case final serial?)
-                sensor.copyWith(serial: serial)
-              else
-                sensor.copyWith(clearSerial: true),
+              (switch (_serialFor(group, sensor)) {
+                final serial? => sensor.copyWith(serial: serial),
+                null => sensor.copyWith(clearSerial: true),
+              })
+                  .copyWith(
+                freeLivingSerial: group.freeLivingSerialFor(sensor.sensorId),
+                clearFreeLivingSerial: group.freeLivingSerialFor(sensor.sensorId) == null,
+              ),
           ],
         ),
     ];
@@ -1196,15 +1233,36 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                 for (final sensor in layout)
                   SizedBox(
                     width: 282,
-                    child: TextFormField(
-                      key: ValueKey('serial-${identityHashCode(group)}-${sensor.sensorId}'),
-                      controller: _serialController(group, sensor),
-                      onChanged: (_) => setState(() {}),
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
-                      decoration: _decoration(
-                        label: sensor.displayName,
-                        hint: 'Número de serie',
-                      ).copyWith(isDense: true),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          key: ValueKey('serial-${identityHashCode(group)}-${sensor.sensorId}'),
+                          controller: _serialController(group, sensor),
+                          onChanged: (_) => setState(() {}),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+                          decoration: _decoration(
+                            label: sensor.displayName,
+                            hint: 'Número de serie',
+                          ).copyWith(isDense: true),
+                        ),
+                        // The device of the same kind taken home for the
+                        // free-living days, so its calibration reaches this
+                        // participant too.
+                        if (sensor.connection == 'offline' && sensor.type != 'other') ...[
+                          const SizedBox(height: 4),
+                          TextFormField(
+                            key: ValueKey('fl-serial-${identityHashCode(group)}-${sensor.sensorId}'),
+                            controller: _freeLivingSerialController(group, sensor),
+                            onChanged: (_) => setState(() {}),
+                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            decoration: _decoration(
+                              label: 'Vida libre (opcional)',
+                              hint: 'Número de serie del que se lleva',
+                            ).copyWith(isDense: true),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
               ],

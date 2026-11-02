@@ -309,8 +309,15 @@ class SessionSensor {
   final double? samplingRateHz;
   final double? rangeG;
 
-  /// Keeps recording after the visit (free-living days).
+  /// Keeps recording after the visit (free-living days). Older protocols;
+  /// since 1.3.0 every device is downloaded and replaced.
   final bool freeLiving;
+
+  /// Serial of the device of the same kind and place that the participant
+  /// takes home for the free-living days (it replaces this one).
+  final String? freeLivingSerial;
+
+  bool get hasFreeLivingSerial => freeLivingSerial?.trim().isNotEmpty ?? false;
 
   /// Overrides the device label of the type (needed for `other`).
   final String? deviceNameOverride;
@@ -328,6 +335,7 @@ class SessionSensor {
     this.samplingRateHz,
     this.rangeG,
     this.freeLiving = false,
+    this.freeLivingSerial,
     this.deviceNameOverride,
     this.timestampDomainOverride,
   });
@@ -399,6 +407,8 @@ class SessionSensor {
     double? samplingRateHz,
     double? rangeG,
     bool? freeLiving,
+    String? freeLivingSerial,
+    bool clearFreeLivingSerial = false,
     bool clearSerial = false,
     bool clearSamplingRate = false,
     bool clearRange = false,
@@ -414,6 +424,7 @@ class SessionSensor {
             clearSamplingRate ? null : samplingRateHz ?? this.samplingRateHz,
         rangeG: clearRange ? null : rangeG ?? this.rangeG,
         freeLiving: freeLiving ?? this.freeLiving,
+        freeLivingSerial: clearFreeLivingSerial ? null : freeLivingSerial ?? this.freeLivingSerial,
         deviceNameOverride: deviceNameOverride,
         timestampDomainOverride: timestampDomainOverride,
       );
@@ -428,6 +439,7 @@ class SessionSensor {
         if (samplingRateHz != null) 'sampling_rate_hz': samplingRateHz,
         if (rangeG != null) 'range_g': rangeG,
         if (freeLiving) 'free_living': true,
+        if (hasFreeLivingSerial) 'free_living_serial': freeLivingSerial!.trim(),
         if (deviceNameOverride != null) 'device_name': deviceNameOverride,
         if (timestampDomainOverride != null)
           'timestamp_domain': timestampDomainOverride,
@@ -499,6 +511,7 @@ class SessionSensor {
       samplingRateHz: number('sampling_rate_hz'),
       rangeG: number('range_g'),
       freeLiving: json['free_living'] == true,
+      freeLivingSerial: json['free_living_serial']?.toString(),
       // Older files name the device and its clock themselves.
       deviceNameOverride:
           type == 'other' ? (deviceName ?? sensorId.trim()) : null,
