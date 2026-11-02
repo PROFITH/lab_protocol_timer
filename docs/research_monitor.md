@@ -75,7 +75,13 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
 
 Per live device, with its sensor ID (SAVES matches files by it), one CSV
 per signal, all with `timestamp_iso` (host clock, UTC), `participant_id`,
-`activity_index` and `phase_name` first; files without rows are not written:
+`activity_index` and `phase_name` first; files without rows are not written.
+In a session with several participants each device belongs to one of them
+(the monitor lists it as `polar_h10@002`): its files go to that
+participant's folder, named by the plain sensor ID, and `participant_id`
+carries that participant. The videos and `video_sync_session_<ts>.csv` are
+written to the first participant's folder and copied to the others when the
+session ends.
 
 | File | Columns | Device |
 |---|---|---|

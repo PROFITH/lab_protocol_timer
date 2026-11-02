@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-11-02
+
+### Changed
+
+- **Participants first:** the start screen goes in three steps. 1 Participantes (ID and visit); 2 Protocolo y sensores, with a serial-number field for every sensor of the protocol **per participant** (cameras are the session's); 3 Carpetas de la sesión, one folder per participant, proposed as `<data folder>/<study>_<ID>/<visit>` and changeable one by one. Steps 2 and 3 are inactive until every participant has an ID, and IDs cannot repeat. Serials typed in the protocol editor are only the default for a session with one participant.
+- **One folder per participant:** a session with several participants writes a folder for each one (before, one folder `R4H_001+002/D0` for all). Every folder holds the session state, event log, activity markers and sync windows; each manifest lists its participant (the others under `session_participants`) and that participant's sensors and serials, keyed by sensor ID; the Polar files of a participant's live sensors go to their folder, with `participant_id` set to that participant (before, `001;002`); the videos and the video log are copied to every folder. SAVES opens any folder on its own, and each one is uploaded separately. The Research Monitor tells the devices of different participants apart as `polar_h10@002`. Cancelling renames every folder; a session is resumed from any of its folders and listed once.
+- **Remembered setups** keep the sensors and serials of each participant separately.
+
+## [1.1.0] - 2026-11-02
 
 ### Added
 

@@ -5,16 +5,61 @@ import 'package:http/http.dart' as http;
 import '../models/activity_battery.dart';
 import 'redcap_connection.dart';
 
+/// One participant of a session: ID, visit, the sensors they wear (with
+/// their serials) and the folder their files go to.
 class ParticipantEntry {
   final String participantId;
   final String redcapEventName;
 
+  /// Sensors this participant wears, with their serial numbers. Empty means
+  /// the sensor list of the protocol, without serials of their own.
+  final List<SessionSensor> sensors;
+
+  /// Folder of this participant's files, chosen in the session setup; null
+  /// means the automatic one under the data folder
+  /// (`<root>/<study>_<participant>/<visit>`).
+  final String? folder;
+
   ParticipantEntry({
     required this.participantId,
     required this.redcapEventName,
+    this.sensors = const [],
+    this.folder,
   });
 
+  /// The sensors of this participant: their own, or [layout] (the
+  /// protocol's) when none were assigned. Cameras are the session's, not
+  /// the participant's, so they are left out.
+  List<SessionSensor> sensorsOr(List<SessionSensor> layout) => [
+        for (final sensor in sensors.isEmpty ? layout : sensors)
+          if (sensor.connection != 'video') sensor,
+      ];
+
+  ParticipantEntry copyWith({
+    String? participantId,
+    String? redcapEventName,
+    List<SessionSensor>? sensors,
+    String? folder,
+    bool clearFolder = false,
+  }) =>
+      ParticipantEntry(
+        participantId: participantId ?? this.participantId,
+        redcapEventName: redcapEventName ?? this.redcapEventName,
+        sensors: sensors ?? this.sensors,
+        folder: clearFolder ? null : folder ?? this.folder,
+      );
+
+  /// Saved with the session state (and read back to resume it).
   Map<String, dynamic> toJson() => {
+        'participant_id': participantId,
+        'redcap_event_name': redcapEventName,
+        if (sensors.isNotEmpty)
+          'sensors': sensors.map((s) => s.toJson()).toList(),
+        if (folder != null) 'folder': folder,
+      };
+
+  /// What the session manifest says about the participant.
+  Map<String, dynamic> manifestJson() => {
         'participant_id': participantId,
         'redcap_event_name': redcapEventName,
       };
@@ -23,6 +68,11 @@ class ParticipantEntry {
       ParticipantEntry(
         participantId: json['participant_id'] as String,
         redcapEventName: json['redcap_event_name'] as String,
+        sensors: [
+          for (final s in json['sensors'] as List? ?? const [])
+            SessionSensor.fromJson(Map<String, dynamic>.from(s as Map)),
+        ],
+        folder: json['folder']?.toString(),
       );
 }
 

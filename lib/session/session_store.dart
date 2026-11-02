@@ -7,19 +7,33 @@ import 'package:flutter/foundation.dart';
 import '../services/lab_redcap_service.dart';
 import 'csv_stream_writer.dart';
 
-/// Folder of one laboratory session and the files written into it while it
-/// runs.
+/// Folders of one laboratory session and the files written into them while
+/// it runs.
 ///
-/// The folder is created when the session starts, as
-/// `<root>/<study code>_<participant>/<visit>` (`R4H_001/D0`), the layout
-/// of the RUN4HEALTH guide that SAVES opens directly. Everything is written
-/// as it happens: the session state (to resume after a crash), a log of
-/// events, the manifest, the sync windows and the activity markers; the
-/// Research Monitor streams the Polar files and moves the video there.
+/// Each participant has a folder, created when the session starts: by
+/// default `<root>/<study code>_<participant>/<visit>` (`R4H_001/D0`), the
+/// layout of the RUN4HEALTH guide that SAVES opens directly, or the folder
+/// chosen for them in the session setup. Everything is written as it
+/// happens: the session state (to resume after a crash), a log of events,
+/// the manifest, the sync windows and the activity markers; the Research
+/// Monitor streams each participant's Polar files into their folder and
+/// copies the video to every folder.
+///
+/// What the session shares (state, events, markers, sync windows) is
+/// written to every folder, so each one stands on its own and SAVES can
+/// take any of them; the manifest of each folder lists its participant's
+/// sensors. The first participant's folder is the [directory] of the
+/// session (the one the start screen remembers and the monitor is told).
 class SessionStore {
-  SessionStore._(this.directory, this.fileStamp);
+  SessionStore._(this.directory, this.fileStamp, Map<String, Directory> participantDirectories)
+      : participantDirectories = Map.unmodifiable(participantDirectories);
 
+  /// Folder of the first participant (the session's main folder).
   final Directory directory;
+
+  /// Folder of each participant, by participant ID. Empty for a session
+  /// with one folder for everybody (older sessions).
+  final Map<String, Directory> participantDirectories;
 
   /// Part of the Polar and video file names shared by the whole session
   /// (also after resuming it).
@@ -32,7 +46,7 @@ class SessionStore {
   /// the activity and sync times).
   DateTime Function() now = DateTime.now;
 
-  CsvStreamWriter? _events;
+  final List<CsvStreamWriter> _events = [];
   Future<void> _queue = Future.value();
 
   static const stateFile = 'session_state.json';
@@ -44,6 +58,20 @@ class SessionStore {
   String get path => directory.path;
 
   String pathOf(String name) => '${directory.path}${Platform.pathSeparator}$name';
+
+  /// Every folder of the session, the main one first, without repeats.
+  List<Directory> get directories {
+    final paths = <String>{directory.path};
+    final all = [directory];
+    for (final dir in participantDirectories.values) {
+      if (paths.add(dir.path)) all.add(dir);
+    }
+    return all;
+  }
+
+  /// The folder of a participant (the main one when they have none).
+  Directory directoryOf(String participantId) =>
+      participantDirectories[participantId] ?? directory;
 
   // ===========================================================================
   // Folder names
@@ -84,6 +112,14 @@ class SessionStore {
     return code.isEmpty ? ids : '${code}_$ids';
   }
 
+  /// The automatic folder of a participant's visit, as shown in the setup:
+  /// `<root>/R4H_001/D0`.
+  static String defaultFolder(String root, String? study, ParticipantEntry participant) {
+    final sep = Platform.pathSeparator;
+    return '$root$sep${participantFolder(study, [participant])}$sep'
+        '${visitCode(participant.redcapEventName)}';
+  }
+
   static String _two(int v) => v.toString().padLeft(2, '0');
 
   /// File-name stamp of a local time: `2026-10-21T09-30-05`.
@@ -104,17 +140,47 @@ class SessionStore {
     final sep = Platform.pathSeparator;
     final base = '$root$sep${participantFolder(study, participants)}';
     final visit = visitCode(participants.isEmpty ? '' : participants.first.redcapEventName);
-    final plain = Directory('$base$sep$visit');
+    return freeFolder('$base$sep$visit', now: now);
+  }
+
+  /// [path] unless it already holds a session; then a sibling with the
+  /// date and time (`D0_20261021-0905`, `D0_20261021-0905_2`...).
+  static Future<Directory> freeFolder(String path, {DateTime? now}) async {
+    final plain = Directory(path);
     if (!await _holdsSession(plain)) return plain;
     final t = (now ?? DateTime.now()).toLocal();
     final suffix = '${t.year}${_two(t.month)}${_two(t.day)}-${_two(t.hour)}${_two(t.minute)}';
-    var candidate = Directory('$base$sep${visit}_$suffix');
+    var candidate = Directory('${path}_$suffix');
     var n = 2;
     while (await _holdsSession(candidate)) {
-      candidate = Directory('$base$sep${visit}_${suffix}_$n');
+      candidate = Directory('${path}_${suffix}_$n');
       n++;
     }
     return candidate;
+  }
+
+  /// The folder of each participant of a new session: the one chosen for
+  /// them, or the automatic one under [root]. Two participants never share
+  /// a folder: a repeated one gets the participant ID appended.
+  static Future<Map<String, Directory>> chooseFolders({
+    required String root,
+    required String? study,
+    required List<ParticipantEntry> participants,
+    DateTime? now,
+  }) async {
+    final chosen = <String, Directory>{};
+    final taken = <String>{};
+    for (final participant in participants) {
+      final custom = participant.folder?.trim();
+      var path = custom == null || custom.isEmpty
+          ? defaultFolder(root, study, participant)
+          : custom;
+      if (taken.contains(path)) path = '${path}_${safeName(participant.participantId)}';
+      final dir = await freeFolder(path, now: now);
+      taken.add(path);
+      chosen[participant.participantId] = dir;
+    }
+    return chosen;
   }
 
   static Future<bool> _holdsSession(Directory dir) async {
@@ -128,22 +194,36 @@ class SessionStore {
   // Opening
   // ===========================================================================
 
-  static Future<SessionStore> create(Directory directory, {DateTime? now}) async {
-    await directory.create(recursive: true);
-    final store = SessionStore._(directory, stampOf(now ?? DateTime.now()));
+  /// Creates the folders of a new session: [directory] (the main one) and,
+  /// when given, the folder of each participant.
+  static Future<SessionStore> create(
+    Directory directory, {
+    Map<String, Directory> participantDirectories = const {},
+    DateTime? now,
+  }) async {
+    final store = SessionStore._(directory, stampOf(now ?? DateTime.now()), participantDirectories);
+    for (final dir in store.directories) {
+      await dir.create(recursive: true);
+    }
     store._openEvents();
     return store;
   }
 
-  /// Opens the folder of a session to resume it.
-  static SessionStore reopen(Directory directory, String fileStamp) {
-    final store = SessionStore._(directory, fileStamp);
+  /// Opens the folders of a session to resume it.
+  static SessionStore reopen(
+    Directory directory,
+    String fileStamp, {
+    Map<String, Directory> participantDirectories = const {},
+  }) {
+    final store = SessionStore._(directory, fileStamp, participantDirectories);
     store._openEvents();
     return store;
   }
 
   void _openEvents() {
-    _events = CsvStreamWriter(pathOf(eventsFile), eventsHeader);
+    for (final dir in directories) {
+      _events.add(CsvStreamWriter('${dir.path}${Platform.pathSeparator}$eventsFile', eventsHeader));
+    }
   }
 
   /// Reads the saved state of a session folder, or null.
@@ -212,11 +292,22 @@ class SessionStore {
     return done.future;
   }
 
-  Future<void> writeText(String name, String content) =>
-      _enqueue(name, () => writeAtomic(pathOf(name), content));
+  /// Writes [name] with [content] into every folder of the session.
+  Future<void> writeText(String name, String content) => _enqueue(name, () async {
+        for (final dir in directories) {
+          await writeAtomic('${dir.path}${Platform.pathSeparator}$name', content);
+        }
+      });
 
   Future<void> writeJson(String name, Object json) =>
       writeText(name, const JsonEncoder.withIndent('  ').convert(json));
+
+  /// Writes [name] into one folder only (a participant's manifest).
+  Future<void> writeTextTo(Directory dir, String name, String content) =>
+      _enqueue(name, () => writeAtomic('${dir.path}${Platform.pathSeparator}$name', content));
+
+  Future<void> writeJsonTo(Directory dir, String name, Object json) =>
+      writeTextTo(dir, name, const JsonEncoder.withIndent('  ').convert(json));
 
   /// Waits for the writes queued so far.
   Future<void> drain() => _queue;
@@ -232,7 +323,7 @@ class SessionStore {
     final t = (time ?? now()).toUtc();
     final local = t.toLocal();
     final localText = '${_two(local.hour)}:${_two(local.minute)}:${_two(local.second)}';
-    _events?.add([
+    final row = [
       t.toIso8601String(),
       localText,
       csvField(event),
@@ -240,17 +331,23 @@ class SessionStore {
       attempt ?? '',
       phase ?? '',
       csvField(detail),
-    ].join(','));
+    ].join(',');
+    for (final writer in _events) {
+      writer.add(row);
+    }
   }
 
-  Future<void> flushEvents() async => _events?.flush();
+  Future<void> flushEvents() async {
+    await Future.wait([for (final writer in _events) writer.flush()]);
+  }
 
   bool _closed = false;
 
   Future<void> close() async {
     _closed = true;
-    await _events?.close();
-    _events = null;
+    final writers = List.of(_events);
+    _events.clear();
+    await Future.wait([for (final writer in writers) writer.close()]);
     await drain();
   }
 }

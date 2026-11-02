@@ -1551,6 +1551,11 @@ Future<void> showSessionSummaryDialog(
       builder: (context, _) {
         final summary = session.summary ?? const {};
         final dir = summary['directory']?.toString() ?? session.sessionDir;
+        // A session with several participants: their other folders.
+        final otherDirs = [
+          for (final d in summary['directories'] as List? ?? session.directories)
+            if (d.toString() != dir) d.toString(),
+        ];
         final redcapError = summary['redcap_error']?.toString();
         final redcapSkipped = summary['redcap_skipped'] == true;
         final storeError = summary['store_error']?.toString();
@@ -1651,6 +1656,13 @@ Future<void> showSessionSummaryDialog(
                 if (dir != null) ...[
                   const SizedBox(height: 8),
                   SelectableText(dir, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                  for (final other in otherDirs)
+                    SelectableText(other, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                  if (otherDirs.isNotEmpty)
+                    const Text(
+                      'Una carpeta por participante: cada una lleva su manifiesto y sus archivos Polar; el vídeo está en todas.',
+                      style: TextStyle(fontSize: 11, color: Colors.white38),
+                    ),
                 ],
               ],
             ),

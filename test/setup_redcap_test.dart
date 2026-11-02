@@ -59,6 +59,8 @@ void main() {
     expect(find.text('Visita Inicial (Día 0)'), findsNothing);
 
     await tester.enterText(find.byType(TextFormField).first, 'P01');
+    await tester.pump();
+    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
     await tester.tap(find.textContaining('COMENZAR SESIÓN'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar').last);
@@ -77,6 +79,7 @@ void main() {
     expect(find.text('Visita Inicial (Día 0)'), findsOneWidget);
     expect(find.text('Baseline'), findsNothing);
 
+    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
     await tester.tap(find.textContaining('COMENZAR SESIÓN'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar').last);

@@ -923,10 +923,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
     for (final entry in _liveDevices.entries) {
       _polarFiles.putIfAbsent(entry.key, () {
+        final configuration = entry.value.configuration;
+        // Each participant's Polar files go to their folder, named by the
+        // sensor ID of the setup (the key of that folder's manifest).
         final files = PolarSessionFiles(
-          directory: dir,
+          directory: _session.directoryOf(configuration.participantId) ?? dir,
           stamp: stamp,
-          deviceId: entry.key,
+          deviceId: configuration.sensorId,
           service: entry.value.service,
         );
         files.start();
@@ -1007,6 +1010,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       camera.service.sessionFileStamp = null;
       camera.service.onSegmentSaved = null;
     }
+    // The cameras are the session's: every participant's folder gets the
+    // videos and the video log, so each folder stands on its own.
+    final copies = await _copyToParticipantFolders([...videoFiles, if (log != null) log.path]);
+    videoFiles.addAll(copies.where((c) => !c.toLowerCase().endsWith('.csv')));
+    files.addAll(copies.where((c) => c.toLowerCase().endsWith('.csv')));
     if (mounted) setState(() {});
     return {
       'video_files': videoFiles,
@@ -1015,10 +1023,38 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     };
   }
 
+  /// Copies files of the session folder into the folders of the other
+  /// participants (a session with several participants). Returns the
+  /// copies; a copy that fails is logged and skipped.
+  Future<List<String>> _copyToParticipantFolders(List<String> paths) async {
+    final main = _session.sessionDir;
+    final copies = <String>[];
+    if (main == null) return copies;
+    final sep = Platform.pathSeparator;
+    for (final dir in _session.directories) {
+      if (dir == main) continue;
+      for (final path in paths) {
+        final name = path.split(RegExp(r'[\\/]')).last;
+        final target = '$dir$sep$name';
+        if (target == path || !File(path).existsSync()) continue;
+        try {
+          await File(path).copy(target);
+          copies.add(target);
+        } catch (e) {
+          debugPrint('[MONITOR] No se pudo copiar $name a $dir: $e');
+          _log('video_copy_failed', '$target: $e');
+        }
+      }
+    }
+    return copies;
+  }
+
   void _onSnapshot(Map<dynamic, dynamic> args) {
     _session.setSnapshot(args);
-    final participant = _session.info['participants']?.toString() ?? '';
+    final participants = _session.info['participants']?.toString() ?? '';
     for (final device in _liveDevices.values) {
+      // The rows of a device carry the participant who wears it.
+      final participant = device.configuration.participantId ?? participants;
       device.service.updateProtocolContext(
         participantId: _session.isActive ? participant : 'idle',
         activityIndex: _session.activityIndex,

@@ -48,6 +48,10 @@ class MonitorSession extends ChangeNotifier {
   String? _batteryJson;
 
   String? sessionDir;
+
+  /// Folder of each participant (by ID); empty when the session has one
+  /// folder for everybody.
+  Map<String, String> participantDirs = const {};
   String? fileStamp;
   bool video = false;
   bool resumed = false;
@@ -91,6 +95,10 @@ class MonitorSession extends ChangeNotifier {
 
   void setStarted(Map<dynamic, dynamic> value) {
     sessionDir = value['session_dir']?.toString();
+    participantDirs = {
+      for (final e in (value['participant_dirs'] as Map? ?? const {}).entries)
+        e.key.toString(): e.value.toString(),
+    };
     fileStamp = value['file_stamp']?.toString();
     video = value['video'] == true;
     resumed = value['resumed'] == true;
@@ -221,6 +229,7 @@ class MonitorSession extends ChangeNotifier {
     _battery = null;
     _batteryJson = null;
     sessionDir = null;
+    participantDirs = const {};
     fileStamp = null;
     video = false;
     resumed = false;
@@ -229,6 +238,22 @@ class MonitorSession extends ChangeNotifier {
     cancelledDirectory = null;
     lastSnapshotAt = null;
     notifyListeners();
+  }
+
+  /// Where the files of [participantId] go (the session folder when the
+  /// participant has no folder of their own).
+  String? directoryOf(String? participantId) =>
+      (participantId == null ? null : participantDirs[participantId]) ?? sessionDir;
+
+  /// Every folder of the session, the main one first, without repeats.
+  List<String> get directories {
+    final main = sessionDir;
+    if (main == null) return const [];
+    final all = [main];
+    for (final dir in participantDirs.values) {
+      if (!all.contains(dir)) all.add(dir);
+    }
+    return all;
   }
 }
 

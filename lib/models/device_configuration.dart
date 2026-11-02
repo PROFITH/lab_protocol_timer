@@ -1,4 +1,7 @@
 class DeviceConfiguration {
+  /// Unique in the session. It is the sensor ID of the session setup, with
+  /// the participant appended (`polar_h10@002`) when several participants
+  /// wear the same layout.
   final String deviceId;
   final String deviceName;
 
@@ -21,6 +24,15 @@ class DeviceConfiguration {
 
   final String? serial;
 
+  /// ID of the sensor in the session setup (`polar_h10`): the key of the
+  /// participant's manifest and the part of the file names SAVES matches.
+  /// Equals [deviceId] unless the session has several participants.
+  final String sensorId;
+
+  /// Participant who wears the device. Null for the devices the session
+  /// shares (cameras) and for sessions without participant assignment.
+  final String? participantId;
+
   const DeviceConfiguration({
     required this.deviceId,
     required this.deviceName,
@@ -30,9 +42,12 @@ class DeviceConfiguration {
     String? connection,
     this.placementLabel,
     this.serial,
+    String? sensorId,
+    this.participantId,
   })  : type = type ?? deviceId,
         connection = connection ??
-            (deviceId == 'camera' ? 'video' : 'live');
+            (deviceId == 'camera' ? 'video' : 'live'),
+        sensorId = sensorId ?? deviceId;
 
   bool get isLive => connection == 'live';
   bool get isCamera => connection == 'video';
@@ -40,6 +55,14 @@ class DeviceConfiguration {
   bool hasSensor(String sensorId) {
     return sensors.contains(sensorId);
   }
+
+  /// Name, placement and, when the session has several participants, whose
+  /// device it is («Polar H10 · Pecho · 002»).
+  String get label => [
+        deviceName,
+        if (placementLabel != null) placementLabel!,
+        if (participantId != null && sensorId != deviceId) participantId!,
+      ].join(' · ');
 
   Map<String, dynamic> toJson() {
     return {
@@ -51,6 +74,8 @@ class DeviceConfiguration {
       'connection': connection,
       if (placementLabel != null) 'placementLabel': placementLabel,
       if (serial != null) 'serial': serial,
+      if (sensorId != deviceId) 'sensorId': sensorId,
+      if (participantId != null) 'participantId': participantId,
     };
   }
 
@@ -68,6 +93,8 @@ class DeviceConfiguration {
       connection: json['connection'] as String?,
       placementLabel: json['placementLabel'] as String?,
       serial: json['serial'] as String?,
+      sensorId: json['sensorId'] as String?,
+      participantId: json['participantId'] as String?,
     );
   }
 }

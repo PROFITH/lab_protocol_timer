@@ -31,6 +31,10 @@ class SessionSetupCard extends StatelessWidget {
   /// Changes the sync cue of this session (clap or jump).
   final ValueChanged<SyncKind>? onSyncKind;
 
+  /// Sensors without a serial number, counted by the caller (the serials
+  /// are typed per participant); null counts those of [battery].
+  final int? missingSerials;
+
   const SessionSetupCard({
     super.key,
     required this.protocols,
@@ -44,6 +48,7 @@ class SessionSetupCard extends StatelessWidget {
     this.onReset,
     this.onDeleteCustom,
     this.onSyncKind,
+    this.missingSerials,
   });
 
   @override
@@ -75,7 +80,8 @@ class SessionSetupCard extends StatelessWidget {
       ),
     ];
 
-    final missingSerials = current?.sensors
+    final missingSerials = this.missingSerials ??
+        current?.sensors
             .where((s) => s.connection != 'video' && !s.hasSerial)
             .length ??
         0;
