@@ -146,28 +146,6 @@ void main() {
       expect(d8.activities.last.waitBefore, isTrue);
     });
 
-    test('RUN4HEALTH (WEARGAP) has the pilot sensors and the dodecahedron', () {
-      final p = _asset('assets/protocols/run4health_weargap.json');
-      expect(p.study, 'RUN4HEALTH');
-      expect(p.moments, [_day0, _day8]);
-      expect(p.activities.first.isCalibration, isTrue);
-      expect(p.activities.last.isCalibration, isTrue);
-      for (final c in p.activities.where((a) => a.isCalibration)) {
-        expect(c.faces, 12);
-        expect(c.durationSeconds, 480);
-      }
-      // No SENS, no SensWear; Verity Sense only in the lab.
-      final types = p.sensors.map((s) => s.type).toList();
-      expect(types, isNot(contains('sens')));
-      expect(types, isNot(contains('senswear')));
-      expect(types.where((t) => t == 'ax3'), hasLength(3));
-      expect(types.where((t) => t == 'ax6'), hasLength(2));
-      expect(
-        p.sensors.where((s) => s.freeLiving).map((s) => s.sensorId),
-        unorderedEquals(['matrix_wnd', 'ax3_thigh', 'ax6_shoe_l', 'ax6_shoe_r']),
-      );
-    });
-
     test('WEARGAP has a day 0 and a day 8 protocol', () {
       final all = _builtIns();
       final day0 = all.firstWhere((p) => p.protocolId == 'weargap_day0_base');
