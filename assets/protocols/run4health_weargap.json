@@ -207,7 +207,7 @@
       "placement": "shoe",
       "side": "left",
       "free_living": true,
-      "sampling_rate_hz": 50,
+      "sampling_rate_hz": 100,
       "range_g": 16
     },
     {
@@ -216,7 +216,7 @@
       "placement": "shoe",
       "side": "right",
       "free_living": true,
-      "sampling_rate_hz": 50,
+      "sampling_rate_hz": 100,
       "range_g": 16
     },
     {
