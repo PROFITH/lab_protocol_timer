@@ -325,7 +325,7 @@ class SessionController extends ChangeNotifier {
     required this.battery,
     required this.dataRoot,
     this.settings = const SessionSettings(),
-    this.operator,
+    List<String> operators = const [],
     List<CalibrationRecord> calibrations = const [],
     int startIndex = 1,
     SessionClock? clock,
@@ -335,6 +335,7 @@ class SessionController extends ChangeNotifier {
     this.onActiveSessionChanged,
     bool? redcapConfigured,
   })  : participants = List.unmodifiable(participants),
+        operators = cleanOperators(operators),
         calibrations = List.unmodifiable(calibrations),
         _redcapConfigured = redcapConfigured,
         clock = clock ?? SystemSessionClock(),
@@ -369,7 +370,7 @@ class SessionController extends ChangeNotifier {
       battery: saved.battery,
       dataRoot: state['data_root']?.toString() ?? saved.directory.parent.parent.path,
       settings: SessionSettings.fromJson(state['settings']),
-      operator: state['operator']?.toString(),
+      operators: operatorsFromJson(state),
       calibrations: [
         for (final c in state['calibrations'] as List? ?? const [])
           if (_calibrationFromState(c) case final r?) r,
@@ -419,7 +420,32 @@ class SessionController extends ChangeNotifier {
   final ActivityBattery? battery;
   final String dataRoot;
   SessionSettings settings;
-  final String? operator;
+  /// Evaluators of the session, in the order they were typed (there are
+  /// usually two or more).
+  final List<String> operators;
+
+  /// The evaluators in one text (`JHM, MDF`), as REDCap's `ws_operator`
+  /// and the `operator` of older files; null without any.
+  String? get operator => operators.isEmpty ? null : operators.join(', ');
+
+  /// [names] without blanks or repeated names, trimmed.
+  static List<String> cleanOperators(Iterable<String> names) {
+    final out = <String>[];
+    for (final n in names) {
+      final t = n.trim();
+      if (t.isNotEmpty && !out.contains(t)) out.add(t);
+    }
+    return List.unmodifiable(out);
+  }
+
+  /// The evaluators saved in [json]: the list `operators`, or the single
+  /// `operator` of sessions saved before 1.4.0.
+  static List<String> operatorsFromJson(Map json) {
+    final list = json['operators'];
+    if (list is List) return cleanOperators([for (final o in list) o.toString()]);
+    final one = json['operator']?.toString();
+    return one == null ? const [] : cleanOperators([one]);
+  }
 
   /// Calibrations of the sensors done today before the session
   /// (Calibración screen), by serial number. Each participant's folder gets
@@ -1145,6 +1171,7 @@ class SessionController extends ChangeNotifier {
             (store == null ? p : p.copyWith(folder: store!.directoryOf(p.participantId).path)).toJson(),
         ],
         'data_root': dataRoot,
+        if (operators.isNotEmpty) 'operators': operators,
         if (operator != null) 'operator': operator,
         if (calibrations.isNotEmpty)
           'calibrations': [for (final c in calibrations) _calibrationJson(c)],
@@ -1200,6 +1227,7 @@ class SessionController extends ChangeNotifier {
         participantId: participant?.participantId,
       ),
       'status': status,
+      if (operators.isNotEmpty) 'operators': operators,
       if (operator != null) 'operator': operator,
       // Calibration of each sensor, by serial number; the times of each
       // face are in the CSV, copied next to this manifest.
@@ -1580,6 +1608,7 @@ class SessionController extends ChangeNotifier {
         'visit': visitCode,
         'event_name': participants.isEmpty ? null : participants.first.redcapEventName,
         'operator': operator,
+        'operators': operators,
         'battery': battery?.toJson(),
         'settings': settings.toJson(),
         'data_root': dataRoot,

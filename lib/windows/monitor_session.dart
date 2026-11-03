@@ -148,6 +148,17 @@ class MonitorSession extends ChangeNotifier {
     return text == null || text.isEmpty ? null : text;
   }
 
+  /// Evaluators of the session (one, from an older session, or several).
+  List<String> get operators {
+    final list = _info['operators'];
+    if (list is List) {
+      final names = [for (final o in list) o.toString().trim()].where((o) => o.isNotEmpty).toList();
+      if (names.isNotEmpty) return names;
+    }
+    final one = operator;
+    return one == null ? const [] : [one];
+  }
+
   String? get study => _battery?.study;
   String? get protocolTitle => _battery?.title ?? _battery?.protocolId;
   bool get redcapConfigured => _info['redcap_configured'] == true;

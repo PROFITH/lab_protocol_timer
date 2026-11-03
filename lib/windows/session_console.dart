@@ -204,7 +204,7 @@ class _StatusRow extends StatelessWidget {
                   if (s.operator != null)
                     Flexible(
                       child: Text(
-                        'Evaluador: ${s.operator}',
+                        '${s.operators.length > 1 ? 'Evaluadores' : 'Evaluador'}: ${s.operators.join(', ')}',
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12, color: _muted),
                       ),

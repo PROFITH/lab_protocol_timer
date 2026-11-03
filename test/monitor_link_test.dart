@@ -40,7 +40,7 @@ void main() {
       participants: participants,
       battery: battery,
       dataRoot: root.path,
-      operator: 'JHM',
+      operators: ['JHM'],
       clock: clock,
       monitor: link,
       redcapConfigured: true,

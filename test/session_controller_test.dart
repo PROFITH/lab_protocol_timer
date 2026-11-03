@@ -101,7 +101,7 @@ void main() {
         participants: participants,
         battery: battery,
         dataRoot: root.path,
-        operator: 'JHM',
+        operators: ['JHM', 'MDF'],
         clock: clock,
         monitor: monitor,
         redcapConfigured: true,
@@ -193,7 +193,7 @@ void main() {
     final session = imported[1].single;
     expect(session['ws_hr_rest'], '52');
     expect(session['ws_hr_rest_method'], '1');
-    expect(session['ws_operator'], 'JHM');
+    expect(session['ws_operator'], 'JHM, MDF');
     expect(session['ws_video_cameras'], '1');
     expect(session.containsKey('ws_bmi'), isFalse);
     final instances = imported[2];

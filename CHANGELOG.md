@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-03
+
+### Added
+
+- **Several evaluators per session:** the start page has two «EVALUADOR/A» fields and «Añadir evaluador/a» for more (the extra ones can be removed). Blank fields and repeated names are left out, and this computer remembers the last ones. The session state and each participant's manifest have the new list `operators` (`["JHM", "MDF"]`); `operator` stays, with all of them in one text (`JHM, MDF`), and so does REDCap's `ws_operator` (no change to the data dictionary). The monitor shows «Evaluadores: JHM, MDF».
+
+### Changed
+
+- Sessions saved by 1.3.x, with one `operator`, resume with that evaluator; the single evaluator remembered by an older version fills the first field.
+
 ## [1.3.3] - 2026-11-02
 
 ### Fixed

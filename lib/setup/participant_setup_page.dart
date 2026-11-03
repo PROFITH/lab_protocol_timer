@@ -75,6 +75,10 @@ class ParticipantFieldGroup {
 /// Keys of this computer's settings.
 class SetupPrefs {
   static const dataRoot = 'lpt_data_root';
+  /// Evaluators of the last session, as a list.
+  static const operators = 'lpt_operators';
+
+  /// The only evaluator, as saved before 1.4.0 (read once, then removed).
   static const operator = 'lpt_operator';
   static const activeSession = 'lpt_active_session_dir';
 
@@ -154,7 +158,13 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   final _formKey = GlobalKey<FormState>();
   final List<ParticipantFieldGroup> _participants = [];
   final _activityController = TextEditingController(text: '1');
-  final _operatorController = TextEditingController();
+  /// One field per evaluator; there are at least [_minOperatorFields].
+  final List<TextEditingController> _operatorControllers = [
+    for (var i = 0; i < _minOperatorFields; i++) TextEditingController(),
+  ];
+
+  /// Fields shown from the start: sessions have two evaluators or more.
+  static const _minOperatorFields = 2;
   String? _dataRoot;
 
   /// Calibration of the sensors done today under the data folder.
@@ -234,12 +244,15 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   Future<void> _loadPrefs() async {
     String? root;
-    String? operator;
+    List<String>? operators;
     String? syncKind;
     try {
       final prefs = await SharedPreferences.getInstance();
       root = prefs.getString(SetupPrefs.dataRoot);
-      operator = prefs.getString(SetupPrefs.operator);
+      operators = prefs.getStringList(SetupPrefs.operators);
+      final old = prefs.getString(SetupPrefs.operator);
+      if (operators == null && old != null && old.trim().isNotEmpty) operators = [old.trim()];
+      await prefs.remove(SetupPrefs.operator);
       syncKind = prefs.getString(SetupPrefs.syncKind);
       for (final key in SetupPrefs.legacy) {
         await prefs.remove(key);
@@ -251,7 +264,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     if (!mounted) return;
     setState(() {
       _dataRoot = root;
-      if (operator != null && _operatorController.text.isEmpty) _operatorController.text = operator;
+      if (operators != null && operators.isNotEmpty && _operatorNames.isEmpty) _setOperators(operators);
       if (syncKind != null && _syncKind == null) _syncKind = SyncKind.parse(syncKind);
     });
     await _loadCalibration();
@@ -747,7 +760,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       p.dispose();
     }
     _activityController.dispose();
-    _operatorController.dispose();
+    for (final c in _operatorControllers) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -1022,11 +1037,11 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       );
       return;
     }
-    final operator = _operatorController.text.trim();
+    final operators = _operatorNames;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(SetupPrefs.dataRoot, root);
-      await prefs.setString(SetupPrefs.operator, operator);
+      await prefs.setStringList(SetupPrefs.operators, operators);
     } catch (_) {}
 
     final controller = SessionController(
@@ -1036,7 +1051,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       calibrations: calibrations,
       // A protocol can run its activities one after another (lap_mode false).
       settings: SessionSettings(lapMode: battery?.lapMode ?? true),
-      operator: operator.isEmpty ? null : operator,
+      operators: operators,
       startIndex: activity,
       audio: widget.audioFactory(),
       monitor: widget.monitor,
@@ -1055,6 +1070,74 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   }
 
   /// Where the sessions go besides their folder: REDCap, if there is a token.
+  /// The names typed in the evaluator fields, without blanks or repeats.
+  List<String> get _operatorNames =>
+      SessionController.cleanOperators([for (final c in _operatorControllers) c.text]);
+
+  /// Fills the evaluator fields with [names] (the last session's).
+  void _setOperators(List<String> names) {
+    while (_operatorControllers.length < names.length) {
+      _operatorControllers.add(TextEditingController());
+    }
+    for (var i = 0; i < _operatorControllers.length; i++) {
+      _operatorControllers[i].text = i < names.length ? names[i] : '';
+    }
+  }
+
+  void _addOperator() => setState(() => _operatorControllers.add(TextEditingController()));
+
+  void _removeOperator(int index) {
+    if (_operatorControllers.length <= _minOperatorFields) {
+      _operatorControllers[index].clear();
+      return;
+    }
+    setState(() => _operatorControllers.removeAt(index).dispose());
+  }
+
+  /// One field per evaluator (two at least) and a button to add another.
+  Widget _operatorsCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _operatorControllers.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          TextFormField(
+            key: ValueKey('operator_field_$i'),
+            controller: _operatorControllers[i],
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+            decoration: _decoration(
+              label: 'EVALUADOR/A ${i + 1}',
+              hint: i == 0
+                  ? 'Nombre o iniciales (van a REDCap y al manifiesto)'
+                  : 'Nombre o iniciales',
+              icon: Icons.badge_rounded,
+              fill: _card,
+              radius: 16,
+            ).copyWith(
+              suffixIcon: _operatorControllers.length > _minOperatorFields
+                  ? IconButton(
+                      tooltip: 'Quitar evaluador/a',
+                      icon: const Icon(Icons.close_rounded, color: Colors.white54),
+                      onPressed: () => _removeOperator(i),
+                    )
+                  : null,
+            ),
+          ),
+        ],
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('add_operator'),
+            onPressed: _addOperator,
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
+            icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+            label: const Text('Añadir evaluador/a'),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _redcapCard() {
     final configured = RedcapConnection.isConfigured;
     final title = RedcapConnection.project?.title ?? '';
@@ -1573,17 +1656,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                       ),
 
                       const SizedBox(height: 24),
-                      TextFormField(
-                        controller: _operatorController,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
-                        decoration: _decoration(
-                          label: 'EVALUADOR/A',
-                          hint: 'Nombre o iniciales (va a REDCap y al manifiesto)',
-                          icon: Icons.badge_rounded,
-                          fill: _card,
-                          radius: 16,
-                        ),
-                      ),
+                      _operatorsCard(),
                       const SizedBox(height: 14),
                       _redcapCard(),
                       const SizedBox(height: 14),
