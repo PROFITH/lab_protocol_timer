@@ -1954,13 +1954,25 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           name: '${device.deviceName} · ${device.deviceId}',
           subtitle: subtitle.isEmpty ? null : subtitle,
           icon: Icons.watch_rounded,
-          connectionStatus: DeviceConnectionStatus.disconnected,
-          note: 'Graba por su cuenta (sin conexión en directo)',
+          // Green once ticked as initialized in the waiting room.
+          connectionStatus:
+              device.initialized ? DeviceConnectionStatus.connected : DeviceConnectionStatus.disconnected,
+          note: device.initialized
+              ? 'Inicializado en la sala de espera; graba por su cuenta'
+              : 'Graba por su cuenta (sin conexión en directo)',
         ),
       );
     }
 
-    return statuses;
+    // The cameras first: they are what is left to connect here.
+    final cameras = {
+      for (final d in _protocolConfiguration.devices)
+        if (d.isCamera) d.deviceId,
+    };
+    return [
+      ...statuses.where((s) => cameras.contains(s.id)),
+      ...statuses.where((s) => !cameras.contains(s.id)),
+    ];
   }
 
 

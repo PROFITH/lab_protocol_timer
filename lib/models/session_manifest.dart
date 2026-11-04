@@ -97,6 +97,9 @@ Map<String, dynamic> buildSessionManifest({
       if (sensor.use != SensorUse.lab) 'use': sensor.use,
       if (sensor.inFreeLiving && sensor.hasFreeLivingSerial)
         'free_living_serial': sensor.freeLivingSerial!.trim(),
+      // Ticked in the waiting room.
+      if (sensor.inLab && sensor.initialized) 'initialized': true,
+      if (sensor.inFreeLiving && sensor.freeLivingInitialized) 'free_living_initialized': true,
     };
 
     // A device only for the free-living days is not in the session: it is

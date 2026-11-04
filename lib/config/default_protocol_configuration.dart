@@ -74,6 +74,7 @@ ProtocolConfiguration protocolConfigurationFor(
         placement: sensor.placement,
         placementLabel: sensor.placementLabel,
         serial: sensor.hasSerial ? sensor.serial!.trim() : null,
+        initialized: sensor.initialized,
         sensors: switch (sensor.connection) {
           'video' => const {'video'},
           'live' => liveCapabilitiesByType[sensor.type] ?? const {},

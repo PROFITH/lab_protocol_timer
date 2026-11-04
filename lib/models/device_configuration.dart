@@ -33,6 +33,9 @@ class DeviceConfiguration {
   /// shares (cameras) and for sessions without participant assignment.
   final String? participantId;
 
+  /// An offline device ticked as initialized in the waiting room.
+  final bool initialized;
+
   const DeviceConfiguration({
     required this.deviceId,
     required this.deviceName,
@@ -44,6 +47,7 @@ class DeviceConfiguration {
     this.serial,
     String? sensorId,
     this.participantId,
+    this.initialized = false,
   })  : type = type ?? deviceId,
         connection = connection ??
             (deviceId == 'camera' ? 'video' : 'live'),
@@ -76,6 +80,7 @@ class DeviceConfiguration {
       if (serial != null) 'serial': serial,
       if (sensorId != deviceId) 'sensorId': sensorId,
       if (participantId != null) 'participantId': participantId,
+      if (initialized) 'initialized': true,
     };
   }
 
@@ -95,6 +100,7 @@ class DeviceConfiguration {
       serial: json['serial'] as String?,
       sensorId: json['sensorId'] as String?,
       participantId: json['participantId'] as String?,
+      initialized: json['initialized'] == true,
     );
   }
 }

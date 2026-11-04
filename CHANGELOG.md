@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-11-04
+
+### Fixed
+
+- **Voice between activities without a still phase:** walking straight into the next speed (`prep_seconds` and `post_seconds` 0) no longer says «Para. Quédate quieto.» and «… Quédate quieto.» nor beeps the end in between: the next activity is announced as it starts («Actividad 3 de 5: caminar rápido. ¡Empieza!»).
+
+### Changed
+
+- **Devices ticked in the waiting room:** each offline device ticked as initialized shows a green dot in the monitor's device tab («Inicializado en la sala de espera; graba por su cuenta»), and the participant's manifest and session state keep it (`initialized`, `free_living_initialized`).
+- **Device tab:** the cameras first, since they are what is left to connect in the monitor.
+
 ## [1.4.0] - 2026-11-03
 
 ### Added
