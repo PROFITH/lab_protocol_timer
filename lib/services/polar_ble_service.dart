@@ -1677,9 +1677,12 @@ class PolarBleService {
       );
     }
 
-    // The requested configuration is 200 Hz. If the start response contains
-    // a PMD sample-rate setting, _updatePmdSettingsFromResponse() may replace
-    // this with the actual value reported by the sensor.
+    // The rate in force is the one asked for (52 Hz for the Verity Sense,
+    // 200 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
+    // a Verity at 52 Hz packed each frame in a quarter of its time and the
+    // file looked 74 % empty (test of 04/11/2026). If the start response
+    // reports a rate, _updatePmdSettingsFromResponse() takes that one.
+    _accSampleRateHz = requestedSampleRate(command) ?? _accSampleRateHz;
     _updatePmdSettingsFromResponse(
       response.payload,
       measurementType: pmdTypeAcc,
@@ -2199,6 +2202,15 @@ class PolarBleService {
       payload.length > 1 ? Uint8List.sublistView(payload, 1) : Uint8List(0);
 
   /// Every value offered for each setting type.
+  /// The sample rate a PMD start command asks for (the first setting, as
+  /// [startCommandFor] writes it), or null.
+  static int? requestedSampleRate(Uint8List command) {
+    if (command.length < 6 || command[0] != pmdOpStartMeasurement) return null;
+    if (command[2] != pmdSettingSampleRate || command[3] < 1) return null;
+    final rate = command[4] | (command[5] << 8);
+    return rate > 0 ? rate : null;
+  }
+
   static Map<int, List<int>> parsePmdSettingOptions(Uint8List data) {
     final result = <int, List<int>>{};
     var offset = 0;
@@ -2226,11 +2238,9 @@ class PolarBleService {
   /// Start command for ACC from the offered settings: [preferredRateHz] if
   /// offered (else the highest rate), the highest resolution, ±8 G if
   /// offered (else the highest range) and the most channels.
-  /// ACC rate asked to each sensor. The Verity Sense with recent firmware
-  /// offers up to 208 Hz, but at that rate, with PPG, gyroscope and
-  /// magnetometer, and an H10 on the same Windows adapter, the link fell
-  /// 17 s behind and both sensors dropped about 70 % of their ACC frames
-  /// (test of 04/11/2026). On the arm 52 Hz is enough; the H10 keeps 200 Hz.
+  /// ACC rate asked to each sensor: 52 Hz for the Verity Sense (enough on
+  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 200 Hz
+  /// for the H10.
   static int accRateFor({String deviceType = '', String deviceName = ''}) {
     final verity = deviceType == 'verity_sense' || deviceName.toLowerCase().contains('sense');
     return verity ? 52 : defaultAccSampleRateHz;

@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **ACC of the Verity Sense at 52 Hz:** recent firmware offers up to 208 Hz and the app took the highest. With an H10 on the same Windows adapter the link fell 17 s behind and both sensors lost about 70 % of their ACC frames (test of 04/11, confirmed in the files); ECG, PPG and gyroscope arrived whole. The H10 keeps 200 Hz.
+- **Times of the Verity Sense ACC:** it streams at 52 Hz, but its samples were spread 5 ms apart as if at 200 Hz (the rate was only taken from the sensor's answer, which the Verity does not give): each frame of about 1.9 s took 0.5 s and `polar_acc` looked 74 % empty, with «frames lost» in the monitor, while every sample was there (tests of 04/11). The samples are now spread at the rate asked for, and the Verity is asked for 52 Hz explicitly; the H10 keeps 200 Hz.
 - **Lost frames:** counted from the samples of each frame, not from the shortest gap between frames; the Verity Sense sends frames of different sizes and its gyroscope was reported with 27-39 % lost while the file had no gap.
 
 ### Changed
