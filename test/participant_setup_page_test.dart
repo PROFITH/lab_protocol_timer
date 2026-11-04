@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lab_protocol_timer/models/activity_battery.dart';
+import 'package:lab_protocol_timer/models/device_configuration.dart';
+import 'package:lab_protocol_timer/models/protocol_configuration.dart';
+import 'package:lab_protocol_timer/windows/window_messages.dart';
 import 'package:lab_protocol_timer/session/session_controller.dart';
 import 'package:lab_protocol_timer/setup/participant_setup_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,13 +46,17 @@ void main() {
   }) async {
     SessionController? started;
     var monitorOpened = 0;
+    final monitor = _FakeLiveMonitor();
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(),
       home: ParticipantSetupPage(
         onStart: (controller) async => started = controller,
-        onPrepare: (configuration) async => monitorOpened++,
-        monitor: NoMonitor(),
+        onPrepare: (configuration, fresh) async {
+          monitorOpened++;
+          monitor.configuration = configuration;
+        },
+        monitor: monitor,
         audioFactory: SilentAudio.new,
         checkUnfinished: false,
       ),
@@ -113,16 +120,37 @@ void main() {
       await tester.enterText(field, h10Serial);
       await tester.pump();
     }
-    // The evaluator ticks each device once initialized.
+    // The evaluator ticks each device once initialized and links the Polar
+    // here (the monitor keeps the link).
+    await wait(tester, () => find.text('Sin conectar').evaluate().length == 2);
     final checks = find.byType(Checkbox);
-    expect(checks, findsWidgets);
-    expect(find.textContaining('0/${checks.evaluate().length} inicializados'), findsOneWidget);
+    expect(checks, findsNWidgets(10));
+    expect(find.textContaining('0/12 listos'), findsOneWidget);
     for (var i = 0; i < checks.evaluate().length; i++) {
       await tester.ensureVisible(checks.at(i));
       await tester.tap(checks.at(i));
       await tester.pump();
     }
-    expect(find.textContaining('0/'), findsNothing);
+    expect(find.textContaining('10/12 listos'), findsOneWidget);
+    for (var i = 0; i < 2; i++) {
+      final connect = find.widgetWithText(TextButton, 'Conectar').first;
+      await tester.ensureVisible(connect);
+      await tester.tap(connect);
+      await wait(tester, () => find.text('Vincular').evaluate().isNotEmpty);
+      await tester.tap(find.text('Vincular').first);
+      await wait(tester, () => find.text('Vincular').evaluate().isEmpty);
+    }
+    await wait(tester, () => find.textContaining('12/12 listos').evaluate().isNotEmpty);
+    expect(find.textContaining('Conectado · Polar'), findsNWidgets(2));
+    expect(monitor.linked.length, 2);
+
+    // The «i» opens the initialization guide of the device.
+    await tester.ensureVisible(find.byIcon(Icons.info_outline_rounded).first);
+    await tester.tap(find.byIcon(Icons.info_outline_rounded).first);
+    await wait(tester, () => find.text('Cerrar').evaluate().isNotEmpty);
+    expect(find.textContaining(RegExp('inicializar|preparar'), findRichText: true), findsWidgets);
+    await tester.tap(find.text('Cerrar'));
+    await tester.pump();
     await tester.ensureVisible(find.byKey(const Key('go_to_session')));
     await tester.tap(find.byKey(const Key('go_to_session')));
     // Sensors without a calibration of today (here they have no serial
@@ -214,4 +242,44 @@ void main() {
     }
     await tester.pumpWidget(const SizedBox());
   });
+}
+
+/// The Research Monitor as the waiting room sees it: the Polar of the
+/// protocol, a unit found for each and linking.
+class _FakeLiveMonitor implements MonitorLink {
+  ProtocolConfiguration? configuration;
+  final Map<String, String> linked = {};
+
+  @override
+  Future<dynamic> send(String method, [dynamic arguments]) async {
+    final args = arguments is Map ? arguments : const {};
+    final live = [
+      for (final d in configuration?.devices ?? const <DeviceConfiguration>[])
+        if (d.isLive) d,
+    ];
+    switch (method) {
+      case WindowMessages.liveDevices:
+        return [
+          for (final d in live)
+            {
+              'device_id': d.deviceId,
+              'sensor_id': d.sensorId,
+              'participant_id': d.participantId,
+              'state': linked.containsKey(d.deviceId) ? 'connected' : 'disconnected',
+              'message': '',
+              'name': linked[d.deviceId],
+              'hr': linked.containsKey(d.deviceId) ? 70 : 0,
+            },
+        ];
+      case WindowMessages.liveScan:
+        return [
+          {'id': 'BLE-${args['device_id']}', 'name': 'Polar ${args['device_id']}', 'match': 1},
+        ];
+      case WindowMessages.liveConnect:
+        final id = args['device_id'].toString();
+        linked[id] = 'Polar $id';
+        return {'ok': true, 'message': 'Conectado a Polar $id'};
+    }
+    return null;
+  }
 }

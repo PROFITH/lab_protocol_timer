@@ -755,6 +755,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       unawaited(files.stop());
     }
     unawaited(_videoLog?.close());
+    for (final scan in _remoteScans.values) {
+      unawaited(scan.cancel());
+    }
     MultiWindowManager.current.removeListener(this);
     _frameTicker.dispose();
     _popouts.dispose();
@@ -1169,11 +1172,29 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     if (popoutAnswer != null) return popoutAnswer;
     if (eventName == WindowMessages.themeChanged) return null;
 
-    if (eventName != WindowMessages.sessionSnapshot) {
+    if (eventName != WindowMessages.sessionSnapshot &&
+        eventName != WindowMessages.liveDevices &&
+        eventName != WindowMessages.liveScan) {
       debugPrint('[MONITOR] Evento recibido: $eventName');
     }
 
+    final args = arguments is Map ? arguments : const {};
     switch (eventName) {
+      case WindowMessages.liveDevices:
+        return _liveDevicesJson();
+
+      case WindowMessages.liveScan:
+        return _remoteScan(args['device_id']?.toString() ?? '', args['action']?.toString() ?? 'results');
+
+      case WindowMessages.liveConnect:
+        return _remoteConnect(args['device_id']?.toString() ?? '', args['ble_id']?.toString() ?? '');
+
+      case WindowMessages.liveDisconnect:
+        final device = _liveDevices[args['device_id']?.toString()];
+        if (device != null) await device.service.disconnect();
+        if (mounted) setState(() {});
+        return true;
+
       case WindowMessages.sessionSnapshot:
         if (arguments is Map) _onSnapshot(arguments);
         return true;
@@ -1389,6 +1410,102 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     'polar_h10': 'h10',
     'verity_sense': 'sense',
   };
+
+  /// How well a unit found fits [configuration]: 0 its serial is in the
+  /// name, 1 right type, 2 another Polar, 3 anything else.
+  static int _bleRank(DeviceConfiguration configuration, BleDevice d) {
+    final name = (d.name ?? '').toLowerCase();
+    final serial = configuration.serial?.toLowerCase();
+    final hint = _bleNameHints[configuration.type];
+    if (serial != null && serial.isNotEmpty && name.contains(serial)) return 0;
+    if (hint != null && name.contains(hint)) return 1;
+    if (name.contains('polar')) return 2;
+    return 3;
+  }
+
+  /// Units found for [device], best first, without those linked to
+  /// another device of the session.
+  List<BleDevice> _bleCandidates(_LiveDevice device, Iterable<BleDevice> found) {
+    final taken = {
+      for (final other in _liveDevices.values)
+        if (other != device && other.service.connectedDeviceId != null) other.service.connectedDeviceId!,
+    };
+    return [
+      for (final d in found)
+        if (!taken.contains(d.deviceId)) d,
+    ]..sort((a, b) => _bleRank(device.configuration, a).compareTo(_bleRank(device.configuration, b)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Linking from the waiting room (main window)
+  // ---------------------------------------------------------------------------
+
+  final Map<String, List<BleDevice>> _remoteScanFound = {};
+  final Map<String, StreamSubscription<List<BleDevice>>> _remoteScans = {};
+
+  List<Map<String, dynamic>> _liveDevicesJson() => [
+        for (final e in _liveDevices.entries)
+          {
+            'device_id': e.key,
+            'sensor_id': e.value.configuration.sensorId,
+            'participant_id': e.value.configuration.participantId,
+            'state': e.value.service.linkStatus.value.state.name,
+            'message': e.value.service.linkStatus.value.message,
+            'name': e.value.service.connectedDeviceName,
+            'hr': e.value.service.currentHeartRate,
+          },
+      ];
+
+  Future<List<Map<String, dynamic>>> _remoteScan(String deviceId, String action) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return const [];
+    if (action == 'stop') {
+      await _remoteScans.remove(deviceId)?.cancel();
+      _remoteScanFound.remove(deviceId);
+      await device.service.stopScan();
+      return const [];
+    }
+    if (action == 'start' && !_remoteScans.containsKey(deviceId)) {
+      _remoteScanFound[deviceId] = const [];
+      _remoteScans[deviceId] = device.service.scanStream.listen((found) => _remoteScanFound[deviceId] = found);
+      unawaited(device.service.startScan());
+    }
+    return [
+      for (final d in _bleCandidates(device, _remoteScanFound[deviceId] ?? const []))
+        {
+          'id': d.deviceId,
+          'name': d.name?.isNotEmpty == true ? d.name : 'Dispositivo BLE (${d.deviceId})',
+          'match': _bleRank(device.configuration, d),
+        },
+    ];
+  }
+
+  Future<Map<String, dynamic>> _remoteConnect(String deviceId, String bleId) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return {'ok': false, 'message': 'El monitor no tiene ese dispositivo'};
+    BleDevice? ble;
+    for (final d in _remoteScanFound[deviceId] ?? const <BleDevice>[]) {
+      if (d.deviceId == bleId) ble = d;
+    }
+    await _remoteScans.remove(deviceId)?.cancel();
+    _remoteScanFound.remove(deviceId);
+    await device.service.stopScan();
+    if (ble == null) return {'ok': false, 'message': 'Ya no se ve esa unidad: busca otra vez'};
+    final connected = await device.service.connectToDevice(ble);
+    final failed = connected ? await device.startConfiguredSignals() : const <String>[];
+    if (mounted) setState(() {});
+    final name = ble.name ?? ble.deviceId;
+    final service = device.service;
+    return {
+      'ok': connected,
+      'message': !connected
+          ? service.linkStatus.value.message
+          : failed.isEmpty
+              ? 'Conectado a $name'
+              : 'Conectado a $name, sin ${failed.join(', ')}'
+                  '${service.pmdProblem == null ? '' : '. ${service.pmdProblem}.'}',
+    };
+  }
 
   void _showPolarConnectionDialog(String deviceId) {
     final device = _liveDevices[deviceId];

@@ -122,6 +122,10 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
   final _navigator = GlobalKey<NavigatorState>();
   bool _closing = false;
 
+  /// The Research Monitor was opened from the waiting room for the session
+  /// about to start: it keeps its Polar and cameras.
+  bool _monitorFromWaitingRoom = false;
+
   @override
   void initState() {
     super.initState();
@@ -164,13 +168,19 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
   Widget _setupPage() => ParticipantSetupPage(
         onStart: _startSession,
-        onPrepare: openResearchMonitorWindow,
+        onPrepare: (configuration, fresh) {
+          _monitorFromWaitingRoom = true;
+          return openResearchMonitorWindow(configuration, fresh: fresh);
+        },
         monitor: ResearchMonitorBridge.instance,
         audioFactory: DeviceSessionAudio.new,
       );
 
   Future<void> _startSession(SessionController controller) async {
-    await openResearchMonitorWindow(controller.protocolConfiguration);
+    // From the waiting room the monitor keeps its links (Polar, cameras).
+    final fresh = !_monitorFromWaitingRoom;
+    _monitorFromWaitingRoom = false;
+    await openResearchMonitorWindow(controller.protocolConfiguration, fresh: fresh);
     final navigator = _navigator.currentState;
     if (navigator == null) {
       controller.dispose();
@@ -209,12 +219,19 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
 /// Opens the Research Monitor (or shows the hidden one) for a session with
 /// [configuration] (each participant's sensors and the cameras).
-Future<void> openResearchMonitorWindow(ProtocolConfiguration configuration) async {
+///
+/// [fresh] rebuilds a monitor left from an earlier evaluation; false only
+/// shows it and updates its devices, keeping what is linked.
+Future<void> openResearchMonitorWindow(ProtocolConfiguration configuration, {bool fresh = true}) async {
   final bridge = ResearchMonitorBridge.instance;
   try {
     bridge.setProtocolConfiguration(configuration);
     if (await bridge.hasLiveMonitorWindow()) {
-      await bridge.reuseMonitorWindow();
+      if (fresh) {
+        await bridge.reuseMonitorWindow();
+      } else {
+        await bridge.showMonitor();
+      }
       await bridge.sendProtocolConfiguration(configuration);
       return;
     }

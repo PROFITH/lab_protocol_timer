@@ -80,6 +80,8 @@ flutter:
     - assets/sounds/
     - assets/protocols/
     - assets/compendium/
+    # Initialization guide of each device (the «i» of the waiting room).
+    - docs/device_guides/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/assets-and-images/#resolution-aware

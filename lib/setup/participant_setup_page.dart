@@ -12,6 +12,9 @@ import '../calibration/calibration_page.dart';
 import '../calibration/calibration_store.dart';
 import '../config/default_protocol_configuration.dart';
 import '../models/protocol_configuration.dart';
+import '../windows/window_messages.dart';
+import 'device_guide.dart';
+import 'live_connect_dialog.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/phone_records_import.dart';
@@ -156,7 +159,9 @@ class ParticipantSetupPage extends StatefulWidget {
 
   /// Opens (or shows) the Research Monitor with the devices of the session,
   /// so they can be connected from the waiting room.
-  final Future<void> Function(ProtocolConfiguration configuration)? onPrepare;
+  /// [fresh] the first time (a new evaluation); false when the evaluator
+  /// shows it again, so the Polar and cameras stay linked.
+  final Future<void> Function(ProtocolConfiguration configuration, bool fresh)? onPrepare;
   final MonitorLink monitor;
   final SessionAudio Function() audioFactory;
 
@@ -187,6 +192,14 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   /// After «Preparar sesión»: serial numbers, Polar and camera, calibration.
   bool _waitingRoom = false;
+
+  /// The Polar of the session as the monitor last told (waiting room).
+  List<LiveDeviceState>? _live;
+  Timer? _livePoll;
+
+  /// The monitor was opened for this session: showing it again keeps its
+  /// links.
+  bool _monitorOpened = false;
   bool _sendingSaved = false;
 
   /// While the phones' files go to REDCap: which one (e.g. «2 de 5»).
@@ -764,6 +777,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
   @override
   void dispose() {
+    _stopLivePoll();
     RedcapConnection.changes.removeListener(_onRedcapChanged);
     for (final p in _participants) {
       p.dispose();
@@ -963,19 +977,27 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     setState(() => _waitingRoom = true);
     await _loadCalibration();
     await _openMonitor();
+    _startLivePoll();
   }
 
   Future<void> _openMonitor() async {
     final open = widget.onPrepare;
     if (open == null) return;
     try {
-      await open(protocolConfigurationFor(_sessionBattery, _entries()));
+      await open(protocolConfigurationFor(_sessionBattery, _entries()), !_monitorOpened);
+      _monitorOpened = true;
     } catch (e) {
       debugPrint('[SETUP] No se pudo abrir el Research Monitor: $e');
     }
   }
 
-  void _leaveWaitingRoom() => setState(() => _waitingRoom = false);
+  void _leaveWaitingRoom() {
+    _stopLivePoll();
+    setState(() {
+      _waitingRoom = false;
+      _live = null;
+    });
+  }
 
   Future<void> _submitAndStart() async {
     if (!_waitingRoom) {
@@ -1001,7 +1023,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
           backgroundColor: _card,
           title: const Text('Dispositivos sin marcar'),
           content: Text(
-            'Sin marcar como inicializados:\n${notReady.join('\n')}\n\n¿Pasar a la sesión igualmente?',
+            'Sin marcar como inicializados (o Polar sin conectar):\n${notReady.join('\n')}\n\n¿Pasar a la sesión igualmente?',
           ),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Volver')),
@@ -1117,6 +1139,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
       return;
     }
     setState(() => _starting = true);
+    _stopLivePoll();
     try {
       await widget.onStart(controller);
     } finally {
@@ -1332,47 +1355,160 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   }
 
   /// The serial of each sensor of the protocol, for one participant.
-  /// One entry per device a participant wears in the lab or takes home,
-  /// with its label: `lab:<sensorId>` or `free_living:<sensorId>`.
-  Map<String, String> _deviceKeys(ParticipantFieldGroup group) => {
-        for (final s in _layoutSensors) ...{
-          if (s.inLab) 'lab:${s.sensorId}': s.displayName,
-          if (s.inFreeLiving) 'free_living:${s.sensorId}': '${s.displayName} · vida libre',
-        },
-      };
+  /// Devices a participant wears in the lab or takes home.
+  int get _deviceCount => _layoutSensors.fold(0, (n, s) => n + (s.inLab ? 1 : 0) + (s.inFreeLiving ? 1 : 0));
 
-  /// Devices of [group] the evaluator has not ticked yet.
+  /// Devices of [group] not ready yet: not ticked, or a Polar of the
+  /// laboratory not linked in the monitor.
   List<String> _uninitialized(ParticipantFieldGroup group) => [
-        for (final e in _deviceKeys(group).entries)
-          if (!group.initialized.contains(e.key)) e.value,
+        for (final s in _layoutSensors) ...[
+          if (s.inLab && !_labReady(group, s)) s.displayName,
+          if (s.inFreeLiving && !group.initialized.contains('free_living:${s.sensorId}'))
+            '${s.displayName} · vida libre',
+        ],
       ];
 
-  /// The tick the evaluator marks once the device is initialized (an
-  /// offline sensor set to record) or ready (a live one, put on).
+  bool _labReady(ParticipantFieldGroup group, SessionSensor s) =>
+      s.connection == 'live' ? _liveOf(group, s)?.connected ?? false : group.initialized.contains('lab:${s.sensorId}');
+
+  /// What the monitor says of the Polar [sensor] of [group].
+  LiveDeviceState? _liveOf(ParticipantFieldGroup group, SessionSensor sensor) {
+    for (final d in _live ?? const <LiveDeviceState>[]) {
+      if (d.sensorId == sensor.sensorId && (d.participantId == null || d.participantId == group.id)) return d;
+    }
+    return null;
+  }
+
+  void _startLivePoll() {
+    _livePoll?.cancel();
+    _livePoll = Timer.periodic(const Duration(seconds: 1), (_) => unawaited(_refreshLive()));
+    unawaited(_refreshLive());
+  }
+
+  void _stopLivePoll() {
+    _livePoll?.cancel();
+    _livePoll = null;
+  }
+
+  Future<void> _refreshLive() async {
+    final live = await LiveDeviceState.query(widget.monitor);
+    if (!mounted || !_waitingRoom) return;
+    setState(() => _live = live);
+  }
+
+  /// The guide of [sensor]'s type, from the «i» next to it.
+  Widget _guideButton(SessionSensor sensor) => IconButton(
+        key: ValueKey('guide-${sensor.sensorId}-${identityHashCode(sensor)}'),
+        tooltip: 'Cómo se inicializa ${sensor.deviceName}',
+        visualDensity: VisualDensity.compact,
+        iconSize: 18,
+        color: context.pal.on60,
+        icon: const Icon(Icons.info_outline_rounded),
+        onPressed: () => showDeviceGuide(
+          context,
+          type: sensor.type,
+          title: sensor.deviceName,
+          dataRoot: _dataRoot,
+        ),
+      );
+
+  /// The tick the evaluator marks once the device is initialized.
   Widget _initializedCheck(ParticipantFieldGroup group, SessionSensor sensor, {required bool freeLiving}) {
     final key = '${freeLiving ? 'free_living' : 'lab'}:${sensor.sensorId}';
     final done = group.initialized.contains(key);
-    final offline = sensor.connection == 'offline';
-    return InkWell(
-      key: ValueKey('init-${identityHashCode(group)}-$key'),
-      borderRadius: BorderRadius.circular(8),
-      onTap: () => setState(() => done ? group.initialized.remove(key) : group.initialized.add(key)),
+    return Row(
+      children: [
+        Expanded(
+          child: InkWell(
+            key: ValueKey('init-${identityHashCode(group)}-$key'),
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => setState(() => done ? group.initialized.remove(key) : group.initialized.add(key)),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: done,
+                  visualDensity: VisualDensity.compact,
+                  onChanged: (v) =>
+                      setState(() => v == true ? group.initialized.add(key) : group.initialized.remove(key)),
+                ),
+                Expanded(
+                  child: Text(
+                    'Inicializado',
+                    style: TextStyle(color: done ? _accent : context.pal.on60, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _guideButton(sensor),
+      ],
+    );
+  }
+
+  /// A Polar of the laboratory: linked here, through the monitor, which
+  /// keeps the link and records it.
+  Widget _liveRow(ParticipantFieldGroup group, SessionSensor sensor) {
+    final live = _liveOf(group, sensor);
+    final pal = context.pal;
+    final (text, color) = switch (live) {
+      null => (_live == null ? 'Abriendo el monitor…' : 'No está en el monitor', pal.on54),
+      final d when d.connected => (
+          'Conectado${d.name == null ? '' : ' · ${d.name}'}${d.hr > 0 ? ' · ${d.hr} lpm' : ''}',
+          pal.good,
+        ),
+      final d when d.busy => (d.message.isEmpty ? 'Conectando…' : d.message, pal.warn),
+      final d when d.state == 'error' => (d.message.isEmpty ? 'Error de conexión' : d.message, pal.bad),
+      _ => ('Sin conectar', pal.on60),
+    };
+    return Padding(
+      padding: const EdgeInsets.only(top: 2),
       child: Row(
         children: [
-          Checkbox(
-            value: done,
-            visualDensity: VisualDensity.compact,
-            onChanged: (v) => setState(() => v == true ? group.initialized.add(key) : group.initialized.remove(key)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Icon(
+              live?.connected == true ? Icons.bluetooth_connected_rounded : Icons.bluetooth_rounded,
+              size: 18,
+              color: color,
+            ),
           ),
           Expanded(
             child: Text(
-              offline ? 'Inicializado' : 'Preparado (puesto y listo para conectar)',
-              style: TextStyle(color: done ? _accent : context.pal.on60, fontSize: 12),
+              text,
+              key: ValueKey('live-${identityHashCode(group)}-${sensor.sensorId}'),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
             ),
           ),
+          if (live != null && !live.busy)
+            TextButton(
+              key: ValueKey('connect-${identityHashCode(group)}-${sensor.sensorId}'),
+              onPressed: () => live.connected ? _disconnectLive(live, sensor) : _connectLive(live, sensor),
+              child: Text(live.connected ? 'Desconectar' : 'Conectar'),
+            ),
+          _guideButton(sensor),
         ],
       ),
     );
+  }
+
+  Future<void> _connectLive(LiveDeviceState live, SessionSensor sensor) async {
+    final message = await showLiveConnectDialog(
+      context,
+      monitor: widget.monitor,
+      deviceId: live.deviceId,
+      title: sensor.displayName,
+    );
+    await _refreshLive();
+    if (message == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _disconnectLive(LiveDeviceState live, SessionSensor sensor) async {
+    await widget.monitor.send(WindowMessages.liveDisconnect, {'device_id': live.deviceId});
+    await _refreshLive();
   }
 
   Widget _participantSensorsCard(ParticipantFieldGroup group, int index) {
@@ -1407,7 +1543,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               if (layout.isNotEmpty)
                 Text(
                   '${missing == 0 ? 'Todos con número de serie' : '$missing sin número de serie'} · '
-                  '${_deviceKeys(group).length - pending}/${_deviceKeys(group).length} inicializados',
+                  '${_deviceCount - pending}/$_deviceCount listos',
                   key: ValueKey('init-count-$index'),
                   style: TextStyle(color: missing == 0 && pending == 0 ? context.pal.on54 : _warning, fontSize: 12),
                 ),
@@ -1441,7 +1577,11 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                               hint: 'Número de serie',
                             ).copyWith(isDense: true),
                           ),
-                        if (sensor.inLab) _initializedCheck(group, sensor, freeLiving: false),
+                        if (sensor.inLab)
+                          if (sensor.connection == 'live')
+                            _liveRow(group, sensor)
+                          else
+                            _initializedCheck(group, sensor, freeLiving: false),
                         // The device taken home for the free-living days
                         // (another one, with its own serial), so its
                         // calibration reaches this participant too.
@@ -1604,13 +1744,14 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'POLAR Y CÁMARA',
+                  'RESEARCH MONITOR',
                   style: TextStyle(color: context.pal.on60, fontSize: 12),
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Se conectan en el Research Monitor (la otra ventana) y siguen conectados al pasar a la '
-                  'sesión. La sesión se empieza allí, con «Empezar sesión», cuando el participante esté listo.',
+                  'Las Polar se conectan arriba, junto a cada participante; la cámara se elige en el monitor. '
+                  'Todo sigue conectado al pasar a la sesión, y si algo falla se reconecta en la barra de '
+                  'dispositivos del monitor. La sesión se empieza allí, con «Empezar sesión».',
                   style: TextStyle(color: context.pal.on, fontSize: 13, fontWeight: FontWeight.w600),
                 ),
               ],
@@ -1692,7 +1833,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
         const SizedBox(height: 28),
         _SetupSection(
           number: 2,
-          title: 'CONECTAR POLAR Y CÁMARA',
+          title: 'CÁMARA Y MONITOR',
           enabled: true,
           child: _monitorCard(),
         ),
