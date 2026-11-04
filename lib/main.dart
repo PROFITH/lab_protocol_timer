@@ -9,8 +9,11 @@ import 'services/redcap_connection.dart';
 import 'session/session_controller.dart';
 import 'session/timer_page.dart';
 import 'setup/participant_setup_page.dart';
+import 'ui/app_theme.dart';
+import 'windows/monitor_popout.dart';
 import 'windows/research_monitor_bridge.dart';
 import 'windows/research_monitor_window.dart';
+import 'windows/theme_sync.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +32,30 @@ Future<void> main(List<String> args) async {
   }
 
   final isResearchMonitor = args.length > 1 && args[1] == 'research_monitor';
+  final isMonitorPopout = args.length > 2 && args[1] == monitorPopoutArg;
+
+  // Light or dark, as it was left on this computer.
+  await ThemeController.load();
+
+  if (isMonitorPopout) {
+    final owner = int.tryParse(args[2]) ?? 1;
+    final title = args.length > 3 ? args[3] : 'Monitor';
+    debugPrint('[MAIN] Iniciando ventana de monitor ($title)...');
+    await MultiWindowManager.current.waitUntilReadyToShow(
+      WindowOptions(
+        size: const Size(960, 540),
+        minimumSize: const Size(360, 220),
+        center: true,
+        title: title,
+      ),
+      () async {
+        await MultiWindowManager.current.show();
+        await MultiWindowManager.current.focus();
+      },
+    );
+    runApp(MonitorPopoutApp(ownerWindowId: owner));
+    return;
+  }
 
   if (isResearchMonitor) {
     debugPrint('[MAIN] Iniciando Research Monitor...');
@@ -46,19 +73,20 @@ Future<void> main(List<String> args) async {
       },
     );
 
+    // A toggle here is sent to the participant window.
+    ThemeSync.install(() => const [0]);
+
     runApp(
-      MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Research Monitor',
-        theme: ThemeData.dark().copyWith(
-          scaffoldBackgroundColor: const Color(0xFF07090E),
-          colorScheme: const ColorScheme.dark(
-            primary: Color(0xFF38BDF8),
-            surface: Color(0xFF1E293B),
+      ThemeScope(
+        builder: (context, mode) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Research Monitor',
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: mode,
+          home: const ResearchMonitorHost(
+            protocolConfiguration: defaultProtocolConfiguration,
           ),
-        ),
-        home: const ResearchMonitorHost(
-          protocolConfiguration: defaultProtocolConfiguration,
         ),
       ),
     );
@@ -66,6 +94,11 @@ Future<void> main(List<String> args) async {
   }
 
   debugPrint('[MAIN] Iniciando Participant Timer...');
+
+  // A toggle here is sent to the Research Monitor.
+  ThemeSync.install(() => [
+        if (ResearchMonitorBridge.instance.monitorWindowId != null) ResearchMonitorBridge.instance.monitorWindowId!,
+      ]);
 
   await RedcapConnection.load();
   // The project's visits are asked in the background; without network the
@@ -145,10 +178,13 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
     }
     await navigator.pushReplacement(
       MaterialPageRoute<void>(
-        builder: (_) => TimerPage(
-          controller: controller,
-          onExit: () => _navigator.currentState?.pushReplacement(
-            MaterialPageRoute<void>(builder: (_) => _setupPage()),
+        // The participant's screen is always dark.
+        builder: (_) => AlwaysDark(
+          child: TimerPage(
+            controller: controller,
+            onExit: () => _navigator.currentState?.pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => _setupPage()),
+            ),
           ),
         ),
       ),
@@ -157,18 +193,16 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: _navigator,
-      title: 'Lab Timer - Accelerometer Sync',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0B0F19),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF38BDF8),
-          surface: Color(0xFF1E293B),
-        ),
+    return ThemeScope(
+      builder: (context, mode) => MaterialApp(
+        navigatorKey: _navigator,
+        title: 'Lab Timer - Accelerometer Sync',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: mode,
+        home: _setupPage(),
       ),
-      home: _setupPage(),
     );
   }
 }

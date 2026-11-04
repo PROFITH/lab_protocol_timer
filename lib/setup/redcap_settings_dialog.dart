@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../services/redcap_connection.dart';
+import '../ui/app_theme.dart';
 
 /// Opens «Conexión con REDCap». Returns true when the connection changed.
 Future<bool> showRedcapSettingsDialog(BuildContext context, {http.Client? client}) async {
@@ -29,7 +30,7 @@ class RedcapSettingsDialog extends StatefulWidget {
 
 class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
   static const _green = Color(0xFF22C55E);
-  static const _red = Color(0xFFF87171);
+  static Color get _red => Palette.current.bad;
 
   final _formKey = GlobalKey<FormState>();
   late final _url = TextEditingController(text: RedcapConnection.url);
@@ -135,11 +136,11 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
         hintText: hint,
         helperText: helper,
         helperMaxLines: 3,
-        labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
-        hintStyle: const TextStyle(color: Colors.white24),
-        helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+        labelStyle: TextStyle(color: context.pal.on60, fontSize: 12),
+        hintStyle: TextStyle(color: context.pal.on24),
+        helperStyle: TextStyle(color: context.pal.on38, fontSize: 11),
         filled: true,
-        fillColor: const Color(0xFF0F172A),
+        fillColor: context.pal.panel,
         suffixIcon: suffix,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
       );
@@ -148,7 +149,7 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
   Widget build(BuildContext context) {
     final hasToken = RedcapConnection.isConfigured;
     return AlertDialog(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: context.pal.surface,
       title: const Text('Conexión con REDCap'),
       content: SizedBox(
         width: 560,
@@ -159,19 +160,19 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Opcional. Con el token de un proyecto, cada sesión se envía a ese proyecto al terminar. '
                   'Sin token, todo se guarda en la carpeta de la sesión y se puede enviar después con '
                   '«Enviar a REDCap una sesión guardada…».',
-                  style: TextStyle(color: Colors.white70, height: 1.4),
+                  style: TextStyle(color: context.pal.on70, height: 1.4),
                 ),
                 const SizedBox(height: 10),
-                Text(_current, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                Text(_current, style: TextStyle(color: context.pal.on54, fontSize: 12)),
                 const SizedBox(height: 16),
                 TextFormField(
                   key: const ValueKey('redcap_url'),
                   controller: _url,
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: context.pal.on),
                   decoration: _decoration(
                     'DIRECCIÓN DE LA API',
                     hint: RedcapConnection.defaultUrl,
@@ -188,7 +189,7 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
                   obscureText: !_showToken,
                   autocorrect: false,
                   enableSuggestions: false,
-                  style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+                  style: TextStyle(color: context.pal.on, fontFamily: 'monospace'),
                   decoration: _decoration(
                     'TOKEN DE LA API',
                     hint: hasToken ? 'Vacío: se mantiene el actual' : '32 letras y números',
@@ -197,7 +198,7 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
                     suffix: IconButton(
                       tooltip: _showToken ? 'Ocultar' : 'Mostrar',
                       icon: Icon(_showToken ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                          color: Colors.white54),
+                          color: context.pal.on54),
                       onPressed: () => setState(() => _showToken = !_showToken),
                     ),
                   ),
@@ -235,7 +236,7 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.cloud_off_rounded, color: _red, size: 18),
+                      Icon(Icons.cloud_off_rounded, color: _red, size: 18),
                       const SizedBox(width: 8),
                       Expanded(child: SelectableText(_checkError!, style: const TextStyle(height: 1.3))),
                     ],
@@ -249,7 +250,7 @@ class _RedcapSettingsDialogState extends State<RedcapSettingsDialog> {
       actions: [
         if (RedcapConnection.tokenFromApp)
           TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(foregroundColor: context.pal.bad),
             onPressed: _forget,
             child: const Text('Quitar token'),
           ),

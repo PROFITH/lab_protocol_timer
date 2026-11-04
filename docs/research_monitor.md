@@ -156,6 +156,23 @@ highest sample that falls in it, so a one-sample R peak or impact is never
 lost. Charts repaint once per screen frame, only when new samples arrived,
 without rebuilding the window.
 
+### A chart in its own window
+
+The ↗ button of a chart opens it in a window of its own, to move it to
+another screen or make it bigger. That window keeps a copy of the chart's
+samples: the monitor sends it the ones that arrived about 20 times a second,
+and the whole window again when the sensor of that monitor, the VM/XYZ mode
+or the theme change. Closing it (or «Traer aquí» in the grid) hides it and
+the chart goes back to the grid; the hidden window is reused for the next
+one, because destroying a secondary window takes the app down on Windows.
+The windows are hidden when the evaluation ends. Video cannot be moved out.
+
+## Light and dark theme
+
+The sun/moon button (start page and monitor) switches both windows and is
+remembered on this computer (`theme_mode` in the app's preferences). The
+participant's screen is always dark.
+
 ## Phone as camera
 
 The app records any camera Windows sees. To use a phone, a webcam app makes

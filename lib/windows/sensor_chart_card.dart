@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'live_signal.dart';
+import '../ui/app_theme.dart';
 
 class ChartSeries {
   final SignalBuffer buffer;
@@ -31,6 +32,9 @@ class SensorChartCard extends StatelessWidget {
   final Listenable clock;
   final Widget? trailingAction; // Aquí colocaremos el Toggle de opciones
 
+  /// Opens this monitor in its own window (a button next to the value).
+  final VoidCallback? onPopOut;
+
   const SensorChartCard({
     super.key,
     required this.title,
@@ -42,18 +46,19 @@ class SensorChartCard extends StatelessWidget {
     required this.window,
     required this.clock,
     this.trailingAction,
+    this.onPopOut,
   });
 
   @override
   Widget build(BuildContext context) {
-    final primaryColor = seriesList.isNotEmpty ? seriesList.first.color : Colors.white;
+    final primaryColor = seriesList.isNotEmpty ? seriesList.first.color : context.pal.on;
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: context.pal.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: context.pal.on12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -64,8 +69,8 @@ class SensorChartCard extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: context.pal.on,
                   fontSize: 13,
                   fontWeight: FontWeight.w900,
                 ),
@@ -75,7 +80,7 @@ class SensorChartCard extends StatelessWidget {
                 child: Text(
                   subtitle,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white38, fontSize: 10),
+                  style: TextStyle(color: context.pal.on38, fontSize: 10),
                 ),
               ),
               if (trailingAction != null) ...[
@@ -97,8 +102,21 @@ class SensorChartCard extends StatelessWidget {
               const SizedBox(width: 3),
               Text(
                 unit,
-                style: const TextStyle(color: Colors.white38, fontSize: 10),
+                style: TextStyle(color: context.pal.on38, fontSize: 10),
               ),
+              if (onPopOut != null) ...[
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: 'Abrir en otra ventana',
+                  onPressed: onPopOut,
+                  icon: const Icon(Icons.open_in_new_rounded),
+                  iconSize: 16,
+                  color: context.pal.on54,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 8),
@@ -106,13 +124,14 @@ class SensorChartCard extends StatelessWidget {
             child: ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: Container(
-                color: const Color(0xFF0F172A),
+                color: context.pal.panel,
                 width: double.infinity,
                 child: RepaintBoundary(
                   child: CustomPaint(
                     painter: LiveChartPainter(
                       seriesList: seriesList,
                       window: window,
+                      pal: context.pal,
                       repaint: clock,
                     ),
                   ),
@@ -129,10 +148,12 @@ class SensorChartCard extends StatelessWidget {
 class LiveChartPainter extends CustomPainter {
   final List<ChartSeries> seriesList;
   final Duration window;
+  final Palette pal;
 
   LiveChartPainter({
     required this.seriesList,
     required this.window,
+    required this.pal,
     super.repaint,
   });
 
@@ -223,7 +244,7 @@ class LiveChartPainter extends CustomPainter {
     final seconds = window.inMilliseconds / 1000.0;
     final step = seconds <= 10 ? 1.0 : (seconds <= 60 ? 10.0 : 30.0);
     final paint = Paint()
-      ..color = Colors.white.withAlpha(10)
+      ..color = pal.on.withAlpha(10)
       ..strokeWidth = 1.0;
     for (var t = step; t < seconds; t += step) {
       final x = chartWidth * (1 - t / seconds);
@@ -241,7 +262,7 @@ class LiveChartPainter extends CustomPainter {
     double midY = (minY + maxY) / 2;
 
     final gridPaint = Paint()
-      ..color = Colors.white.withAlpha(15)
+      ..color = pal.on.withAlpha(15)
       ..strokeWidth = 1.0;
 
     final yMaxPos = size.height * 0.1;
@@ -260,8 +281,8 @@ class LiveChartPainter extends CustomPainter {
   void _drawText(Canvas canvas, String text, double x, double y) {
     final textSpan = TextSpan(
       text: text,
-      style: const TextStyle(
-        color: Colors.white38,
+      style: TextStyle(
+        color: pal.on38,
         fontSize: 9,
         fontFamily: 'monospace',
       ),
@@ -284,6 +305,7 @@ class LiveChartPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant LiveChartPainter oldDelegate) {
     return oldDelegate.window != window ||
+        oldDelegate.pal != pal ||
         oldDelegate.seriesList.length != seriesList.length ||
         [
           for (var i = 0; i < seriesList.length; i++)

@@ -51,4 +51,29 @@ class WindowMessages {
   /// A command of the evaluator: `{'command': 'start' | 'pause' | ...}`.
   /// The answer is `{'ok': bool, 'message': String?}`.
   static const String sessionCommand = 'session_command';
+
+  // ===========================================================================
+  // Both ways
+  // ===========================================================================
+
+  /// The evaluator switched the theme: `'light'` or `'dark'`.
+  static const String themeChanged = 'theme_changed';
+
+  // ===========================================================================
+  // Monitor <-> a monitor opened in its own window
+  // ===========================================================================
+
+  /// The window of a monitor is ready to receive (window -> monitor).
+  static const String popoutReady = 'popout_ready';
+
+  /// The evaluator closed the window of a monitor: it goes back to the
+  /// grid of the Research Monitor (window -> monitor, `{'slot': int}`).
+  static const String popoutClosed = 'popout_closed';
+
+  /// What a monitor shows and every sample it has (monitor -> window).
+  static const String popoutConfig = 'popout_config';
+
+  /// The samples that arrived since the last message (monitor -> window,
+  /// about 20 times a second).
+  static const String popoutSamples = 'popout_samples';
 }

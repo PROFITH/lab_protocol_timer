@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/activity_battery.dart';
 import 'setup_format.dart';
+import '../ui/app_theme.dart';
 
-const _accent = Color(0xFF38BDF8);
+Color get _accent => Palette.current.accent;
 
 /// "Configuración de la sesión" block of the participant screen: protocol
 /// list, what the chosen protocol contains and the buttons to edit it.
@@ -91,14 +92,14 @@ class SessionSetupCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: context.pal.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: context.pal.on12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
+          Text(
             'CONFIGURACIÓN DE LA SESIÓN',
             style: TextStyle(
               color: _accent,
@@ -115,22 +116,22 @@ class SessionSetupCard extends StatelessWidget {
               initialValue: current?.protocolId,
               key: ValueKey('${current?.protocolId}|$modified|${protocols.length}'),
               isExpanded: true,
-              dropdownColor: const Color(0xFF1E293B),
-              style: const TextStyle(
-                color: Colors.white,
+              dropdownColor: context.pal.surface,
+              style: TextStyle(
+                color: context.pal.on,
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
               ),
               decoration: InputDecoration(
                 labelText: 'PROTOCOLO DE ACTIVIDADES',
-                labelStyle: const TextStyle(color: Colors.white60, fontSize: 12),
-                prefixIcon: const Icon(
+                labelStyle: TextStyle(color: context.pal.on60, fontSize: 12),
+                prefixIcon: Icon(
                   Icons.playlist_add_check_rounded,
                   color: _accent,
                   size: 20,
                 ),
                 filled: true,
-                fillColor: const Color(0xFF0F172A),
+                fillColor: context.pal.panel,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                   borderSide: BorderSide.none,
@@ -145,7 +146,7 @@ class SessionSetupCard extends StatelessWidget {
               '${current.activities.length - calibrations} actividades'
               '${calibrations > 0 ? ' y $calibrations cajas de calibración' : ''}'
               ' · ${formatSeconds(current.plannedSeconds())} previstos sin esperas',
-              style: const TextStyle(color: Colors.white70),
+              style: TextStyle(color: context.pal.on70),
             ),
             const SizedBox(height: 4),
             Text(
@@ -153,24 +154,24 @@ class SessionSetupCard extends StatelessWidget {
                   ? 'Sin sensores configurados'
                   : '${current.sensors.length} sensores: '
                       '${current.sensors.map((s) => '${s.deviceName} (${s.placementLabel ?? '?'})').join(', ')}',
-              style: const TextStyle(color: Colors.white54, fontSize: 12),
+              style: TextStyle(color: context.pal.on54, fontSize: 12),
             ),
             if (missingSerials > 0)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '$missingSerials sensor${missingSerials > 1 ? 'es' : ''} sin número de serie',
-                  style: const TextStyle(color: Color(0xFFFBBF24), fontSize: 12),
+                  style: TextStyle(color: context.pal.warn, fontSize: 12),
                 ),
               ),
             if (onSyncKind != null) ...[
               const SizedBox(height: 12),
               Row(
                 children: [
-                  const Text(
+                  Text(
                     'SINCRONIZACIÓN',
                     style: TextStyle(
-                      color: Colors.white60,
+                      color: context.pal.on60,
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
                     ),
@@ -199,26 +200,26 @@ class SessionSetupCard extends StatelessWidget {
                         'sentarse y levantarse se mantiene la palmada.'
                     : 'Una palmada seca muñeca contra muñeca, con la muñeca '
                         'de abajo apoyada en el muslo.',
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: context.pal.on54, fontSize: 12),
               ),
             ],
           ] else
-            const Text(
+            Text(
               'Todas las actividades duran lo que diga el Research Monitor y no '
               'se escriben sensores en el manifiesto.',
-              style: TextStyle(color: Colors.white54),
+              style: TextStyle(color: context.pal.on54),
             ),
           if (note != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Row(
                 children: [
-                  const Icon(Icons.history_rounded, size: 16, color: _accent),
+                  Icon(Icons.history_rounded, size: 16, color: _accent),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       note!,
-                      style: const TextStyle(color: _accent, fontSize: 12),
+                      style: TextStyle(color: _accent, fontSize: 12),
                     ),
                   ),
                 ],
@@ -248,7 +249,7 @@ class SessionSetupCard extends StatelessWidget {
               if (onDeleteCustom != null)
                 TextButton(
                   onPressed: onDeleteCustom,
-                  style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                  style: TextButton.styleFrom(foregroundColor: context.pal.bad),
                   child: const Text('Borrar protocolo guardado'),
                 ),
             ],

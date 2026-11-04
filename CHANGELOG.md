@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Several evaluators per session:** the start page has two «EVALUADOR/A» fields and «Añadir evaluador/a» for more (the extra ones can be removed). Blank fields and repeated names are left out, and this computer remembers the last ones. The session state and each participant's manifest have the new list `operators` (`["JHM", "MDF"]`); `operator` stays, with all of them in one text (`JHM, MDF`), and so does REDCap's `ws_operator` (no change to the data dictionary). The monitor shows «Evaluadores: JHM, MDF».
+- **Light and dark theme:** a sun/moon button at the top right of the start page and next to «FINALIZAR Y GUARDAR» in the monitor. Both windows follow it and this computer remembers it. The participant's screen stays dark (its phase colours are what it says).
+- **Monitors in their own window:** each chart of the monitor has a button (↗) that opens it in a window of its own, which can be moved to another screen and resized; the grid shows «Monitor N en otra ventana» with «Mostrar ventana» and «Traer aquí». Closing that window puts the chart back in the grid. The window gets every sample of the chart about 20 times a second and follows the sensor, the VM/XYZ mode and the theme of the grid. Video stays in the monitor.
 
 ### Changed
 

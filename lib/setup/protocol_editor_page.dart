@@ -8,10 +8,11 @@ import '../models/activity_battery.dart';
 import '../services/compendium.dart';
 import '../services/protocol_library.dart';
 import 'setup_format.dart';
+import '../ui/app_theme.dart';
 
-const _accent = Color(0xFF38BDF8);
-const _card = Color(0xFF1E293B);
-const _field = Color(0xFF0F172A);
+Color get _accent => Palette.current.accent;
+Color get _card => Palette.current.surface;
+Color get _field => Palette.current.panel;
 
 InputDecoration _decoration(String label, {String? hint, String? helper}) =>
     InputDecoration(
@@ -19,9 +20,9 @@ InputDecoration _decoration(String label, {String? hint, String? helper}) =>
       hintText: hint,
       helperText: helper,
       helperMaxLines: 2,
-      labelStyle: const TextStyle(color: Colors.white60, fontSize: 13),
-      hintStyle: const TextStyle(color: Colors.white24),
-      helperStyle: const TextStyle(color: Colors.white38),
+      labelStyle: TextStyle(color: Palette.current.on60, fontSize: 13),
+      hintStyle: TextStyle(color: Palette.current.on24),
+      helperStyle: TextStyle(color: Palette.current.on38),
       filled: true,
       fillColor: _field,
       border: OutlineInputBorder(
@@ -182,7 +183,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
     return DefaultTabController(
       length: 2,
       child: Scaffold(
-        backgroundColor: const Color(0xFF0B0F19),
+        backgroundColor: context.pal.canvasMain,
         appBar: AppBar(
           backgroundColor: _card,
           title: Text(_battery.displayName),
@@ -202,7 +203,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
               onPressed: _apply,
               style: FilledButton.styleFrom(
                 backgroundColor: _accent,
-                foregroundColor: Colors.black,
+                foregroundColor: context.pal.onAccent,
               ),
               icon: const Icon(Icons.check_rounded),
               label: const Text('Usar en esta sesión'),
@@ -212,7 +213,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
           bottom: TabBar(
             indicatorColor: _accent,
             labelColor: _accent,
-            unselectedLabelColor: Colors.white60,
+            unselectedLabelColor: context.pal.on60,
             tabs: [
               Tab(
                 text: 'ACTIVIDADES (${_activities.length} · '
@@ -265,7 +266,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                     backgroundColor: a.isCalibration
                         ? const Color(0xFF7C3AED)
                         : _accent.withAlpha(60),
-                    foregroundColor: Colors.white,
+                    foregroundColor: context.pal.on,
                     child: a.isCalibration
                         ? const Icon(Icons.inventory_2_outlined, size: 20)
                         : Text('${i + 1}'),
@@ -273,7 +274,7 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                   title: Text(a.name),
                   subtitle: Text(
                     a.notes == null ? details : '$details\n${a.notes}',
-                    style: const TextStyle(color: Colors.white54),
+                    style: TextStyle(color: context.pal.on54),
                   ),
                   isThreeLine: a.notes != null,
                   onTap: () => _editActivity(i),
@@ -288,8 +289,8 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                       ),
                       IconButton(
                         tooltip: 'Eliminar',
-                        icon: const Icon(Icons.delete_outline,
-                            color: Colors.redAccent, size: 20),
+                        icon: Icon(Icons.delete_outline,
+                            color: context.pal.bad, size: 20),
                         onPressed: () =>
                             setState(() => _activities.removeAt(i)),
                       ),
@@ -311,11 +312,11 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                 label: const Text('Añadir actividad'),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Arrastra para cambiar el orden. Toca una actividad para editarla.',
                   textAlign: TextAlign.right,
-                  style: TextStyle(color: Colors.white38),
+                  style: TextStyle(color: context.pal.on38),
                 ),
               ),
             ],
@@ -358,13 +359,13 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                       '${s.deviceName} · ${s.placementLabel ?? 'sin ubicación'}'),
                   subtitle: Text(
                     details,
-                    style: const TextStyle(color: Colors.white54),
+                    style: TextStyle(color: context.pal.on54),
                   ),
                   onTap: () => _editSensor(i),
                   trailing: IconButton(
                     tooltip: 'Eliminar',
-                    icon: const Icon(Icons.delete_outline,
-                        color: Colors.redAccent, size: 20),
+                    icon: Icon(Icons.delete_outline,
+                        color: context.pal.bad, size: 20),
                     onPressed: () => setState(() => _sensors.removeAt(i)),
                   ),
                 ),
@@ -382,12 +383,12 @@ class _ProtocolEditorPageState extends State<ProtocolEditorPage> {
                 label: const Text('Añadir sensor'),
               ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
                   'Los sensores van al session_manifest.json con su ubicación y '
                   'número de serie. El ID se usa también en el nombre de los archivos.',
                   textAlign: TextAlign.right,
-                  style: TextStyle(color: Colors.white38),
+                  style: TextStyle(color: context.pal.on38),
                 ),
               ),
             ],
@@ -576,7 +577,7 @@ class _ActivityDialogState extends State<_ActivityDialog> {
                                     '${_codeDescription == null ? '' : '\n$_codeDescription'}',
                             style: TextStyle(
                               color:
-                                  _code == null ? Colors.white38 : Colors.white,
+                                  _code == null ? context.pal.on38 : context.pal.on,
                             ),
                           ),
                         ),
@@ -765,15 +766,15 @@ class _CompendiumSearchDialogState extends State<CompendiumSearchDialog> {
                               dense: true,
                               leading: Text(
                                 e.code,
-                                style: const TextStyle(
-                                  fontFeatures: [FontFeature.tabularFigures()],
+                                style: TextStyle(
+                                  fontFeatures: const [FontFeature.tabularFigures()],
                                   color: _accent,
                                 ),
                               ),
                               title: Text(e.description),
                               subtitle: Text(
                                 e.heading,
-                                style: const TextStyle(color: Colors.white38),
+                                style: TextStyle(color: context.pal.on38),
                               ),
                               trailing: Text('${formatDecimal(e.met)} MET'),
                               onTap: () => Navigator.of(context).pop(e),
@@ -1010,7 +1011,7 @@ class _SensorDialogState extends State<_SensorDialog> {
                 ),
                 const SizedBox(height: 12),
                 if (type.connection != 'video') ...[
-                  const Text('Uso', style: TextStyle(fontSize: 12, color: Colors.white60)),
+                  Text('Uso', style: TextStyle(fontSize: 12, color: context.pal.on60)),
                   const SizedBox(height: 4),
                   SegmentedButton<String>(
                     key: const Key('sensor_use'),
@@ -1029,7 +1030,7 @@ class _SensorDialogState extends State<_SensorDialog> {
                       SensorUse.both => 'Uno en el laboratorio y otro para casa, cada uno con su número de serie.',
                       _ => 'Se pone en el laboratorio y se descarga al terminar.',
                     },
-                    style: const TextStyle(fontSize: 11, color: Colors.white54),
+                    style: TextStyle(fontSize: 11, color: context.pal.on54),
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -1062,10 +1063,10 @@ class _SensorDialogState extends State<_SensorDialog> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.info_outline_rounded, size: 16, color: Colors.white54),
+                      Icon(Icons.info_outline_rounded, size: 16, color: context.pal.on54),
                       const SizedBox(width: 6),
                       Expanded(
-                        child: Text(note, style: const TextStyle(fontSize: 12, color: Colors.white60)),
+                        child: Text(note, style: TextStyle(fontSize: 12, color: context.pal.on60)),
                       ),
                     ],
                   ),

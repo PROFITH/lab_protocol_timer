@@ -32,6 +32,11 @@ class SignalBuffer {
         math.max(16, (window.inMicroseconds / 1e6 * maxRateHz * 1.5).ceil()),
       );
 
+  /// A buffer of exactly [capacity] samples (the copy of a monitor in its
+  /// own window has the size of the original).
+  factory SignalBuffer.sized({required Duration window, required int capacity}) =>
+      SignalBuffer._(window, math.max(16, capacity));
+
   int get length => _length;
   bool get isEmpty => _length == 0;
 
