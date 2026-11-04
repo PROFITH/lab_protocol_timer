@@ -32,8 +32,7 @@ class MonitorLog {
   bool get isPartial => completion == 'partial';
 
   Map<String, String> get fields => {
-        for (final e in (map['redcap_fields'] as Map? ?? const {}).entries)
-          e.key.toString(): e.value.toString(),
+        for (final e in (map['redcap_fields'] as Map? ?? const {}).entries) e.key.toString(): e.value.toString(),
       };
 }
 
@@ -66,6 +65,10 @@ class MonitorSession extends ChangeNotifier {
   DateTime? lastSnapshotAt;
 
   Map<String, dynamic> get info => _info;
+
+  /// A session is open in the participant window (it sent its info). Before
+  /// that, the main window is still in the waiting room.
+  bool get hasSession => _info.isNotEmpty;
   Map<String, dynamic> get snap => _snap;
 
   void setInfo(Map<dynamic, dynamic> value) {
@@ -96,8 +99,7 @@ class MonitorSession extends ChangeNotifier {
   void setStarted(Map<dynamic, dynamic> value) {
     sessionDir = value['session_dir']?.toString();
     participantDirs = {
-      for (final e in (value['participant_dirs'] as Map? ?? const {}).entries)
-        e.key.toString(): e.value.toString(),
+      for (final e in (value['participant_dirs'] as Map? ?? const {}).entries) e.key.toString(): e.value.toString(),
     };
     fileStamp = value['file_stamp']?.toString();
     video = value['video'] == true;
@@ -148,13 +150,23 @@ class MonitorSession extends ChangeNotifier {
     return text == null || text.isEmpty ? null : text;
   }
 
+  /// Evaluators of the session (one, from an older session, or several).
+  List<String> get operators {
+    final list = _info['operators'];
+    if (list is List) {
+      final names = [for (final o in list) o.toString().trim()].where((o) => o.isNotEmpty).toList();
+      if (names.isNotEmpty) return names;
+    }
+    final one = operator;
+    return one == null ? const [] : [one];
+  }
+
   String? get study => _battery?.study;
   String? get protocolTitle => _battery?.title ?? _battery?.protocolId;
   bool get redcapConfigured => _info['redcap_configured'] == true;
   bool get voice => _snap['voice'] as bool? ?? (_info['settings'] as Map?)?['voice'] as bool? ?? true;
 
-  Map<String, dynamic> get settings =>
-      Map<String, dynamic>.from(_info['settings'] as Map? ?? const {});
+  Map<String, dynamic> get settings => Map<String, dynamic>.from(_info['settings'] as Map? ?? const {});
 
   int get activityIndex => (_snap['activity_index'] as num?)?.toInt() ?? 1;
   int get activityCount => (_snap['activity_count'] as num?)?.toInt() ?? (_battery?.activities.length ?? 0);
@@ -176,8 +188,7 @@ class MonitorSession extends ChangeNotifier {
   String? get syncReason => _snap['sync_reason']?.toString();
   String get syncKind => _snap['sync_kind']?.toString() ?? 'clap';
   int get syncCount => (_snap['sync_count'] as num?)?.toInt() ?? 0;
-  Map<String, dynamic>? get cue =>
-      _snap['cue'] is Map ? Map<String, dynamic>.from(_snap['cue'] as Map) : null;
+  Map<String, dynamic>? get cue => _snap['cue'] is Map ? Map<String, dynamic>.from(_snap['cue'] as Map) : null;
   String? get storeError => _snap['store_error']?.toString();
   String? get notice => _snap['notice']?.toString();
   int? get pendingRpeLog => (_snap['pending_rpe_log'] as num?)?.toInt();

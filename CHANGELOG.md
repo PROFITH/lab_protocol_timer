@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-11-03
+
+### Added
+
+- **Several evaluators per session:** the start page has two «EVALUADOR/A» fields and «Añadir evaluador/a» for more (the extra ones can be removed). Blank fields and repeated names are left out, and this computer remembers the last ones. The session state and each participant's manifest have the new list `operators` (`["JHM", "MDF"]`); `operator` stays, with all of them in one text (`JHM, MDF`), and so does REDCap's `ws_operator` (no change to the data dictionary). The monitor shows «Evaluadores: JHM, MDF».
+- **Light and dark theme:** a sun/moon button at the top right of the start page and next to «FINALIZAR Y GUARDAR» in the monitor. Both windows follow it and this computer remembers it. The participant's screen stays dark (its phase colours are what it says).
+- **Monitors in their own window:** each chart of the monitor has a button (↗) that opens it in a window of its own, which can be moved to another screen and resized; the grid shows «Monitor N en otra ventana» with «Mostrar ventana» and «Traer aquí». Closing that window puts the chart back in the grid. The window gets every sample of the chart about 20 times a second and follows the sensor, the VM/XYZ mode and the theme of the grid. Video stays in the monitor; any monitor, video included, can instead take the whole monitoring area (⤢ button).
+
+- **Waiting room:** the start page now ends in «PREPARAR SESIÓN», which opens the Research Monitor and goes to a waiting room. There, while the participant fills the questionnaires with one evaluator, another one types each participant's serial numbers (moved here from step 2), ticks each device as **Inicializado** (offline sensors) or **Preparado** (Polar) as a to-do list («3/9 inicializados»), connects the Polar and the camera in the monitor («Mostrar monitor») and runs the calibration (moved here from the start page). «PASAR A LA SESIÓN» asks about devices not ticked, sensors without calibration and missing serials, as before, and goes to the participant's screen; the session is started in the monitor as before. «Volver a los datos de la sesión» goes back. Until then the monitor shows «SALA DE ESPERA» instead of «EMPEZAR SESIÓN».
+- **Initialization guides:** an «i» next to each device of the waiting room opens how to initialize it (Axivity AX3/AX6, Parmay Matrix, SENS motion, Polar H10, Polar Verity Sense, SensWear), from the RUN4HEALTH protocols 14 to 17. They are Markdown files in `docs/device_guides/`, bundled with the app; a study can use its own without a new version by putting `guias_dispositivos/<type>.md` in the parent folder of the sessions.
+- **Polar linked from the waiting room:** each Polar of the laboratory shows there whether it is linked («Conectado · Polar H10 … · 72 lpm») with «Conectar» / «Desconectar»; «Conectar» searches the Bluetooth (the unit with the serial on top) and links it. The link lives in the monitor, which keeps it when the session starts; its device bar is still there to reconnect during the session. A linked Polar counts as ready in «N/M listos». Showing the monitor again from the waiting room, and going on to the session, no longer rebuilds it (that would have dropped the links).
+- **Final calibration:** «Finalizar y guardar» then asks «¿Volver a calibrar los sensores?» (Sí/No). With «Sí», when the session closes («Terminar» in the summary, or «Volver al inicio») the main window opens the calibration with the laboratory sensors of the session (the free-living ones went home). It is copied to the folder of each participant whose sensors it has as `calibracion_final_<time>.csv`, and the original stays in `calibraciones/`, so the next session of the day can use it as its starting calibration. It is not in the manifest (that was written when the session was saved).
+
+### Fixed
+
+- **Times of the Verity Sense ACC:** it streams at 52 Hz, but its samples were spread 5 ms apart as if at 200 Hz (the rate was only taken from the sensor's answer, which the Verity does not give): each frame of about 1.9 s took 0.5 s and `polar_acc` looked 74 % empty, with «frames lost» in the monitor, while every sample was there (tests of 04/11). The samples are now spread at the rate asked for, and the Verity is asked for 52 Hz explicitly; the H10 keeps 200 Hz.
+- **Smooth live charts:** every chart of a Polar is drawn 2.5 s behind the computer's clock (the same for all devices, so they stay aligned) and scrolls every frame; the Verity Sense sends its frames about every 2 s and its charts moved in jumps.
+- **Lost frames:** counted from the samples of each frame, not from the shortest gap between frames; the Verity Sense sends frames of different sizes and its gyroscope was reported with 27-39 % lost while the file had no gap.
+
+### Changed
+
+- Sessions saved by 1.3.x, with one `operator`, resume with that evaluator; the single evaluator remembered by an older version fills the first field.
+
 ## [1.3.3] - 2026-11-02
 
 ### Fixed

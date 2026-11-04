@@ -171,6 +171,9 @@ class ResearchMonitorBridge extends WindowListener implements MonitorLink {
         switch (method) {
           WindowMessages.sessionStopping || WindowMessages.sessionSuspending => const Duration(minutes: 15),
           WindowMessages.restingHrRequested => const Duration(seconds: 5),
+          // Linking a Polar from the waiting room: pairing and starting
+          // every stream can take a while.
+          WindowMessages.liveConnect || WindowMessages.liveDisconnect => const Duration(seconds: 90),
           _ => const Duration(seconds: 3),
         };
     try {

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 
+import '../calibration/calibration_page.dart';
+import '../calibration/calibration_store.dart';
 import '../windows/research_monitor_bridge.dart';
 import 'participant_view.dart';
 import 'session_controller.dart';
@@ -170,7 +172,9 @@ class _TimerPageState extends State<TimerPage> {
     controller.stopTicker();
     ResearchMonitorBridge.instance.attach(null);
     await ResearchMonitorBridge.instance.closeMonitorWindow();
-    await controller.audio.dispose();
+    // The calibration screen takes the audio over and disposes of it.
+    final recalibrated = controller.recalibrateAtEnd && controller.closing != 'cancelled' && await _recalibrate();
+    if (!recalibrated) await controller.audio.dispose();
     controller.dispose();
     if (_fullScreen) {
       try {
@@ -178,6 +182,30 @@ class _TimerPageState extends State<TimerPage> {
       } catch (_) {}
     }
     widget.onExit();
+  }
+
+  /// The final calibration the evaluator asked for when finishing: the
+  /// laboratory sensors of the session, saved in each participant's folder.
+  /// True when the calibration screen was opened.
+  Future<bool> _recalibrate() async {
+    if (!mounted) return false;
+    final record = await Navigator.of(context).push<CalibrationRecord>(
+      MaterialPageRoute(
+        builder: (_) => CalibrationPage(
+          dataRoot: controller.dataRoot,
+          audio: controller.audio,
+          initialDevices: controller.labDevices,
+        ),
+      ),
+    );
+    if (record != null) {
+      try {
+        await controller.keepFinalCalibration(record);
+      } catch (e) {
+        debugPrint('[CALIBRACIÓN] No se pudo copiar la calibración final: $e');
+      }
+    }
+    return true;
   }
 
   Future<bool> _onCloseRequested() async {

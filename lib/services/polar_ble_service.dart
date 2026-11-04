@@ -503,7 +503,6 @@ class PolarBleService {
   /// than one frame: the sensor dropped it because the link was behind.
   final Map<String, ({int received, int lost})> pmdFrameStats = {};
 
-  final Map<int, int> _lastFrameNs = {};
   final Map<String, DateTime> _lastFrameArrival = {};
 
   /// Whether frames of the PMD stream [name] (`acc`, `ppg`...) arrived in
@@ -513,7 +512,6 @@ class PolarBleService {
     final last = _lastFrameArrival[name];
     return last != null && DateTime.now().difference(last) < within;
   }
-  final Map<int, int> _frameSpanNs = {};
 
   /// Longest delay of the episode in which the link is behind (µs), or
   /// null while it keeps up.
@@ -528,25 +526,34 @@ class PolarBleService {
     pmdFrameStats.clear();
   }
 
-  void _trackFrame(int measurementType, int frameNs) {
+  void _trackFrame(int measurementType) {
     final name = pmdStreamNames[measurementType] ?? '$measurementType';
-    final previous = _lastFrameNs[measurementType];
-    _lastFrameNs[measurementType] = frameNs;
     _lastFrameArrival[name] = DateTime.now();
-    var lost = 0;
-    if (previous != null && frameNs > previous) {
-      final gap = frameNs - previous;
-      final span = _frameSpanNs[measurementType];
-      // Frames are lost whole, so the shortest gap is one frame.
-      if (span == null || gap < span) {
-        _frameSpanNs[measurementType] = gap;
-      } else if (gap > span * 1.5) {
-        lost = (gap / span).round() - 1;
-        _logEvent('frames_lost', '$name: $lost (${(gap / 1e9).toStringAsFixed(2)} s)');
-      }
-    }
     final stats = pmdFrameStats[name] ?? (received: 0, lost: 0);
-    pmdFrameStats[name] = (received: stats.received + 1, lost: stats.lost + lost);
+    pmdFrameStats[name] = (received: stats.received + 1, lost: stats.lost);
+  }
+
+  /// Frames lost before a frame of [sampleCount] samples: the sensor time
+  /// moved more than those samples take. (The shortest gap between frames
+  /// is not one frame: the Verity Sense sends frames of different sizes,
+  /// and counting from it saw losses in a gyroscope that lost nothing.)
+  void _trackLoss({
+    required int measurementType,
+    required int timestampNs,
+    required int previousTimestampNs,
+    required int sampleCount,
+    required int sampleRateHz,
+  }) {
+    if (sampleCount <= 0 || sampleRateHz <= 0) return;
+    final periodNs = 1e9 / sampleRateHz;
+    final expected = sampleCount * periodNs;
+    final gap = timestampNs - previousTimestampNs;
+    if (gap <= expected * 1.5 + periodNs) return;
+    final lost = math.max(1, ((gap - expected) / expected).round());
+    final name = pmdStreamNames[measurementType] ?? '$measurementType';
+    final stats = pmdFrameStats[name] ?? (received: 0, lost: 0);
+    pmdFrameStats[name] = (received: stats.received, lost: stats.lost + lost);
+    _logEvent('frames_lost', '$name: $lost (${((gap - expected) / 1e9).toStringAsFixed(2)} s)');
   }
 
   void _trackDelay() {
@@ -670,8 +677,6 @@ class PolarBleService {
     _lastPmdFrameTimestampNs.clear();
     _lastAccSampleTimestampNs = null;
     _measuredPeriodNs.clear();
-    _lastFrameNs.clear();
-    _frameSpanNs.clear();
     _behindMaxMicros = null;
     _resetClockSync();
   }
@@ -1672,9 +1677,12 @@ class PolarBleService {
       );
     }
 
-    // The requested configuration is 200 Hz. If the start response contains
-    // a PMD sample-rate setting, _updatePmdSettingsFromResponse() may replace
-    // this with the actual value reported by the sensor.
+    // The rate in force is the one asked for (52 Hz for the Verity Sense,
+    // 200 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
+    // a Verity at 52 Hz packed each frame in a quarter of its time and the
+    // file looked 74 % empty (test of 04/11/2026). If the start response
+    // reports a rate, _updatePmdSettingsFromResponse() takes that one.
+    _accSampleRateHz = requestedSampleRate(command) ?? _accSampleRateHz;
     _updatePmdSettingsFromResponse(
       response.payload,
       measurementType: pmdTypeAcc,
@@ -2194,6 +2202,15 @@ class PolarBleService {
       payload.length > 1 ? Uint8List.sublistView(payload, 1) : Uint8List(0);
 
   /// Every value offered for each setting type.
+  /// The sample rate a PMD start command asks for (the first setting, as
+  /// [startCommandFor] writes it), or null.
+  static int? requestedSampleRate(Uint8List command) {
+    if (command.length < 6 || command[0] != pmdOpStartMeasurement) return null;
+    if (command[2] != pmdSettingSampleRate || command[3] < 1) return null;
+    final rate = command[4] | (command[5] << 8);
+    return rate > 0 ? rate : null;
+  }
+
   static Map<int, List<int>> parsePmdSettingOptions(Uint8List data) {
     final result = <int, List<int>>{};
     var offset = 0;
@@ -2221,6 +2238,14 @@ class PolarBleService {
   /// Start command for ACC from the offered settings: [preferredRateHz] if
   /// offered (else the highest rate), the highest resolution, ±8 G if
   /// offered (else the highest range) and the most channels.
+  /// ACC rate asked to each sensor: 52 Hz for the Verity Sense (enough on
+  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 200 Hz
+  /// for the H10.
+  static int accRateFor({String deviceType = '', String deviceName = ''}) {
+    final verity = deviceType == 'verity_sense' || deviceName.toLowerCase().contains('sense');
+    return verity ? 52 : defaultAccSampleRateHz;
+  }
+
   static Uint8List accStartCommandFor(
     Map<int, List<int>> options, {
     int preferredRateHz = defaultAccSampleRateHz,
@@ -2298,7 +2323,7 @@ class PolarBleService {
   Future<Uint8List> _accStartCommand() async {
     final options = await _settingsOffered(pmdTypeAcc);
     if (options[pmdSettingSampleRate]?.isNotEmpty == true) {
-      return accStartCommandFor(options);
+      return accStartCommandFor(options, preferredRateHz: accRateFor(deviceType: deviceType, deviceName: _lastDeviceName));
     }
     return _h10AccStartCommand;
   }
@@ -2451,7 +2476,7 @@ class PolarBleService {
         frameSensorNs: frameNs,
         offsetMicros: _clock.offsetMicros ?? 0,
       ));
-      _trackFrame(measurementType, frameNs);
+      _trackFrame(measurementType);
       _trackDelay();
     }
 
@@ -2506,6 +2531,7 @@ class PolarBleService {
       previousTimestampNs: _lastPmdFrameTimestampNs[key],
       sampleCount: sampleCount,
       sampleRateHz: sampleRateHz,
+      measurementType: measurementType,
     );
     _lastPmdFrameTimestampNs[key] = timestampNs;
     return timestamps;
@@ -2789,6 +2815,7 @@ class PolarBleService {
       sampleCount: sampleCount,
       sampleRateHz:
           ecgSampleRateHz,
+      measurementType: pmdTypeEcg,
     );
 
     _lastPmdFrameTimestampNs[
@@ -2963,6 +2990,7 @@ class PolarBleService {
       sampleCount: sampleCount,
       sampleRateHz:
           _accSampleRateHz,
+      measurementType: pmdTypeAcc,
     );
 
     _lastPmdFrameTimestampNs[
@@ -3186,6 +3214,7 @@ class PolarBleService {
       sampleCount: samples.length,
       sampleRateHz:
           _accSampleRateHz,
+      measurementType: pmdTypeAcc,
     );
 
     _lastPmdFrameTimestampNs[
@@ -3656,9 +3685,19 @@ class PolarBleService {
     required int? previousTimestampNs,
     required int sampleCount,
     required int sampleRateHz,
+    int? measurementType,
   }) {
     if (sampleCount <= 0 || sampleRateHz <= 0) {
       return const [];
+    }
+    if (measurementType != null && previousTimestampNs != null && previousTimestampNs > 0 && timestampNs > previousTimestampNs) {
+      _trackLoss(
+        measurementType: measurementType,
+        timestampNs: timestampNs,
+        previousTimestampNs: previousTimestampNs,
+        sampleCount: sampleCount,
+        sampleRateHz: sampleRateHz,
+      );
     }
     final nominalNs = 1000000000.0 / sampleRateHz;
     var periodNs = _measuredPeriodNs[sampleRateHz] ?? nominalNs;

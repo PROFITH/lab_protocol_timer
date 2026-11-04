@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../models/activity_battery.dart';
 import 'monitor_session.dart';
+import '../ui/app_theme.dart';
 
-const _card = Color(0xFF111827);
-const _cardBorder = Colors.white12;
-const _accent = Color(0xFF38BDF8);
-const _amber = Color(0xFFFBBF24);
-const _green = Color(0xFF34D399);
-const _red = Color(0xFFF87171);
-const _muted = Colors.white54;
+Color get _card => Palette.current.panel;
+Color get _cardBorder => Palette.current.on12;
+Color get _accent => Palette.current.accent;
+Color get _amber => Palette.current.warn;
+Color get _green => Palette.current.good;
+Color get _red => Palette.current.bad;
+Color get _muted => Palette.current.on54;
 
 /// Colour and label of each phase for the evaluator.
 ({String label, Color color}) phaseLook(String phase) => switch (phase) {
@@ -71,17 +72,17 @@ Future<bool> confirmAction(
   final result = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: context.pal.surface,
       title: Text(title),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
-        child: Text(message, style: const TextStyle(color: Colors.white70, height: 1.4)),
+        child: Text(message, style: TextStyle(color: context.pal.on70, height: 1.4)),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Volver')),
         FilledButton(
           autofocus: true,
-          style: danger ? FilledButton.styleFrom(backgroundColor: Colors.redAccent) : null,
+          style: danger ? FilledButton.styleFrom(backgroundColor: context.pal.bad) : null,
           onPressed: () => Navigator.of(context).pop(true),
           child: Text(confirm),
         ),
@@ -176,7 +177,7 @@ class _StatusRow extends StatelessWidget {
       'finished' || 'finishing' => ('GUARDANDO...', _accent),
       'saved' => ('GUARDADA', _accent),
       'cancelled' => ('CANCELADA', _red),
-      _ => (s.resumed ? 'RECUPERADA: PULSA EMPEZAR' : 'SIN EMPEZAR', Colors.white54),
+      _ => (s.resumed ? 'RECUPERADA: PULSA EMPEZAR' : 'SIN EMPEZAR', context.pal.on54),
     };
 
     return Row(
@@ -190,13 +191,14 @@ class _StatusRow extends StatelessWidget {
             children: [
               Text(
                 [if (s.study != null) s.study!, s.visit].where((t) => t.isNotEmpty).join(' · ').toUpperCase(),
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white38, letterSpacing: 1.1),
+                style:
+                    TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: context.pal.on38, letterSpacing: 1.1),
               ),
               const SizedBox(height: 2),
               Text(
                 'Participante ${s.participants}',
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: context.pal.on),
               ),
               const SizedBox(height: 2),
               Row(
@@ -204,9 +206,9 @@ class _StatusRow extends StatelessWidget {
                   if (s.operator != null)
                     Flexible(
                       child: Text(
-                        'Evaluador: ${s.operator}',
+                        '${s.operators.length > 1 ? 'Evaluadores' : 'Evaluador'}: ${s.operators.join(', ')}',
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: _muted),
+                        style: TextStyle(fontSize: 12, color: _muted),
                       ),
                     ),
                   if (s.sessionDir != null) ...[
@@ -219,13 +221,13 @@ class _StatusRow extends StatelessWidget {
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              const Icon(Icons.folder_open_rounded, size: 14, color: _accent),
+                              Icon(Icons.folder_open_rounded, size: 14, color: _accent),
                               const SizedBox(width: 4),
                               Flexible(
                                 child: Text(
                                   _shortPath(s.sessionDir!),
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12, color: _accent),
+                                  style: TextStyle(fontSize: 12, color: _accent),
                                 ),
                               ),
                             ],
@@ -239,7 +241,7 @@ class _StatusRow extends StatelessWidget {
             ],
           ),
         ),
-        Container(width: 1, height: 54, color: Colors.white12),
+        Container(width: 1, height: 54, color: context.pal.on12),
         const SizedBox(width: 16),
         // Activity
         Expanded(
@@ -258,10 +260,10 @@ class _StatusRow extends StatelessWidget {
                                   ? 'ACTIVIDAD ${s.isWait ? (s.nextIndex ?? s.activityIndex) : s.activityIndex} DE $count'
                                   : 'ACTIVIDAD ${s.activityIndex}'
                               : 'PRIMERA ACTIVIDAD',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w800,
-                            color: Colors.white38,
+                            color: context.pal.on38,
                             letterSpacing: 1.1,
                           ),
                         ),
@@ -271,7 +273,7 @@ class _StatusRow extends StatelessWidget {
                         ],
                         if (s.attempt > 1 && !s.isWait) ...[
                           const SizedBox(width: 6),
-                          _Pill(text: 'INTENTO ${s.attempt}', color: Colors.white70),
+                          _Pill(text: 'INTENTO ${s.attempt}', color: context.pal.on70),
                         ],
                       ],
                     ),
@@ -283,13 +285,13 @@ class _StatusRow extends StatelessWidget {
                               : 'Siguiente: ${s.nextName ?? s.nameOf(s.nextIndex ?? s.activityIndex + 1)}'
                           : s.activityName,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: context.pal.on),
                     ),
                     if (!s.isWait && started && s.nextName != null && !s.isClosing)
                       Text(
                         'Después: ${s.nextName}',
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: _muted),
+                        style: TextStyle(fontSize: 12, color: _muted),
                       ),
                   ],
                 ),
@@ -298,7 +300,7 @@ class _StatusRow extends StatelessWidget {
             ],
           ),
         ),
-        Container(width: 1, height: 54, color: Colors.white12),
+        Container(width: 1, height: 54, color: context.pal.on12),
         const SizedBox(width: 16),
         // Session
         Column(
@@ -322,32 +324,32 @@ class _StatusRow extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               formatClock(s.sessionElapsedSeconds),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w900,
-                color: Colors.white,
-                fontFeatures: [FontFeature.tabularFigures()],
+                color: context.pal.on,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (recording) ...[
-                  const Icon(Icons.fiber_manual_record, size: 12, color: Colors.redAccent),
+                  Icon(Icons.fiber_manual_record, size: 12, color: context.pal.bad),
                   const SizedBox(width: 3),
-                  const Text('REC', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.redAccent)),
+                  Text('REC', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: context.pal.bad)),
                   const SizedBox(width: 10),
                 ] else if (started && s.video && !s.isClosing) ...[
-                  const Icon(Icons.videocam_off_rounded, size: 13, color: _amber),
+                  Icon(Icons.videocam_off_rounded, size: 13, color: _amber),
                   const SizedBox(width: 3),
-                  const Text('SIN VÍDEO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: _amber)),
+                  Text('SIN VÍDEO', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: _amber)),
                   const SizedBox(width: 10),
                 ],
                 Tooltip(
                   message: 'Ventanas de sincronización registradas',
                   child: Text(
                     '${s.syncCount} sinc.',
-                    style: const TextStyle(fontSize: 11, color: _muted, fontWeight: FontWeight.w700),
+                    style: TextStyle(fontSize: 11, color: _muted, fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
@@ -389,7 +391,7 @@ class _PhaseClock extends StatelessWidget {
         children: [
           Text(
             s.isWait ? 'DESCANSANDO' : (counting ? 'QUEDAN' : 'LLEVA'),
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white38, letterSpacing: 1),
+            style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: context.pal.on38, letterSpacing: 1),
           ),
           Text(
             value,
@@ -410,7 +412,7 @@ class _PhaseClock extends StatelessWidget {
                   value: progress,
                   minHeight: 5,
                   color: color,
-                  backgroundColor: Colors.white10,
+                  backgroundColor: context.pal.on10,
                 ),
               ),
             ),
@@ -484,7 +486,7 @@ class _DeviceChipView extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: c.warning ? c.color.withValues(alpha: 0.18) : const Color(0xFF0B1220),
+            color: c.warning ? c.color.withValues(alpha: 0.18) : context.pal.panelDeep,
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: c.color.withValues(alpha: c.warning ? 0.9 : 0.45), width: c.warning ? 1.5 : 1),
           ),
@@ -493,7 +495,7 @@ class _DeviceChipView extends StatelessWidget {
             children: [
               Icon(c.icon, size: 14, color: c.color),
               const SizedBox(width: 6),
-              Text(c.label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
+              Text(c.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: context.pal.on)),
               const SizedBox(width: 6),
               Text(c.detail, style: TextStyle(fontSize: 12, color: c.color, fontWeight: FontWeight.w600)),
             ],
@@ -520,7 +522,15 @@ class _Controls extends StatelessWidget {
 
     // Primary: start, pause, resume.
     final Widget primary;
-    if (!started) {
+    if (!started && !s.hasSession) {
+      primary = _BigButton(
+        label: 'SALA DE ESPERA',
+        icon: Icons.meeting_room_rounded,
+        color: _green,
+        tooltip: 'Conecta aquí los Polar y la cámara. La sesión se puede empezar cuando la pantalla principal '
+            'pase de la sala de espera a la sesión («Pasar a la sesión»).',
+      );
+    } else if (!started) {
       primary = _BigButton(
         label: 'EMPEZAR SESIÓN',
         shortcut: 'F5',
@@ -626,8 +636,9 @@ class _Controls extends StatelessWidget {
           tooltip: 'Cancelar la sesión (no se envía a REDCap)',
           onPressed: started && !closing ? () => confirmCancel(context, s, send) : null,
           icon: const Icon(Icons.close_rounded),
-          color: Colors.redAccent,
+          color: context.pal.bad,
         ),
+        const ThemeToggleButton(),
       ],
     );
   }
@@ -715,7 +726,7 @@ Future<void> confirmFinish(BuildContext context, MonitorSession s, SessionComman
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: context.pal.surface,
       title: const Text('Finalizar y guardar la sesión'),
       content: SizedBox(
         width: 520,
@@ -723,15 +734,13 @@ Future<void> confirmFinish(BuildContext context, MonitorSession s, SessionComman
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (s.isMain)
-              const _DialogWarning('La actividad en curso se corta y queda como parcial.'),
-            if (missing.isNotEmpty)
-              _DialogWarning('Sin hacer (${missing.length}): ${missing.join(', ')}.'),
+            if (s.isMain) const _DialogWarning('La actividad en curso se corta y queda como parcial.'),
+            if (missing.isNotEmpty) _DialogWarning('Sin hacer (${missing.length}): ${missing.join(', ')}.'),
             if (pendingRpe) const _DialogWarning('Falta el esfuerzo (RPE) de la última actividad.'),
-            const Text(
+            Text(
               'Se paran la cámara y los Polar, se guarda todo en la carpeta de la sesión '
               'y se envía a REDCap.',
-              style: TextStyle(color: Colors.white70, height: 1.4),
+              style: TextStyle(color: context.pal.on70, height: 1.4),
             ),
             const SizedBox(height: 14),
             TextField(
@@ -758,7 +767,46 @@ Future<void> confirmFinish(BuildContext context, MonitorSession s, SessionComman
   );
   final text = notes.text.trim();
   notes.dispose();
-  if (ok == true) await send('finish', {'notes': text});
+  if (ok != true || !context.mounted) return;
+  final recalibrate = await askRecalibrate(context);
+  await send('finish', {'notes': text, 'recalibrate': recalibrate});
+}
+
+/// At the end of the activities: calibrate the lab sensors again? The
+/// calibration opens in the participant window when the session closes
+/// («Terminar» in the summary) and goes to each participant's folder.
+Future<bool> askRecalibrate(BuildContext context) async {
+  final yes = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      backgroundColor: context.pal.surface,
+      title: const Text('¿Volver a calibrar los sensores?'),
+      content: SizedBox(
+        width: 480,
+        child: Text(
+          'Si eliges sí, al cerrar la sesión («Terminar» en el resumen) la pantalla principal abre la '
+          'calibración con los sensores de laboratorio de esta sesión. Se guarda en la carpeta de cada '
+          'participante como calibración final.',
+          style: TextStyle(color: context.pal.on70, height: 1.4),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('recalibrate_no'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('No'),
+        ),
+        FilledButton.icon(
+          key: const Key('recalibrate_yes'),
+          onPressed: () => Navigator.of(context).pop(true),
+          icon: const Icon(Icons.threed_rotation_rounded),
+          label: const Text('Sí, calibrar'),
+        ),
+      ],
+    ),
+  );
+  return yes == true;
 }
 
 Future<void> confirmCancel(BuildContext context, MonitorSession s, SessionCommandSender send) async {
@@ -766,7 +814,7 @@ Future<void> confirmCancel(BuildContext context, MonitorSession s, SessionComman
   final ok = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: context.pal.surface,
       title: const Text('Cancelar la sesión'),
       content: SizedBox(
         width: 480,
@@ -774,10 +822,10 @@ Future<void> confirmCancel(BuildContext context, MonitorSession s, SessionComman
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'No se envía nada a REDCap. Los archivos se guardan en una carpeta marcada '
               'como cancelada y la visita queda libre para empezarla de nuevo.',
-              style: TextStyle(color: Colors.white70, height: 1.4),
+              style: TextStyle(color: context.pal.on70, height: 1.4),
             ),
             const SizedBox(height: 14),
             TextField(
@@ -791,7 +839,7 @@ Future<void> confirmCancel(BuildContext context, MonitorSession s, SessionComman
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('No cancelar')),
         FilledButton(
-          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+          style: FilledButton.styleFrom(backgroundColor: context.pal.bad),
           onPressed: () => Navigator.of(context).pop(true),
           child: const Text('Cancelar la sesión'),
         ),
@@ -814,9 +862,9 @@ class _DialogWarning extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.warning_amber_rounded, color: _amber, size: 18),
+            Icon(Icons.warning_amber_rounded, color: _amber, size: 18),
             const SizedBox(width: 8),
-            Expanded(child: Text(text, style: const TextStyle(color: _amber, fontWeight: FontWeight.w600))),
+            Expanded(child: Text(text, style: TextStyle(color: _amber, fontWeight: FontWeight.w600))),
           ],
         ),
       );
@@ -874,9 +922,9 @@ class _BigButton extends StatelessWidget {
     final style = filled
         ? FilledButton.styleFrom(
             backgroundColor: color,
-            foregroundColor: Colors.black,
-            disabledBackgroundColor: Colors.white10,
-            disabledForegroundColor: Colors.white30,
+            foregroundColor: context.pal.onAccent,
+            disabledBackgroundColor: context.pal.on10,
+            disabledForegroundColor: context.pal.on30,
             minimumSize: const Size(0, 52),
             padding: const EdgeInsets.symmetric(horizontal: 16),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -888,7 +936,7 @@ class _BigButton extends StatelessWidget {
             onPressed: onPressed,
             style: OutlinedButton.styleFrom(
               foregroundColor: color,
-              side: BorderSide(color: onPressed == null ? Colors.white12 : color),
+              side: BorderSide(color: onPressed == null ? context.pal.on12 : color),
               minimumSize: const Size(0, 52),
               padding: const EdgeInsets.symmetric(horizontal: 16),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -913,8 +961,8 @@ class _SmallButton extends StatelessWidget {
         child: OutlinedButton(
           onPressed: onPressed,
           style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.white,
-            side: const BorderSide(color: Colors.white24),
+            foregroundColor: context.pal.on,
+            side: BorderSide(color: context.pal.on24),
             minimumSize: const Size(0, 52),
             padding: const EdgeInsets.symmetric(horizontal: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -1024,8 +1072,8 @@ class _BorgPicker extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.white)),
-            Text(subtitle, style: const TextStyle(fontSize: 12, color: _muted)),
+            Text(title, style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: context.pal.on)),
+            Text(subtitle, style: TextStyle(fontSize: 12, color: _muted)),
             const SizedBox(height: 8),
             Row(
               children: [
@@ -1039,7 +1087,7 @@ class _BorgPicker extends StatelessWidget {
                           onPressed: () => onPick(v),
                           style: FilledButton.styleFrom(
                             backgroundColor: colorOf(v),
-                            foregroundColor: Colors.black,
+                            foregroundColor: context.pal.onAccent,
                             minimumSize: const Size(0, 44),
                             padding: EdgeInsets.zero,
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -1085,9 +1133,9 @@ class _ActivityRow extends StatelessWidget {
         : log == null
             ? upcoming
                 ? (Icons.radio_button_checked_rounded, _accent, 'siguiente')
-                : (Icons.radio_button_unchecked_rounded, Colors.white30, 'pendiente')
+                : (Icons.radio_button_unchecked_rounded, context.pal.on30, 'pendiente')
             : log.isSkipped
-                ? (Icons.do_not_disturb_on_rounded, Colors.white38, 'no realizada')
+                ? (Icons.do_not_disturb_on_rounded, context.pal.on38, 'no realizada')
                 : log.isPartial
                     ? (Icons.timelapse_rounded, _amber, 'parcial · ${formatClock(log.durationSeconds)}')
                     : (Icons.check_circle_rounded, _green, 'hecha · ${formatClock(log.durationSeconds)}');
@@ -1105,9 +1153,9 @@ class _ActivityRow extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
-        color: current || upcoming ? color.withValues(alpha: 0.10) : const Color(0xFF0B1220),
+        color: current || upcoming ? color.withValues(alpha: 0.10) : context.pal.panelDeep,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: current || upcoming ? color.withValues(alpha: 0.7) : Colors.white10),
+        border: Border.all(color: current || upcoming ? color.withValues(alpha: 0.7) : context.pal.on10),
       ),
       child: Column(
         children: [
@@ -1122,7 +1170,7 @@ class _ActivityRow extends StatelessWidget {
                   const SizedBox(width: 8),
                   SizedBox(
                     width: 22,
-                    child: Text('$index', style: const TextStyle(color: Colors.white38, fontWeight: FontWeight.w800)),
+                    child: Text('$index', style: TextStyle(color: context.pal.on38, fontWeight: FontWeight.w800)),
                   ),
                   Expanded(
                     child: Column(
@@ -1131,12 +1179,12 @@ class _ActivityRow extends StatelessWidget {
                         Text(
                           activity?.name ?? 'Actividad $index',
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w700, color: Colors.white, fontSize: 13),
+                          style: TextStyle(fontWeight: FontWeight.w700, color: context.pal.on, fontSize: 13),
                         ),
                         Text(
                           [state, ...details].join(' · '),
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 11, color: color == Colors.white30 ? Colors.white38 : color),
+                          style: TextStyle(fontSize: 11, color: color == context.pal.on30 ? context.pal.on38 : color),
                         ),
                       ],
                     ),
@@ -1146,7 +1194,7 @@ class _ActivityRow extends StatelessWidget {
                       padding: const EdgeInsets.only(left: 6),
                       child: Text(
                         formatClock(activity!.durationSeconds!),
-                        style: const TextStyle(fontSize: 11, color: Colors.white38),
+                        style: TextStyle(fontSize: 11, color: context.pal.on38),
                       ),
                     ),
                   if (canGo)
@@ -1173,7 +1221,7 @@ class _ActivityRow extends StatelessWidget {
                       ),
                     ),
                   if (log != null)
-                    Icon(open ? Icons.expand_less_rounded : Icons.edit_note_rounded, color: Colors.white38, size: 18),
+                    Icon(open ? Icons.expand_less_rounded : Icons.edit_note_rounded, color: context.pal.on38, size: 18),
                 ],
               ),
             ),
@@ -1203,7 +1251,7 @@ class _LogOnlyList extends StatelessWidget {
   Widget build(BuildContext context) {
     final logs = session.logs;
     if (logs.isEmpty) {
-      return const Center(
+      return Center(
         child: Text('Las actividades aparecerán aquí al terminarlas.', style: TextStyle(color: _muted)),
       );
     }
@@ -1236,8 +1284,7 @@ class _LogEditorState extends State<_LogEditor> {
   late String _completion = widget.log.completion;
   late int? _rpe = widget.log.rpe;
   late final TextEditingController _incident = TextEditingController(text: widget.log.incident ?? '');
-  late final TextEditingController _restingHr =
-      TextEditingController(text: widget.log.restingHr?.toString() ?? '');
+  late final TextEditingController _restingHr = TextEditingController(text: widget.log.restingHr?.toString() ?? '');
   final Map<String, TextEditingController> _fields = {};
   final Map<String, String?> _choices = {};
   String? _error;
@@ -1318,7 +1365,7 @@ class _LogEditorState extends State<_LogEditor> {
           const Divider(height: 12),
           Row(
             children: [
-              const Text('Resultado', style: TextStyle(color: _muted, fontSize: 12)),
+              Text('Resultado', style: TextStyle(color: _muted, fontSize: 12)),
               const SizedBox(width: 10),
               Expanded(
                 child: SegmentedButton<String>(
@@ -1337,7 +1384,7 @@ class _LogEditorState extends State<_LogEditor> {
           const SizedBox(height: 10),
           Row(
             children: [
-              const Text('RPE', style: TextStyle(color: _muted, fontSize: 12)),
+              Text('RPE', style: TextStyle(color: _muted, fontSize: 12)),
               const SizedBox(width: 10),
               for (var v = 0; v <= 10; v++)
                 Expanded(
@@ -1349,14 +1396,14 @@ class _LogEditorState extends State<_LogEditor> {
                         height: 30,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: _rpe == v ? _BorgPicker.colorOf(v) : Colors.white10,
+                          color: _rpe == v ? _BorgPicker.colorOf(v) : context.pal.on10,
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           '$v',
                           style: TextStyle(
                             fontWeight: FontWeight.w800,
-                            color: _rpe == v ? Colors.black : Colors.white70,
+                            color: _rpe == v ? context.pal.onAccent : context.pal.on70,
                           ),
                         ),
                       ),
@@ -1417,7 +1464,7 @@ class _LogEditorState extends State<_LogEditor> {
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(_error!, style: const TextStyle(color: _red, fontWeight: FontWeight.w600)),
+              child: Text(_error!, style: TextStyle(color: _red, fontWeight: FontWeight.w600)),
             ),
           const SizedBox(height: 10),
           Row(
@@ -1453,61 +1500,61 @@ Future<bool?> showPreflightDialog(
   return showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: const Color(0xFF1E293B),
+      backgroundColor: context.pal.surface,
       title: Text(problems.isEmpty ? 'Todo listo' : 'Antes de empezar'),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
           child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final item in items)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      item.manual
-                          ? Icons.back_hand_outlined
-                          : item.info
-                              ? Icons.info_outline_rounded
-                              : item.ok
-                                  ? Icons.check_circle_rounded
-                                  : Icons.warning_amber_rounded,
-                      color: item.manual
-                          ? _accent
-                          : item.info
-                              ? Colors.white60
-                              : item.ok
-                                  ? _green
-                                  : _amber,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item.label, style: const TextStyle(fontWeight: FontWeight.w800)),
-                          Text(item.detail, style: const TextStyle(color: Colors.white60, fontSize: 12)),
-                        ],
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        item.manual
+                            ? Icons.back_hand_outlined
+                            : item.info
+                                ? Icons.info_outline_rounded
+                                : item.ok
+                                    ? Icons.check_circle_rounded
+                                    : Icons.warning_amber_rounded,
+                        color: item.manual
+                            ? _accent
+                            : item.info
+                                ? context.pal.on60
+                                : item.ok
+                                    ? _green
+                                    : _amber,
+                        size: 20,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text(item.detail, style: TextStyle(color: context.pal.on60, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            if (problems.isNotEmpty)
-              const Padding(
-                padding: EdgeInsets.only(top: 10),
-                child: Text(
-                  'Se puede empezar igualmente; lo que no esté conectado no se registra '
-                  'hasta que se conecte.',
-                  style: TextStyle(color: Colors.white60, fontSize: 12),
+              if (problems.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    'Se puede empezar igualmente; lo que no esté conectado no se registra '
+                    'hasta que se conecte.',
+                    style: TextStyle(color: context.pal.on60, fontSize: 12),
+                  ),
                 ),
-              ),
-          ],
+            ],
           ),
         ),
       ),
@@ -1588,7 +1635,7 @@ Future<void> showSessionSummaryDialog(
             );
 
         return AlertDialog(
-          backgroundColor: const Color(0xFF1E293B),
+          backgroundColor: context.pal.surface,
           title: const Text('Sesión guardada'),
           content: SizedBox(
             width: 560,
@@ -1596,14 +1643,14 @@ Future<void> showSessionSummaryDialog(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                line(Icons.timer_outlined, Colors.white70, 'Duración: ${formatClock(total)}'),
+                line(Icons.timer_outlined, context.pal.on70, 'Duración: ${formatClock(total)}'),
                 line(
                   Icons.checklist_rounded,
                   notDone + skipped > 0 ? _amber : _green,
                   'Actividades: $done ${done == 1 ? 'completa' : 'completas'}'
-                      '${partial > 0 ? ', $partial ${partial == 1 ? 'parcial' : 'parciales'}' : ''}'
-                      '${skipped > 0 ? ', $skipped ${skipped == 1 ? 'saltada' : 'saltadas'}' : ''}'
-                      '${notDone > 0 ? ', $notDone sin hacer' : ''}',
+                  '${partial > 0 ? ', $partial ${partial == 1 ? 'parcial' : 'parciales'}' : ''}'
+                  '${skipped > 0 ? ', $skipped ${skipped == 1 ? 'saltada' : 'saltadas'}' : ''}'
+                  '${notDone > 0 ? ', $notDone sin hacer' : ''}',
                 ),
                 line(Icons.sync_rounded, syncs > 0 ? _green : _amber, '$syncs ventanas de sincronización'),
                 line(
@@ -1611,29 +1658,33 @@ Future<void> showSessionSummaryDialog(
                   video ? _green : _amber,
                   video ? 'Vídeo guardado en la carpeta' : 'Sin vídeo',
                 ),
-                line(Icons.description_outlined, Colors.white70, '$files archivos en la carpeta'),
+                line(Icons.description_outlined, context.pal.on70, '$files archivos en la carpeta'),
                 if (storeError != null) line(Icons.error_rounded, _red, 'Error al escribir: $storeError'),
                 const SizedBox(height: 6),
                 if (redcapSkipped)
-                  line(Icons.cloud_off_rounded, Colors.white70,
+                  line(
+                      Icons.cloud_off_rounded,
+                      context.pal.on70,
                       'Sin conexión con REDCap: la sesión se ha guardado solo en su carpeta (los registros, en '
                       'redcap_records.json). Para enviarla, pon el token en «Conexión con REDCap» y usa '
                       '«Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else if (redcapError != null)
-                  line(Icons.cloud_off_rounded, _red,
+                  line(
+                      Icons.cloud_off_rounded,
+                      _red,
                       'REDCap: $redcapError\nLos registros quedan en redcap_records.json. Si cierras la app sin '
                       'reintentar, se envían después con «Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else
                   line(Icons.cloud_done_rounded, _green, 'Enviado a REDCap'),
                 if (!after.isEmpty) ...[
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'ANTES DE QUE SE VAYA EL PARTICIPANTE',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       letterSpacing: 0.8,
-                      color: Colors.white70,
+                      color: context.pal.on70,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -1641,27 +1692,33 @@ Future<void> showSessionSummaryDialog(
                     line(Icons.download_rounded, _amber,
                         'Descarga y copia a la carpeta de la sesión: ${names(after.download)}.'),
                   if (after.downloadAndRestart.isNotEmpty)
-                    line(Icons.restart_alt_rounded, _amber,
+                    line(
+                        Icons.restart_alt_rounded,
+                        _amber,
                         'Descarga, copia a la carpeta y vuelve a inicializar para la vida libre: '
                         '${names(after.downloadAndRestart)}.'),
                   if (after.startFreeLiving.isNotEmpty)
-                    line(Icons.play_circle_outline_rounded, _amber,
+                    line(
+                        Icons.play_circle_outline_rounded,
+                        _amber,
                         'Ponle el juego de vida libre (otros dispositivos, ya grabando y calibrados, '
                         'con su número de serie): ${names(after.startFreeLiving)}.'),
                   if (unnamed.isNotEmpty)
-                    line(Icons.drive_file_rename_outline_rounded, Colors.white70,
+                    line(
+                        Icons.drive_file_rename_outline_rounded,
+                        context.pal.on70,
                         'Sin número de serie en la configuración: nombra sus archivos ${unnamed.join(', ')} '
                         '(con su extensión) para que SAVES los reconozca.'),
                 ],
                 if (dir != null) ...[
                   const SizedBox(height: 8),
-                  SelectableText(dir, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                  SelectableText(dir, style: TextStyle(fontSize: 12, color: context.pal.on54)),
                   for (final other in otherDirs)
-                    SelectableText(other, style: const TextStyle(fontSize: 12, color: Colors.white54)),
+                    SelectableText(other, style: TextStyle(fontSize: 12, color: context.pal.on54)),
                   if (otherDirs.isNotEmpty)
-                    const Text(
+                    Text(
                       'Una carpeta por participante: cada una lleva su manifiesto y sus archivos Polar; el vídeo está en todas.',
-                      style: TextStyle(fontSize: 11, color: Colors.white38),
+                      style: TextStyle(fontSize: 11, color: context.pal.on38),
                     ),
                 ],
               ],

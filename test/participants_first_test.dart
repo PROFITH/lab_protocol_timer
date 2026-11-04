@@ -239,7 +239,7 @@ void main() {
           participants: [p1, p2],
           battery: battery,
           dataRoot: root.path,
-          operator: 'JHM',
+          operators: ['JHM', 'MDF'],
           clock: clock,
           monitor: monitor,
           redcapConfigured: false,
@@ -278,6 +278,8 @@ void main() {
         expect(participants[1]['folder'], second, reason: dir);
         expect((participants[1]['sensors'] as List).first['serial'], startsWith('B-'));
         expect(state['data_root'], root.path);
+        expect(state['operators'], ['JHM', 'MDF'], reason: dir);
+        expect(state['operator'], 'JHM, MDF', reason: dir);
         expect(File('$dir$_sep${SessionStore.eventsFile}').existsSync(), isTrue);
       }
 
@@ -290,6 +292,7 @@ void main() {
       final resumed = SessionController.resume(saved, clock: FakeSessionClock(), monitor: _FolderMonitor(), redcapConfigured: false);
       expect(resumed.store!.directoryOf('002').path, second);
       expect(resumed.dataRoot, root.path);
+      expect(resumed.operators, ['JHM', 'MDF']);
       await resumed.store!.close();
       resumed.dispose();
 
@@ -298,6 +301,10 @@ void main() {
       final m2 = jsonDecode(File('$second$_sep${SessionStore.manifestFile}').readAsStringSync()) as Map;
       expect((m1['participants'] as List).single['participant_id'], '001');
       expect((m2['participants'] as List).single['participant_id'], '002');
+      for (final m in [m1, m2]) {
+        expect(m['operators'], ['JHM', 'MDF']);
+        expect(m['operator'], 'JHM, MDF');
+      }
       expect(m2['session_participants'], ['001', '002']);
       expect(m1['sensors']['polar_h10']['serial'], 'A-polar_h10');
       expect(m2['sensors']['polar_h10']['serial'], 'B-polar_h10');

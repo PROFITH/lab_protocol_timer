@@ -22,7 +22,9 @@ import 'monitor_session.dart';
 import 'polar_session_files.dart';
 import 'session_console.dart';
 import 'window_messages.dart';
+import 'monitor_popout.dart';
 import 'sensor_chart_card.dart';
+import '../ui/app_theme.dart';
 
 
 /// Keeps one monitor window for the whole run of the app.
@@ -118,6 +120,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   /// of rebuilding the window on every sample.
   final LiveFrameClock _frameClock = LiveFrameClock();
   late final Ticker _frameTicker;
+
+  /// The monitor that takes the whole monitoring area (null: the four).
+  int? _expandedSlot;
+
+  void _toggleExpanded(int slotId) =>
+      setState(() => _expandedSlot = _expandedSlot == slotId ? null : slotId);
+
+  /// Monitors opened in their own window.
+  late final MonitorPopouts _popouts = MonitorPopouts(
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+  );
 
   /// Rebuilds the device panel when the link warnings change.
   Timer? _linkTimer;
@@ -231,7 +246,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(device.service.linkStatus.value.message),
-          backgroundColor: Colors.redAccent,
+          backgroundColor: context.pal.bad,
         ),
       );
     }
@@ -293,7 +308,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               : 'No se pudo recuperar ${camera.configuration.deviceName}: '
                   '${camera.service.lastStartError ?? camera.service.cameraError.value ?? 'error desconocido'}',
         ),
-        backgroundColor: ok ? const Color(0xFF34D399) : Colors.redAccent,
+        backgroundColor: ok ? context.pal.good : context.pal.bad,
       ),
     );
   }
@@ -425,7 +440,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     _syncDevices();
 
     _frameTicker = createTicker((_) {
-      if (_samplesPending) {
+      // Charts drawn with a lag scroll with the clock: every frame.
+      if (_samplesPending || _liveDevices.values.any((d) => d.service.isConnected)) {
         _samplesPending = false;
         _frameClock.tick();
       }
@@ -556,16 +572,16 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         builder: (BuildContext dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) => AlertDialog(
-              backgroundColor: const Color(0xFF1E293B),
+              backgroundColor: context.pal.surface,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
               title: Row(
                 children: [
-                  const Icon(Icons.videocam_rounded, color: Color(0xFF38BDF8)),
+                  Icon(Icons.videocam_rounded, color: context.pal.accent),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       'Cámara para ${camera.configuration.deviceId}',
-                      style: const TextStyle(color: Colors.white),
+                      style: TextStyle(color: context.pal.on),
                     ),
                   ),
                 ],
@@ -585,14 +601,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                           final busy = taken.contains(option.name);
                           return ListTile(
                             enabled: !busy,
-                            leading: const Icon(Icons.camera_alt, color: Color(0xFF38BDF8)),
+                            leading: Icon(Icons.camera_alt, color: context.pal.accent),
                             title: Text(
                               option.name,
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              style: TextStyle(color: context.pal.on, fontWeight: FontWeight.bold),
                             ),
                             subtitle: Text(
                               busy ? 'En uso por otra cámara de la sesión' : 'Lens: ${option.lensDirection.name}',
-                              style: const TextStyle(color: Colors.white38, fontSize: 11),
+                              style: TextStyle(color: context.pal.on38, fontSize: 11),
                             ),
                             onTap: () => Navigator.of(dialogContext).pop(option),
                           );
@@ -602,11 +618,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     const SizedBox(height: 12),
                     DropdownButtonFormField<ResolutionPreset>(
                       initialValue: preset,
-                      dropdownColor: const Color(0xFF1E293B),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      dropdownColor: context.pal.surface,
+                      style: TextStyle(color: context.pal.on),
+                      decoration: InputDecoration(
                         labelText: 'Resolución',
-                        labelStyle: TextStyle(color: Colors.white54),
+                        labelStyle: TextStyle(color: context.pal.on54),
                       ),
                       items: const [
                         DropdownMenuItem(value: ResolutionPreset.high, child: Text('720p')),
@@ -621,11 +637,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     DropdownButtonFormField<VideoQuality>(
                       key: ValueKey('video_quality_${preset.name}'),
                       initialValue: quality,
-                      dropdownColor: const Color(0xFF1E293B),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      dropdownColor: context.pal.surface,
+                      style: TextStyle(color: context.pal.on),
+                      decoration: InputDecoration(
                         labelText: 'Calidad',
-                        labelStyle: TextStyle(color: Colors.white54),
+                        labelStyle: TextStyle(color: context.pal.on54),
                       ),
                       items: [
                         for (final option in VideoQuality.values)
@@ -641,21 +657,21 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       },
                     ),
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'Normal basta para contar pasos y repeticiones. El peso es '
                       'por cámara y, si la cámara da menos resolución de la '
                       'elegida, menor.',
-                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                      style: TextStyle(color: context.pal.on38, fontSize: 11),
                     ),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String?>(
                       initialValue: microphone,
                       isExpanded: true,
-                      dropdownColor: const Color(0xFF1E293B),
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      dropdownColor: context.pal.surface,
+                      style: TextStyle(color: context.pal.on),
+                      decoration: InputDecoration(
                         labelText: 'Micrófono',
-                        labelStyle: TextStyle(color: Colors.white54),
+                        labelStyle: TextStyle(color: context.pal.on54),
                       ),
                       items: [
                         DropdownMenuItem<String?>(
@@ -676,12 +692,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       onChanged: (value) => setDialogState(() => microphone = value),
                     ),
                     const SizedBox(height: 8),
-                    const Text(
+                    Text(
                       'El vídeo graba también el audio (las palmadas) de este '
                       'micrófono. Elige micrófono, resolución y calidad antes '
                       'de pulsar la cámara; la elección se recuerda en este '
                       'ordenador.',
-                      style: TextStyle(color: Colors.white38, fontSize: 11),
+                      style: TextStyle(color: context.pal.on38, fontSize: 11),
                     ),
                   ],
                 ),
@@ -739,8 +755,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       unawaited(files.stop());
     }
     unawaited(_videoLog?.close());
+    for (final scan in _remoteScans.values) {
+      unawaited(scan.cancel());
+    }
     MultiWindowManager.current.removeListener(this);
     _frameTicker.dispose();
+    _popouts.dispose();
     _linkTimer?.cancel();
     for (final device in _liveDevices.values) {
       device.dispose();
@@ -787,7 +807,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(text),
-        backgroundColor: error ? Colors.redAccent : const Color(0xFF334155),
+        backgroundColor: error ? context.pal.bad : context.pal.border,
         duration: Duration(seconds: error ? 6 : 4),
       ),
     );
@@ -834,6 +854,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   /// Checks the devices and starts the session, with or without video.
   Future<void> _onStartRequested() async {
     if (!_session.isIdle) return;
+    if (!_session.hasSession) {
+      _snack('Primero pulsa «Pasar a la sesión» en la sala de espera de la pantalla principal.');
+      return;
+    }
     final items = <PreflightItem>[];
     final manual = <PreflightItem>[];
     for (final device in _protocolConfiguration.devices) {
@@ -1144,11 +1168,33 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     int fromWindowId,
     dynamic arguments,
   ) async {
-    if (eventName != WindowMessages.sessionSnapshot) {
+    final popoutAnswer = await _popouts.handleEvent(eventName, fromWindowId, arguments);
+    if (popoutAnswer != null) return popoutAnswer;
+    if (eventName == WindowMessages.themeChanged) return null;
+
+    if (eventName != WindowMessages.sessionSnapshot &&
+        eventName != WindowMessages.liveDevices &&
+        eventName != WindowMessages.liveScan) {
       debugPrint('[MONITOR] Evento recibido: $eventName');
     }
 
+    final args = arguments is Map ? arguments : const {};
     switch (eventName) {
+      case WindowMessages.liveDevices:
+        return _liveDevicesJson();
+
+      case WindowMessages.liveScan:
+        return _remoteScan(args['device_id']?.toString() ?? '', args['action']?.toString() ?? 'results');
+
+      case WindowMessages.liveConnect:
+        return _remoteConnect(args['device_id']?.toString() ?? '', args['ble_id']?.toString() ?? '');
+
+      case WindowMessages.liveDisconnect:
+        final device = _liveDevices[args['device_id']?.toString()];
+        if (device != null) await device.service.disconnect();
+        if (mounted) setState(() {});
+        return true;
+
       case WindowMessages.sessionSnapshot:
         if (arguments is Map) _onSnapshot(arguments);
         return true;
@@ -1203,6 +1249,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return true;
 
       case WindowMessages.releaseResources:
+        for (final slot in _monitorSlots) {
+          _popouts.bringBack(slot.slotId);
+        }
         try {
           if (_polarFiles.isNotEmpty || _cameras.values.any((c) => c.service.isRecording)) {
             await _stopRecording();
@@ -1217,6 +1266,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         } catch (e) {
           debugPrint('[MONITOR] Error liberando cámara/Bluetooth: $e');
         }
+        // The session is over: the next one starts in the waiting room.
+        _session.clear();
         if (mounted) setState(() {});
         return true;
     }
@@ -1246,15 +1297,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
-              backgroundColor: const Color(0xFF1E293B),
+              backgroundColor: context.pal.surface,
               shape: const RoundedRectangleBorder(
                 borderRadius: BorderRadius.all(Radius.circular(24)),
               ),
-              title: const Row(
+              title: Row(
                 children: [
-                  Icon(Icons.tune_rounded, color: Color(0xFF38BDF8)),
-                  SizedBox(width: 10),
-                  Text('Duración de las fases', style: TextStyle(color: Colors.white)),
+                  Icon(Icons.tune_rounded, color: context.pal.accent),
+                  const SizedBox(width: 10),
+                  Text('Duración de las fases', style: TextStyle(color: context.pal.on)),
                 ],
               ),
               content: SizedBox(
@@ -1263,10 +1314,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      const Text(
+                      Text(
                         'Valen para las actividades que no fijan su propia duración en el '
                         'protocolo. Los cambios se aplican desde la siguiente actividad.',
-                        style: TextStyle(color: Colors.white54, fontSize: 12),
+                        style: TextStyle(color: context.pal.on54, fontSize: 12),
                       ),
                       const SizedBox(height: 14),
                       _buildDurationInput(
@@ -1289,14 +1340,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       const SizedBox(height: 16),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Esperar al evaluador entre actividades',
-                            style: TextStyle(fontSize: 14, color: Colors.white)),
-                        subtitle: const Text(
+                        title: Text('Esperar al evaluador entre actividades',
+                            style: TextStyle(fontSize: 14, color: context.pal.on)),
+                        subtitle: Text(
                           'Tras cada actividad, descanso hasta pulsar SIGUIENTE (recomendado)',
-                          style: TextStyle(fontSize: 12, color: Colors.white54),
+                          style: TextStyle(fontSize: 12, color: context.pal.on54),
                         ),
                         value: lapMode,
-                        activeTrackColor: const Color(0xFF38BDF8),
+                        activeTrackColor: context.pal.accent,
                         onChanged: (val) => setStateDialog(() => lapMode = val),
                       ),
                     ],
@@ -1306,7 +1357,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               actions: <Widget>[
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancelar', style: TextStyle(color: Colors.white54)),
+                  child: Text('Cancelar', style: TextStyle(color: context.pal.on54)),
                 ),
                 FilledButton(
                   onPressed: () {
@@ -1337,8 +1388,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                     Navigator.of(context).pop();
                   },
                   style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF38BDF8),
-                    foregroundColor: Colors.black,
+                    backgroundColor: context.pal.accent,
+                    foregroundColor: context.pal.onAccent,
                   ),
                   child: const Text('Guardar'),
                 ),
@@ -1360,6 +1411,102 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     'verity_sense': 'sense',
   };
 
+  /// How well a unit found fits [configuration]: 0 its serial is in the
+  /// name, 1 right type, 2 another Polar, 3 anything else.
+  static int _bleRank(DeviceConfiguration configuration, BleDevice d) {
+    final name = (d.name ?? '').toLowerCase();
+    final serial = configuration.serial?.toLowerCase();
+    final hint = _bleNameHints[configuration.type];
+    if (serial != null && serial.isNotEmpty && name.contains(serial)) return 0;
+    if (hint != null && name.contains(hint)) return 1;
+    if (name.contains('polar')) return 2;
+    return 3;
+  }
+
+  /// Units found for [device], best first, without those linked to
+  /// another device of the session.
+  List<BleDevice> _bleCandidates(_LiveDevice device, Iterable<BleDevice> found) {
+    final taken = {
+      for (final other in _liveDevices.values)
+        if (other != device && other.service.connectedDeviceId != null) other.service.connectedDeviceId!,
+    };
+    return [
+      for (final d in found)
+        if (!taken.contains(d.deviceId)) d,
+    ]..sort((a, b) => _bleRank(device.configuration, a).compareTo(_bleRank(device.configuration, b)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Linking from the waiting room (main window)
+  // ---------------------------------------------------------------------------
+
+  final Map<String, List<BleDevice>> _remoteScanFound = {};
+  final Map<String, StreamSubscription<List<BleDevice>>> _remoteScans = {};
+
+  List<Map<String, dynamic>> _liveDevicesJson() => [
+        for (final e in _liveDevices.entries)
+          {
+            'device_id': e.key,
+            'sensor_id': e.value.configuration.sensorId,
+            'participant_id': e.value.configuration.participantId,
+            'state': e.value.service.linkStatus.value.state.name,
+            'message': e.value.service.linkStatus.value.message,
+            'name': e.value.service.connectedDeviceName,
+            'hr': e.value.service.currentHeartRate,
+          },
+      ];
+
+  Future<List<Map<String, dynamic>>> _remoteScan(String deviceId, String action) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return const [];
+    if (action == 'stop') {
+      await _remoteScans.remove(deviceId)?.cancel();
+      _remoteScanFound.remove(deviceId);
+      await device.service.stopScan();
+      return const [];
+    }
+    if (action == 'start' && !_remoteScans.containsKey(deviceId)) {
+      _remoteScanFound[deviceId] = const [];
+      _remoteScans[deviceId] = device.service.scanStream.listen((found) => _remoteScanFound[deviceId] = found);
+      unawaited(device.service.startScan());
+    }
+    return [
+      for (final d in _bleCandidates(device, _remoteScanFound[deviceId] ?? const []))
+        {
+          'id': d.deviceId,
+          'name': d.name?.isNotEmpty == true ? d.name : 'Dispositivo BLE (${d.deviceId})',
+          'match': _bleRank(device.configuration, d),
+        },
+    ];
+  }
+
+  Future<Map<String, dynamic>> _remoteConnect(String deviceId, String bleId) async {
+    final device = _liveDevices[deviceId];
+    if (device == null) return {'ok': false, 'message': 'El monitor no tiene ese dispositivo'};
+    BleDevice? ble;
+    for (final d in _remoteScanFound[deviceId] ?? const <BleDevice>[]) {
+      if (d.deviceId == bleId) ble = d;
+    }
+    await _remoteScans.remove(deviceId)?.cancel();
+    _remoteScanFound.remove(deviceId);
+    await device.service.stopScan();
+    if (ble == null) return {'ok': false, 'message': 'Ya no se ve esa unidad: busca otra vez'};
+    final connected = await device.service.connectToDevice(ble);
+    final failed = connected ? await device.startConfiguredSignals() : const <String>[];
+    if (mounted) setState(() {});
+    final name = ble.name ?? ble.deviceId;
+    final service = device.service;
+    return {
+      'ok': connected,
+      'message': !connected
+          ? service.linkStatus.value.message
+          : failed.isEmpty
+              ? 'Conectado a $name'
+              : 'Conectado a $name, sin ${failed.join(', ')}'
+                  '${service.pmdProblem == null ? '' : '. ${service.pmdProblem}.'}',
+    };
+  }
+
   void _showPolarConnectionDialog(String deviceId) {
     final device = _liveDevices[deviceId];
     if (device == null) return;
@@ -1378,28 +1525,28 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         context: context,
         builder: (dialogCtx) {
           return AlertDialog(
-            backgroundColor: const Color(0xFF1E293B),
+            backgroundColor: context.pal.surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(24),
             ),
             title: Row(
               children: [
-                const Icon(
+                Icon(
                   Icons.bluetooth_connected_rounded,
-                  color: Color(0xFF38BDF8),
+                  color: context.pal.accent,
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     title,
-                    style: const TextStyle(color: Colors.white),
+                    style: TextStyle(color: context.pal.on),
                   ),
                 ),
               ],
             ),
             content: Text(
               'Vinculado a ${service.connectedDeviceName ?? service.connectedDeviceId}.',
-              style: const TextStyle(color: Colors.white70),
+              style: TextStyle(color: context.pal.on70),
             ),
             actions: [
               TextButton(
@@ -1429,8 +1576,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 icon: const Icon(Icons.bluetooth_disabled_rounded),
                 label: const Text('Desvincular'),
                 style: FilledButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
+                  backgroundColor: context.pal.bad,
+                  foregroundColor: context.pal.on,
                 ),
               ),
             ],
@@ -1461,14 +1608,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              backgroundColor: const Color(0xFF1E293B),
+              backgroundColor: context.pal.surface,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
               title: Row(
                 children: [
-                  const Icon(Icons.bluetooth_searching_rounded, color: Color(0xFF38BDF8)),
+                  Icon(Icons.bluetooth_searching_rounded, color: context.pal.accent),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text('Conectar $title', style: const TextStyle(color: Colors.white)),
+                    child: Text('Conectar $title', style: TextStyle(color: context.pal.on)),
                   ),
                 ],
               ),
@@ -1495,13 +1642,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         if (!taken.contains(d.deviceId)) d,
                     ]..sort((a, b) => rank(a).compareTo(rank(b)));
                     if (results.isEmpty) {
-                      return const Center(
+                      return Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            CircularProgressIndicator(color: Color(0xFF38BDF8)),
-                            SizedBox(height: 16),
-                            Text('Buscando dispositivos BLE...', style: TextStyle(color: Colors.white54)),
+                            CircularProgressIndicator(color: context.pal.accent),
+                            const SizedBox(height: 16),
+                            Text('Buscando dispositivos BLE...', style: TextStyle(color: context.pal.on54)),
                           ],
                         ),
                       );
@@ -1519,23 +1666,23 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         return ListTile(
                           leading: Icon(
                             r == 0 ? Icons.verified_rounded : Icons.favorite,
-                            color: r <= 1 ? Colors.redAccent : Colors.white24,
+                            color: r <= 1 ? context.pal.bad : context.pal.on24,
                           ),
                           title: Text(
                             name,
                             style: TextStyle(
-                              color: r <= 1 ? Colors.white : Colors.white54,
+                              color: r <= 1 ? context.pal.on : context.pal.on54,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           subtitle: Text(
                             r == 0 ? 'Coincide el número de serie' : bleDevice.deviceId,
-                            style: const TextStyle(color: Colors.white38, fontSize: 11),
+                            style: TextStyle(color: context.pal.on38, fontSize: 11),
                           ),
                           trailing: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF38BDF8),
-                              foregroundColor: Colors.black,
+                              backgroundColor: context.pal.accent,
+                              foregroundColor: context.pal.onAccent,
                             ),
                             onPressed: () async {
                               setDialogState(() => connecting = true);
@@ -1560,9 +1707,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                                     ),
                                     duration: Duration(seconds: connected && failed.isEmpty ? 4 : 12),
                                     backgroundColor: !connected
-                                        ? Colors.redAccent
+                                        ? Palette.current.bad
                                         : failed.isEmpty
-                                            ? const Color(0xFF34D399)
+                                            ? Palette.current.good
                                             : Colors.orange,
                                   ),
                                 );
@@ -1584,7 +1731,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       Navigator.of(dialogCtx).pop();
                       await service.cancelConnection();
                     },
-                    child: const Text('Cancelar conexión', style: TextStyle(color: Colors.white54)),
+                    child: Text('Cancelar conexión', style: TextStyle(color: context.pal.on54)),
                   )
                 else
                   TextButton(
@@ -1592,7 +1739,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       service.stopScan();
                       Navigator.of(dialogCtx).pop();
                     },
-                    child: const Text('Cerrar', style: TextStyle(color: Colors.white54)),
+                    child: Text('Cerrar', style: TextStyle(color: context.pal.on54)),
                   ),
               ],
             );
@@ -1612,22 +1759,22 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             mainAxisSize: MainAxisSize.min,
             children: [
               if (isError)
-                const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 40)
+                Icon(Icons.error_outline_rounded, color: context.pal.bad, size: 40)
               else
-                const CircularProgressIndicator(color: Color(0xFF38BDF8)),
+                CircularProgressIndicator(color: context.pal.accent),
               const SizedBox(height: 16),
               Text(
                 status.message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white70),
+                style: TextStyle(color: context.pal.on70),
               ),
               if (status.state == PolarLinkState.pairing) ...[
                 const SizedBox(height: 12),
-                const Text(
+                Text(
                   'Si Windows pide permiso para emparejar, pulsa "Permitir". '
                   'Si no aparece nada en un minuto, cancela y vuelve a intentarlo.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                  style: TextStyle(color: context.pal.on38, fontSize: 12),
                 ),
               ],
             ],
@@ -1824,7 +1971,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF07090E),
+      backgroundColor: context.pal.canvas,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -1883,7 +2030,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
               value: 1,
               icon: Icon(
                 lost ? Icons.warning_amber_rounded : Icons.devices_other_rounded,
-                color: lost ? Colors.orangeAccent : null,
+                color: lost ? context.pal.orange : null,
               ),
               label: const Text('Dispositivos'),
             ),
@@ -1925,14 +2072,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         final recording = service.isRecording;
         final error = service.cameraError.value;
         final (String detail, Color color) = camera.recovering
-            ? ('Recuperando...', Colors.orangeAccent)
+            ? ('Recuperando...', context.pal.orange)
             : recording
-                ? ('Grabando${service.audioUnavailable ? ' sin audio' : ''}', const Color(0xFFF87171))
+                ? ('Grabando${service.audioUnavailable ? ' sin audio' : ''}', context.pal.bad)
                 : camera.ready
-                    ? ('Preparada', const Color(0xFF34D399))
+                    ? ('Preparada', context.pal.good)
                     : error != null
-                        ? ('Error', Colors.redAccent)
-                        : ('Sin preparar', Colors.white38);
+                        ? ('Error', context.pal.bad)
+                        : ('Sin preparar', context.pal.on38);
         chips.add(DeviceChip(
           label: device.deviceName,
           detail: detail,
@@ -1958,14 +2105,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       final (String detail, Color color) = switch (state) {
         _ when connected && missing.isEmpty => (
             [if (hr > 0) '$hr lpm' else 'Conectado', if (device.hasSensor('acc')) 'ACC'].join(' · '),
-            const Color(0xFF34D399),
+            context.pal.good,
           ),
-        _ when connected => ('Sin ${missing.join(', ')}', Colors.orangeAccent),
-        PolarLinkState.reconnecting => ('Reconectando...', Colors.orangeAccent),
+        _ when connected => ('Sin ${missing.join(', ')}', context.pal.orange),
+        PolarLinkState.reconnecting => ('Reconectando...', context.pal.orange),
         PolarLinkState.connecting || PolarLinkState.pairing || PolarLinkState.configuring =>
-          ('Conectando...', Colors.orangeAccent),
-        PolarLinkState.error => ('Error', Colors.redAccent),
-        _ => ('Sin conectar', Colors.white38),
+          ('Conectando...', context.pal.orange),
+        PolarLinkState.error => ('Error', context.pal.bad),
+        _ => ('Sin conectar', context.pal.on38),
       };
       chips.add(DeviceChip(
         label: device.placementLabel == null ? device.deviceName : '${device.deviceName} · ${device.placementLabel}',
@@ -1992,6 +2139,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildVideoAndCharts() {
+    final expanded = _monitorSlots.where((s) => s.slotId == _expandedSlot && s.isAssigned).firstOrNull;
+    if (expanded != null) return _buildMonitorSlot(expanded);
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -2007,12 +2156,29 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  static const _chartVisualizations = {
+    MonitorVisualization.heartRate,
+    MonitorVisualization.rr,
+    MonitorVisualization.acceleration,
+    MonitorVisualization.ecg,
+    MonitorVisualization.ppg,
+    MonitorVisualization.gyro,
+  };
+
   Widget _buildMonitorSlot(MonitorSlot slot) {
+    // A monitor in its own window whose sensor no longer has a chart (no
+    // sensor, a camera, a device that left the session) comes back.
+    if (_popouts.isPopped(slot.slotId) &&
+        !(slot.isAssigned &&
+            _chartVisualizations.contains(slot.visualization) &&
+            _liveDevices.containsKey(slot.deviceId))) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _popouts.bringBack(slot.slotId));
+    }
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF111827),
+        color: context.pal.panel,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: context.pal.on12),
       ),
       padding: const EdgeInsets.all(14),
       child: !slot.isAssigned
@@ -2023,13 +2189,13 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   Icon(
                     Icons.add_chart_rounded,
                     size: 32,
-                    color: Colors.grey.shade600,
+                    color: context.pal.on38,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'MONITOR ${slot.slotId}',
                     style: TextStyle(
-                      color: Colors.grey.shade400,
+                      color: context.pal.on54,
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1.0,
@@ -2039,7 +2205,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   Text(
                     'Sin sensor asignado',
                     style: TextStyle(
-                      color: Colors.grey.shade600,
+                      color: context.pal.on38,
                       fontSize: 12,
                     ),
                   ),
@@ -2067,6 +2233,15 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  /// Every chart is drawn the same time behind the computer's clock, so
+  /// that all of them scroll smoothly and stay aligned with each other. The
+  /// Verity Sense sends a frame of ACC, gyroscope or magnetometer about
+  /// every 2 s (PPG every 0.7 s), so less than 2.5 s would still show its
+  /// bursts; the H10 sends several frames a second.
+  static const Duration chartLag = Duration(milliseconds: 2500);
+
+  static Duration? _chartLag(_LiveDevice? device) => device == null ? null : chartLag;
+
   Widget _buildChart({
     required MonitorSlot slot,
     required String label,
@@ -2077,9 +2252,27 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     required String Function() currentValue,
     Widget? trailingAction,
   }) {
+    final title = 'MONITOR ${slot.slotId}';
+    final subtitle = '$label · ${slot.deviceId}';
+    if (_popouts.isPopped(slot.slotId)) {
+      _popouts.register(
+        slot.slotId,
+        PopoutSource(
+          title: title,
+          subtitle: subtitle,
+          unit: unit,
+          visualization: slot.visualization.name,
+          window: window,
+          series: series,
+          currentValue: currentValue,
+          lag: _chartLag(_liveDevices[slot.deviceId]),
+        ),
+      );
+      return _buildPoppedMonitor(slot, subtitle, trailingAction);
+    }
     return SensorChartCard(
-      title: 'MONITOR ${slot.slotId}',
-      subtitle: '$label · ${slot.deviceId}',
+      title: title,
+      subtitle: subtitle,
       icon: icon,
       currentValue: currentValue,
       unit: unit,
@@ -2087,6 +2280,60 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       clock: _frameClock,
       seriesList: series,
       trailingAction: trailingAction,
+      lag: _chartLag(_liveDevices[slot.deviceId]),
+      onPopOut: () {
+        if (_expandedSlot == slot.slotId) _expandedSlot = null;
+        unawaited(_popouts.popOut(slot.slotId));
+      },
+      onExpand: () => _toggleExpanded(slot.slotId),
+      expanded: _expandedSlot == slot.slotId,
+    );
+  }
+
+  /// What the grid shows while a monitor is in its own window.
+  Widget _buildPoppedMonitor(MonitorSlot slot, String subtitle, Widget? trailingAction) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.open_in_new_rounded, size: 30, color: context.pal.on38),
+          const SizedBox(height: 8),
+          Text(
+            'MONITOR ${slot.slotId} EN OTRA VENTANA',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: context.pal.on54,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.0,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(subtitle, style: TextStyle(color: context.pal.on38, fontSize: 12)),
+          if (trailingAction != null) ...[
+            const SizedBox(height: 8),
+            trailingAction,
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => unawaited(_popouts.focus(slot.slotId)),
+                icon: const Icon(Icons.visibility_rounded, size: 16),
+                label: const Text('Mostrar ventana'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _popouts.bringBack(slot.slotId),
+                icon: const Icon(Icons.close_fullscreen_rounded, size: 16),
+                label: const Text('Traer aquí'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -2106,7 +2353,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       series: [
         ChartSeries(
           buffer: device.hr,
-          color: Colors.redAccent,
+          color: context.pal.bad,
           label: 'HR',
         ),
       ],
@@ -2126,7 +2373,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       series: [
         ChartSeries(
           buffer: device.rr,
-          color: Colors.orangeAccent,
+          color: context.pal.orange,
           label: 'RR',
         ),
       ],
@@ -2149,24 +2396,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           ? [
               ChartSeries(
                 buffer: device.accVm,
-                color: const Color(0xFF38BDF8),
+                color: context.pal.accent,
                 label: 'VM',
               ),
             ]
           : [
               ChartSeries(
                 buffer: device.accX,
-                color: Colors.redAccent,
+                color: context.pal.bad,
                 label: 'X',
               ),
               ChartSeries(
                 buffer: device.accY,
-                color: Colors.greenAccent,
+                color: context.pal.good,
                 label: 'Y',
               ),
               ChartSeries(
                 buffer: device.accZ,
-                color: const Color(0xFF38BDF8),
+                color: context.pal.accent,
                 label: 'Z',
               ),
             ],
@@ -2176,7 +2423,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           _buildAccelerationModeToggle(
             'VM',
             _accMode == 'VM',
-            const Color(0xFF38BDF8),
+            context.pal.accent,
           ),
           _buildAccelerationModeToggle(
             'XYZ',
@@ -2223,7 +2470,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       series: [
         ChartSeries(
           buffer: device.ppg,
-          color: Colors.greenAccent,
+          color: context.pal.good,
           label: 'PPG',
         ),
       ],
@@ -2241,9 +2488,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       window: device.gyroX.window,
       currentValue: () => _format(device.gyroZ.lastValue, 1),
       series: [
-        ChartSeries(buffer: device.gyroX, color: Colors.redAccent, label: 'X'),
-        ChartSeries(buffer: device.gyroY, color: Colors.greenAccent, label: 'Y'),
-        ChartSeries(buffer: device.gyroZ, color: const Color(0xFF38BDF8), label: 'Z'),
+        ChartSeries(buffer: device.gyroX, color: context.pal.bad, label: 'X'),
+        ChartSeries(buffer: device.gyroY, color: context.pal.good, label: 'Y'),
+        ChartSeries(buffer: device.gyroZ, color: context.pal.accent, label: 'Z'),
       ],
     );
   }
@@ -2254,7 +2501,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: context.pal.panel,
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
@@ -2294,7 +2541,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.redAccent,
+                        color: context.pal.bad,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: const Row(
@@ -2318,22 +2565,36 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       ),
                     ),
                   ),
+                // Video cannot go to another window (the camera preview
+                // belongs to this one), but it can take the whole area.
+                Positioned(
+                  bottom: 8,
+                  right: 8,
+                  child: IconButton.filledTonal(
+                    tooltip: _expandedSlot == slot.slotId ? 'Volver a los cuatro monitores' : 'Ampliar el vídeo',
+                    onPressed: () => _toggleExpanded(slot.slotId),
+                    icon: Icon(
+                      _expandedSlot == slot.slotId ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
+                      size: 18,
+                    ),
+                  ),
+                ),
               ],
             )
-          : const Center(
+          : Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
                     Icons.videocam_off_rounded,
-                    color: Colors.white38,
+                    color: context.pal.on38,
                     size: 40,
                   ),
-                  SizedBox(height: 10),
+                  const SizedBox(height: 10),
                   Text(
                     'Cámara no disponible o inicializando...',
                     style: TextStyle(
-                      color: Colors.white54,
+                      color: context.pal.on54,
                       fontSize: 13,
                     ),
                     textAlign: TextAlign.center,
@@ -2358,8 +2619,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
             const SizedBox(width: 8),
             Text(
               'MONITOR ${slot.slotId}',
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: context.pal.on,
                 fontSize: 13,
                 fontWeight: FontWeight.w800,
                 letterSpacing: 1.0,
@@ -2372,7 +2633,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           child: Text(
             '${slot.deviceId}:${slot.sensorId}',
             style: TextStyle(
-              color: Colors.grey.shade400,
+              color: context.pal.on54,
               fontSize: 13,
             ),
           ),
@@ -2419,26 +2680,26 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         LengthLimitingTextInputFormatter(2),
       ],
       textAlign: TextAlign.center,
-      style: const TextStyle(
-        color: Colors.white,
+      style: TextStyle(
+        color: context.pal.on,
         fontWeight: FontWeight.w800,
-        fontFeatures: [
+        fontFeatures: const [
           FontFeature.tabularFigures(),
         ],
       ),
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
-        labelStyle: const TextStyle(
-          color: Colors.white70,
+        labelStyle: TextStyle(
+          color: context.pal.on70,
           fontSize: 12,
         ),
-        hintStyle: const TextStyle(
-          color: Colors.white24,
+        hintStyle: TextStyle(
+          color: context.pal.on24,
           fontSize: 11,
         ),
         filled: true,
-        fillColor: const Color(0xFF0F172A),
+        fillColor: context.pal.panel,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: BorderSide.none,
@@ -2457,9 +2718,9 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       children: [
         Text(
           label,
-          style: const TextStyle(
+          style: TextStyle(
             fontWeight: FontWeight.w700,
-            color: Colors.white70,
+            color: context.pal.on70,
             fontSize: 13,
           ),
         ),
@@ -2473,12 +2734,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                 hint: 'min',
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Text(
                 ':',
                 style: TextStyle(
-                  color: Colors.white70,
+                  color: context.pal.on70,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
                 ),
@@ -2504,7 +2765,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF38BDF8) : Colors.transparent,
+          color: isSelected ? context.pal.accent : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
         ),
         child: label == 'XYZ' && isSelected
@@ -2514,24 +2775,24 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   Text(
                     'XYZ',
                     style: TextStyle(
-                      color: isSelected ? Colors.black : Colors.white60,
+                      color: isSelected ? context.pal.onAccent : context.pal.on60,
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(width: 4),
                   // Mini indicadores de los 3 ejes
-                  Container(width: 5, height: 5, decoration: const BoxDecoration(color: Colors.redAccent, shape: BoxShape.circle)),
+                  Container(width: 5, height: 5, decoration: BoxDecoration(color: context.pal.bad, shape: BoxShape.circle)),
                   const SizedBox(width: 2),
-                  Container(width: 5, height: 5, decoration: const BoxDecoration(color: Colors.greenAccent, shape: BoxShape.circle)),
+                  Container(width: 5, height: 5, decoration: BoxDecoration(color: context.pal.good, shape: BoxShape.circle)),
                   const SizedBox(width: 2),
-                  Container(width: 5, height: 5, decoration: const BoxDecoration(color: Color(0xFF38BDF8), shape: BoxShape.circle)),
+                  Container(width: 5, height: 5, decoration: BoxDecoration(color: context.pal.accent, shape: BoxShape.circle)),
                 ],
               )
             : Text(
                 label,
                 style: TextStyle(
-                  color: isSelected ? Colors.black : Colors.white60,
+                  color: isSelected ? context.pal.onAccent : context.pal.on60,
                   fontSize: 11,
                   fontWeight: FontWeight.bold,
                 ),
@@ -2579,9 +2840,9 @@ class _MonitorCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E293B),
+        color: context.pal.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white12),
+        border: Border.all(color: context.pal.on12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2590,14 +2851,14 @@ class _MonitorCard extends StatelessWidget {
             children: [
               Icon(
                 icon,
-                color: const Color(0xFF38BDF8),
+                color: context.pal.accent,
                 size: 20,
               ),
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: context.pal.on,
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
                   letterSpacing: 1.2,
@@ -2676,7 +2937,7 @@ class _DeviceStatusCard extends StatelessWidget {
                 padding: const EdgeInsets.only(left: 32, top: 2),
                 child: Text(
                   device.subtitle!,
-                  style: const TextStyle(fontSize: 12, color: Colors.white54),
+                  style: TextStyle(fontSize: 12, color: context.pal.on54),
                 ),
               ),
             if (device.statusMessage != null)
@@ -2688,8 +2949,8 @@ class _DeviceStatusCard extends StatelessWidget {
                     fontSize: 12,
                     color: device.connectionStatus ==
                             DeviceConnectionStatus.error
-                        ? Colors.redAccent
-                        : Colors.orangeAccent,
+                        ? context.pal.bad
+                        : context.pal.orange,
                   ),
                 ),
               ),
@@ -2698,9 +2959,9 @@ class _DeviceStatusCard extends StatelessWidget {
                 padding: const EdgeInsets.only(left: 32, top: 4),
                 child: Text(
                   device.note!,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: Colors.white38,
+                    color: context.pal.on38,
                     fontStyle: FontStyle.italic,
                   ),
                 ),
@@ -2767,7 +3028,7 @@ class _DeviceStatusCard extends StatelessWidget {
       case DeviceConnectionStatus.connecting:
         return Colors.orange;
       case DeviceConnectionStatus.disconnected:
-        return Colors.grey;
+        return Palette.current.on54;
       case DeviceConnectionStatus.error:
         return Colors.red;
     }
@@ -2784,7 +3045,7 @@ class _DeviceStatusCard extends StatelessWidget {
       case SensorAcquisitionStatus.stopped:
         return Colors.orange;
       case SensorAcquisitionStatus.unavailable:
-        return Colors.grey;
+        return Palette.current.on54;
       case SensorAcquisitionStatus.error:
         return Colors.red;
     }

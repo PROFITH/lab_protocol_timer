@@ -31,7 +31,7 @@ void main() {
       participants: [ParticipantEntry(participantId: '001', redcapEventName: 'da_0__visita_inici_arm_1')],
       battery: battery,
       dataRoot: root!.path,
-      operator: 'Ana (técnica)',
+      operators: ['Ana (técnica)', 'Luis'],
       clock: clock,
       monitor: link,
       redcapConfigured: true,

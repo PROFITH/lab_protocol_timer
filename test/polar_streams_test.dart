@@ -382,5 +382,21 @@ void main() {
       expect(service.connectionEvents.map((e) => e.event), contains('frames_lost'));
       service.dispose();
     });
+
+    test('frames of different sizes are not taken for lost ones', () {
+      // The Verity Sense sends frames of different sizes: a short one first
+      // made every normal one look like a loss (04/11/2026).
+      final service = PolarBleService();
+      const s0 = 599616185243949330;
+      const periodNs = 1e9 / 130;
+      var t = s0;
+      for (final n in [30, 73, 73, 12, 73, 50]) {
+        t += (n * periodNs).round();
+        service.handlePmdDataForTest(frame(PolarBleService.pmdTypeEcg, t, 0x00, ecgPayload(n)));
+      }
+      expect(service.pmdFrameStats['ecg'], (received: 6, lost: 0));
+      expect(service.connectionEvents.map((e) => e.event), isNot(contains('frames_lost')));
+      service.dispose();
+    });
   });
 }

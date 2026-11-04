@@ -92,6 +92,23 @@ void main() {
       );
     });
 
+    test('asks the Verity Sense for 52 Hz and spreads its samples at 52 Hz', () {
+      final offered = PolarBleService.parsePmdSettingOptions(Uint8List.fromList([
+        0x00, 0x04, 0x1A, 0x00, 0x34, 0x00, 0x68, 0x00, 0xD0, 0x00, //
+        0x01, 0x01, 0x10, 0x00, //
+        0x02, 0x01, 0x08, 0x00, //
+        0x04, 0x01, 0x03,
+      ]));
+      final rate = PolarBleService.accRateFor(deviceType: 'verity_sense');
+      expect(rate, 52);
+      expect(PolarBleService.accRateFor(deviceType: 'polar_h10'), 200);
+      expect(PolarBleService.accRateFor(deviceName: 'Polar Sense 22C3ED3F'), 52);
+      final command = PolarBleService.accStartCommandFor(offered, preferredRateHz: rate);
+      expect(command.sublist(2, 6), [0x00, 0x01, 0x34, 0x00]);
+      // The samples are spread at the rate asked for.
+      expect(PolarBleService.requestedSampleRate(command), 52);
+    });
+
     test('asks the Verity Sense for what it offers (52 Hz, 3 channels)', () {
       final offered = PolarBleService.parsePmdSettingOptions(Uint8List.fromList([
         0x00, 0x01, 0x34, 0x00, //
@@ -107,6 +124,26 @@ void main() {
   });
 
   group('live charts', () {
+    test('a chart with a lag follows the clock but never passes the data', () {
+      final buffer = SignalBuffer(window: const Duration(seconds: 10), maxRateHz: 60);
+      const t0 = 1.7e15;
+      for (var i = 0; i <= 50; i++) {
+        buffer.addMicros(t0 + i * 20000, i.toDouble()); // up to t0 + 1 s
+      }
+      final series = [ChartSeries(buffer: buffer, color: const Color(0xFF000000), label: 'x')];
+      expect(LiveChartPainter.chartEnd(series, nowMicros: t0 + 5e6), t0 + 1e6);
+      // Burst received, clock 3.5 s later: drawn up to 0.5 s.
+      expect(
+        LiveChartPainter.chartEnd(series, lag: const Duration(seconds: 3), nowMicros: t0 + 3.5e6),
+        t0 + 0.5e6,
+      );
+      // The link is further behind than the lag: it waits at the last sample.
+      expect(
+        LiveChartPainter.chartEnd(series, lag: const Duration(seconds: 3), nowMicros: t0 + 9e6),
+        t0 + 1e6,
+      );
+    });
+
     test('keep every sample of the window and drop older ones', () {
       final buffer = SignalBuffer(window: const Duration(seconds: 6), maxRateHz: 140);
       final t0 = DateTime.utc(2026, 10, 27, 8);

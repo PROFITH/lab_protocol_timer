@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lab_protocol_timer/models/activity_battery.dart';
+import 'package:lab_protocol_timer/models/device_configuration.dart';
+import 'package:lab_protocol_timer/models/protocol_configuration.dart';
+import 'package:lab_protocol_timer/windows/window_messages.dart';
 import 'package:lab_protocol_timer/session/session_controller.dart';
 import 'package:lab_protocol_timer/setup/participant_setup_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,7 +31,7 @@ void main() {
   }
 
   FilledButton startButton(WidgetTester tester) => tester.widget<FilledButton>(find.ancestor(
-        of: find.textContaining('COMENZAR SESIÓN'),
+        of: find.textContaining('PREPARAR SESIÓN'),
         matching: find.byWidgetPredicate((w) => w is FilledButton),
       ));
 
@@ -38,14 +41,22 @@ void main() {
     SyncKind? choose,
     String? h10Serial,
     bool calibratedToday = false,
+    List<String>? operators,
+    List<String>? expectOperatorFields,
   }) async {
     SessionController? started;
+    var monitorOpened = 0;
+    final monitor = _FakeLiveMonitor();
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(),
       home: ParticipantSetupPage(
         onStart: (controller) async => started = controller,
-        monitor: NoMonitor(),
+        onPrepare: (configuration, fresh) async {
+          monitorOpened++;
+          monitor.configuration = configuration;
+        },
+        monitor: monitor,
         audioFactory: SilentAudio.new,
         checkUnfinished: false,
       ),
@@ -62,24 +73,86 @@ void main() {
     expect(find.byKey(const ValueKey('setup_section_2_hint')), findsNothing);
     expect(find.byKey(const ValueKey('setup_section_3_hint')), findsNothing);
     expect(startButton(tester).onPressed, isNotNull);
-    expect(find.text('SENSORES DE $id'), findsOneWidget);
-    // Day 0: the protocol's free-living set (Matrix, SENS and both AX6)
-    // asks for the serial of the device the participant takes home.
-    expect(find.widgetWithText(TextFormField, 'Vida libre'), findsNWidgets(4));
+    // Serials and calibration wait for the waiting room.
+    expect(find.text('SENSORES DE $id'), findsNothing);
+    expect(find.byKey(const Key('calibrate')), findsNothing);
     expect(find.textContaining('R4H_$id${Platform.pathSeparator}D0'), findsOneWidget);
 
+    if (expectOperatorFields != null) {
+      for (var i = 0; i < expectOperatorFields.length; i++) {
+        final field = tester.widget<TextFormField>(find.byKey(ValueKey('operator_field_$i')));
+        expect(field.controller!.text, expectOperatorFields[i], reason: 'evaluador ${i + 1}');
+      }
+      expect(find.byKey(ValueKey('operator_field_${expectOperatorFields.length}')), findsNothing);
+    }
+    if (operators != null) {
+      for (var i = 0; i < operators.length; i++) {
+        if (find.byKey(ValueKey('operator_field_$i')).evaluate().isEmpty) {
+          await tester.ensureVisible(find.byKey(const ValueKey('add_operator')));
+          await tester.tap(find.byKey(const ValueKey('add_operator')));
+          await tester.pump();
+        }
+        final field = find.byKey(ValueKey('operator_field_$i'));
+        await tester.ensureVisible(field);
+        await tester.enterText(field, operators[i]);
+        await tester.pump();
+      }
+    }
     if (choose != null) {
       await tester.tap(find.byKey(ValueKey('sync_kind_${choose.name}')));
       await tester.pump();
     }
+
+    // The waiting room: the monitor opens to connect the Polar and camera.
+    await tester.ensureVisible(find.byKey(const Key('prepare_session')));
+    await tester.tap(find.byKey(const Key('prepare_session')));
+    await wait(tester, () => monitorOpened > 0);
+    expect(find.byKey(const Key('waiting_room')), findsOneWidget);
+    expect(find.byKey(const Key('calibrate')), findsOneWidget);
+    expect(find.text('SENSORES DE $id'), findsOneWidget);
+    // Day 0: the protocol's free-living set (Matrix, SENS and both AX6)
+    // asks for the serial of the device the participant takes home.
+    expect(find.widgetWithText(TextFormField, 'Vida libre'), findsNWidgets(4));
+
     if (h10Serial != null) {
       final field = find.widgetWithText(TextFormField, 'Polar H10 · Pecho');
       await tester.ensureVisible(field);
       await tester.enterText(field, h10Serial);
       await tester.pump();
     }
-    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
-    await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    // The evaluator ticks each device once initialized and links the Polar
+    // here (the monitor keeps the link).
+    await wait(tester, () => find.text('Sin conectar').evaluate().length == 2);
+    final checks = find.byType(Checkbox);
+    expect(checks, findsNWidgets(10));
+    expect(find.textContaining('0/12 listos'), findsOneWidget);
+    for (var i = 0; i < checks.evaluate().length; i++) {
+      await tester.ensureVisible(checks.at(i));
+      await tester.tap(checks.at(i));
+      await tester.pump();
+    }
+    expect(find.textContaining('10/12 listos'), findsOneWidget);
+    for (var i = 0; i < 2; i++) {
+      final connect = find.widgetWithText(TextButton, 'Conectar').first;
+      await tester.ensureVisible(connect);
+      await tester.tap(connect);
+      await wait(tester, () => find.text('Vincular').evaluate().isNotEmpty);
+      await tester.tap(find.text('Vincular').first);
+      await wait(tester, () => find.text('Vincular').evaluate().isEmpty);
+    }
+    await wait(tester, () => find.textContaining('12/12 listos').evaluate().isNotEmpty);
+    expect(find.textContaining('Conectado · Polar'), findsNWidgets(2));
+    expect(monitor.linked.length, 2);
+
+    // The «i» opens the initialization guide of the device.
+    await tester.ensureVisible(find.byIcon(Icons.info_outline_rounded).first);
+    await tester.tap(find.byIcon(Icons.info_outline_rounded).first);
+    await wait(tester, () => find.text('Cerrar').evaluate().isNotEmpty);
+    expect(find.textContaining(RegExp('inicializar|preparar'), findRichText: true), findsWidgets);
+    await tester.tap(find.text('Cerrar'));
+    await tester.pump();
+    await tester.ensureVisible(find.byKey(const Key('go_to_session')));
+    await tester.tap(find.byKey(const Key('go_to_session')));
     // Sensors without a calibration of today (here they have no serial
     // numbers to match): the technician is asked first.
     await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
@@ -99,12 +172,22 @@ void main() {
   // second widget test of the same file.
   testWidgets('clap or jump is chosen once per computer and reaches every session',
       (tester) async {
-    SharedPreferences.setMockInitialValues({'lpt_data_root': root.path});
+    // The only evaluator remembered by 1.3.x fills the first of two fields.
+    SharedPreferences.setMockInitialValues({'lpt_data_root': root.path, 'lpt_operator': 'OLD'});
 
     // Nothing chosen yet: the protocol's own clap. The serial typed for the
-    // participant goes with their sensors.
-    final first = await startSession(tester, 'P01', h10Serial: 'C0FFEE');
-    expect(first!.battery!.sync.kind, SyncKind.clap);
+    // participant goes with their sensors. Three evaluators (a third field
+    // added).
+    final first = await startSession(
+      tester,
+      'P01',
+      h10Serial: 'C0FFEE',
+      expectOperatorFields: ['OLD', ''],
+      operators: ['JHM', ' MDF ', 'SPR'],
+    );
+    expect(first!.operators, ['JHM', 'MDF', 'SPR']);
+    expect(first.operator, 'JHM, MDF, SPR');
+    expect(first.battery!.sync.kind, SyncKind.clap);
     final worn = first.participants.single.sensors;
     expect(worn.map((s) => s.sensorId), isNot(contains('cam_room')));
     expect(worn.firstWhere((s) => s.sensorId == 'polar_h10').serial, 'C0FFEE');
@@ -126,13 +209,23 @@ void main() {
     );
 
     // Jump chosen: it goes to the session and is kept on this computer.
-    final second = await startSession(tester, 'P02', choose: SyncKind.jump, calibratedToday: true);
-    expect(second!.calibrations.single.end, t1);
+    final second = await startSession(
+      tester,
+      'P02',
+      choose: SyncKind.jump,
+      calibratedToday: true,
+      // The evaluators of the last session come back.
+      expectOperatorFields: ['JHM', 'MDF', 'SPR'],
+    );
+    expect(second!.operators, ['JHM', 'MDF', 'SPR']);
+    expect(second.calibrations.single.end, t1);
     expect(second.calibrations.single.devices.single.serial, 'A1');
     expect(second.battery!.sync.kind, SyncKind.jump);
     expect(second.battery!.sync.auto, AutoSync.everyStatic);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('lpt_sync_kind'), 'jump');
+    expect(prefs.getStringList('lpt_operators'), ['JHM', 'MDF', 'SPR']);
+    expect(prefs.getString('lpt_operator'), isNull);
     second.dispose();
 
     // Next participants, new or returning: jump again without touching it,
@@ -149,4 +242,44 @@ void main() {
     }
     await tester.pumpWidget(const SizedBox());
   });
+}
+
+/// The Research Monitor as the waiting room sees it: the Polar of the
+/// protocol, a unit found for each and linking.
+class _FakeLiveMonitor implements MonitorLink {
+  ProtocolConfiguration? configuration;
+  final Map<String, String> linked = {};
+
+  @override
+  Future<dynamic> send(String method, [dynamic arguments]) async {
+    final args = arguments is Map ? arguments : const {};
+    final live = [
+      for (final d in configuration?.devices ?? const <DeviceConfiguration>[])
+        if (d.isLive) d,
+    ];
+    switch (method) {
+      case WindowMessages.liveDevices:
+        return [
+          for (final d in live)
+            {
+              'device_id': d.deviceId,
+              'sensor_id': d.sensorId,
+              'participant_id': d.participantId,
+              'state': linked.containsKey(d.deviceId) ? 'connected' : 'disconnected',
+              'message': '',
+              'name': linked[d.deviceId],
+              'hr': linked.containsKey(d.deviceId) ? 70 : 0,
+            },
+        ];
+      case WindowMessages.liveScan:
+        return [
+          {'id': 'BLE-${args['device_id']}', 'name': 'Polar ${args['device_id']}', 'match': 1},
+        ];
+      case WindowMessages.liveConnect:
+        final id = args['device_id'].toString();
+        linked[id] = 'Polar $id';
+        return {'ok': true, 'message': 'Conectado a Polar $id'};
+    }
+    return null;
+  }
 }

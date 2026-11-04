@@ -3,6 +3,18 @@
 The second window of lab_protocol_timer: connects the live sensors, shows
 their signals and records the video of the session.
 
+It opens with «Preparar sesión» on the start page, while the main window is
+in the waiting room. The Polar are linked from the waiting room («Conectar»
+next to each one: the main window asks the monitor to search and link,
+messages `live_devices`, `live_scan`, `live_connect`, `live_disconnect`),
+and the cameras in the monitor. The links live in the monitor, which keeps
+them when the session starts; its device bar reconnects a Polar during the
+session. Until
+the main window goes on («Pasar a la sesión») the start button reads
+«SALA DE ESPERA» and does nothing; then it becomes «EMPEZAR SESIÓN». When
+the session closes the monitor forgets it, so the next one starts again in
+the waiting room.
+
 ## Devices
 
 The list under «Dispositivos y sensores» is the sensor list of the session
@@ -153,8 +165,29 @@ Every sample is kept for the window of the chart (ECG 6 s, ACC 10 s, HR and
 RR 2 min) with the sensor's own timestamps; nothing is downsampled on
 arrival. When painted, each pixel column draws from the lowest to the
 highest sample that falls in it, so a one-sample R peak or impact is never
-lost. Charts repaint once per screen frame, only when new samples arrived,
-without rebuilding the window.
+lost. Charts repaint once per screen frame without rebuilding the window. Every
+chart of a Polar is drawn 2.5 s behind the computer's clock, the same for
+all devices: the Verity Sense sends a frame of ACC, gyroscope or
+magnetometer about every 2 s, and with that delay its traces scroll as
+smoothly as the H10's. If the link falls further behind, the chart waits
+at the newest sample.
+
+### A chart in its own window
+
+The ↗ button of a chart opens it in a window of its own, to move it to
+another screen or make it bigger. That window keeps a copy of the chart's
+samples: the monitor sends it the ones that arrived about 20 times a second,
+and the whole window again when the sensor of that monitor, the VM/XYZ mode
+or the theme change. Closing it (or «Traer aquí» in the grid) hides it and
+the chart goes back to the grid; the hidden window is reused for the next
+one, because destroying a secondary window takes the app down on Windows.
+The windows are hidden when the evaluation ends. Video cannot be moved out.
+
+## Light and dark theme
+
+The sun/moon button (start page and monitor) switches both windows and is
+remembered on this computer (`theme_mode` in the app's preferences). The
+participant's screen is always dark.
 
 ## Phone as camera
 

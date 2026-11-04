@@ -22,7 +22,7 @@ void main() {
       participants: [ParticipantEntry(participantId: '001', redcapEventName: 'da_0__visita_inici_arm_1')],
       battery: battery,
       dataRoot: out,
-      operator: 'Técnica',
+      operators: ['Técnica'],
       clock: clock,
       redcapConfigured: false,
     );

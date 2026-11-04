@@ -9,8 +9,11 @@ import 'services/redcap_connection.dart';
 import 'session/session_controller.dart';
 import 'session/timer_page.dart';
 import 'setup/participant_setup_page.dart';
+import 'ui/app_theme.dart';
+import 'windows/monitor_popout.dart';
 import 'windows/research_monitor_bridge.dart';
 import 'windows/research_monitor_window.dart';
+import 'windows/theme_sync.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +32,29 @@ Future<void> main(List<String> args) async {
   }
 
   final isResearchMonitor = args.length > 1 && args[1] == 'research_monitor';
+  final popoutOwner = monitorPopoutOwner(args);
+
+  // Light or dark, as it was left on this computer.
+  await ThemeController.load();
+
+  if (popoutOwner != null) {
+    const title = 'Monitor';
+    debugPrint('[MAIN] Iniciando ventana de monitor...');
+    await MultiWindowManager.current.waitUntilReadyToShow(
+      const WindowOptions(
+        size: Size(960, 540),
+        minimumSize: Size(360, 220),
+        center: true,
+        title: title,
+      ),
+      () async {
+        await MultiWindowManager.current.show();
+        await MultiWindowManager.current.focus();
+      },
+    );
+    runApp(MonitorPopoutApp(ownerWindowId: popoutOwner));
+    return;
+  }
 
   if (isResearchMonitor) {
     debugPrint('[MAIN] Iniciando Research Monitor...');
@@ -46,19 +72,20 @@ Future<void> main(List<String> args) async {
       },
     );
 
+    // A toggle here is sent to the participant window.
+    ThemeSync.install(() => const [0]);
+
     runApp(
-      MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Research Monitor',
-        theme: ThemeData.dark().copyWith(
-          scaffoldBackgroundColor: const Color(0xFF07090E),
-          colorScheme: const ColorScheme.dark(
-            primary: Color(0xFF38BDF8),
-            surface: Color(0xFF1E293B),
+      ThemeScope(
+        builder: (context, mode) => MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Research Monitor',
+          theme: AppTheme.light,
+          darkTheme: AppTheme.dark,
+          themeMode: mode,
+          home: const ResearchMonitorHost(
+            protocolConfiguration: defaultProtocolConfiguration,
           ),
-        ),
-        home: const ResearchMonitorHost(
-          protocolConfiguration: defaultProtocolConfiguration,
         ),
       ),
     );
@@ -66,6 +93,11 @@ Future<void> main(List<String> args) async {
   }
 
   debugPrint('[MAIN] Iniciando Participant Timer...');
+
+  // A toggle here is sent to the Research Monitor.
+  ThemeSync.install(() => [
+        if (ResearchMonitorBridge.instance.monitorWindowId != null) ResearchMonitorBridge.instance.monitorWindowId!,
+      ]);
 
   await RedcapConnection.load();
   // The project's visits are asked in the background; without network the
@@ -89,6 +121,10 @@ class LabTimerApp extends StatefulWidget {
 class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
   final _navigator = GlobalKey<NavigatorState>();
   bool _closing = false;
+
+  /// The Research Monitor was opened from the waiting room for the session
+  /// about to start: it keeps its Polar and cameras.
+  bool _monitorFromWaitingRoom = false;
 
   @override
   void initState() {
@@ -132,12 +168,19 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
   Widget _setupPage() => ParticipantSetupPage(
         onStart: _startSession,
+        onPrepare: (configuration, fresh) {
+          _monitorFromWaitingRoom = true;
+          return openResearchMonitorWindow(configuration, fresh: fresh);
+        },
         monitor: ResearchMonitorBridge.instance,
         audioFactory: DeviceSessionAudio.new,
       );
 
   Future<void> _startSession(SessionController controller) async {
-    await openResearchMonitorWindow(controller.protocolConfiguration);
+    // From the waiting room the monitor keeps its links (Polar, cameras).
+    final fresh = !_monitorFromWaitingRoom;
+    _monitorFromWaitingRoom = false;
+    await openResearchMonitorWindow(controller.protocolConfiguration, fresh: fresh);
     final navigator = _navigator.currentState;
     if (navigator == null) {
       controller.dispose();
@@ -145,10 +188,13 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
     }
     await navigator.pushReplacement(
       MaterialPageRoute<void>(
-        builder: (_) => TimerPage(
-          controller: controller,
-          onExit: () => _navigator.currentState?.pushReplacement(
-            MaterialPageRoute<void>(builder: (_) => _setupPage()),
+        // The participant's screen is always dark.
+        builder: (_) => AlwaysDark(
+          child: TimerPage(
+            controller: controller,
+            onExit: () => _navigator.currentState?.pushReplacement(
+              MaterialPageRoute<void>(builder: (_) => _setupPage()),
+            ),
           ),
         ),
       ),
@@ -157,30 +203,35 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      navigatorKey: _navigator,
-      title: 'Lab Timer - Accelerometer Sync',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0B0F19),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF38BDF8),
-          surface: Color(0xFF1E293B),
-        ),
+    return ThemeScope(
+      builder: (context, mode) => MaterialApp(
+        navigatorKey: _navigator,
+        title: 'Lab Timer - Accelerometer Sync',
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: mode,
+        home: _setupPage(),
       ),
-      home: _setupPage(),
     );
   }
 }
 
 /// Opens the Research Monitor (or shows the hidden one) for a session with
 /// [configuration] (each participant's sensors and the cameras).
-Future<void> openResearchMonitorWindow(ProtocolConfiguration configuration) async {
+///
+/// [fresh] rebuilds a monitor left from an earlier evaluation; false only
+/// shows it and updates its devices, keeping what is linked.
+Future<void> openResearchMonitorWindow(ProtocolConfiguration configuration, {bool fresh = true}) async {
   final bridge = ResearchMonitorBridge.instance;
   try {
     bridge.setProtocolConfiguration(configuration);
     if (await bridge.hasLiveMonitorWindow()) {
-      await bridge.reuseMonitorWindow();
+      if (fresh) {
+        await bridge.reuseMonitorWindow();
+      } else {
+        await bridge.showMonitor();
+      }
       await bridge.sendProtocolConfiguration(configuration);
       return;
     }

@@ -325,7 +325,7 @@ class SessionController extends ChangeNotifier {
     required this.battery,
     required this.dataRoot,
     this.settings = const SessionSettings(),
-    this.operator,
+    List<String> operators = const [],
     List<CalibrationRecord> calibrations = const [],
     int startIndex = 1,
     SessionClock? clock,
@@ -335,6 +335,7 @@ class SessionController extends ChangeNotifier {
     this.onActiveSessionChanged,
     bool? redcapConfigured,
   })  : participants = List.unmodifiable(participants),
+        operators = cleanOperators(operators),
         calibrations = List.unmodifiable(calibrations),
         _redcapConfigured = redcapConfigured,
         clock = clock ?? SystemSessionClock(),
@@ -358,8 +359,7 @@ class SessionController extends ChangeNotifier {
     SessionClock? clock,
     SessionAudio? audio,
     MonitorLink? monitor,
-    Future<String?> Function(List<Map<String, dynamic>>) importRecords =
-        LabRedCapService.importRecords,
+    Future<String?> Function(List<Map<String, dynamic>>) importRecords = LabRedCapService.importRecords,
     void Function(String? directory)? onActiveSessionChanged,
     bool? redcapConfigured,
   }) {
@@ -369,7 +369,7 @@ class SessionController extends ChangeNotifier {
       battery: saved.battery,
       dataRoot: state['data_root']?.toString() ?? saved.directory.parent.parent.path,
       settings: SessionSettings.fromJson(state['settings']),
-      operator: state['operator']?.toString(),
+      operators: operatorsFromJson(state),
       calibrations: [
         for (final c in state['calibrations'] as List? ?? const [])
           if (_calibrationFromState(c) case final r?) r,
@@ -419,7 +419,33 @@ class SessionController extends ChangeNotifier {
   final ActivityBattery? battery;
   final String dataRoot;
   SessionSettings settings;
-  final String? operator;
+
+  /// Evaluators of the session, in the order they were typed (there are
+  /// usually two or more).
+  final List<String> operators;
+
+  /// The evaluators in one text (`JHM, MDF`), as REDCap's `ws_operator`
+  /// and the `operator` of older files; null without any.
+  String? get operator => operators.isEmpty ? null : operators.join(', ');
+
+  /// [names] without blanks or repeated names, trimmed.
+  static List<String> cleanOperators(Iterable<String> names) {
+    final out = <String>[];
+    for (final n in names) {
+      final t = n.trim();
+      if (t.isNotEmpty && !out.contains(t)) out.add(t);
+    }
+    return List.unmodifiable(out);
+  }
+
+  /// The evaluators saved in [json]: the list `operators`, or the single
+  /// `operator` of sessions saved before 1.4.0.
+  static List<String> operatorsFromJson(Map json) {
+    final list = json['operators'];
+    if (list is List) return cleanOperators([for (final o in list) o.toString()]);
+    final one = json['operator']?.toString();
+    return one == null ? const [] : cleanOperators([one]);
+  }
 
   /// Calibrations of the sensors done today before the session
   /// (Calibración screen), by serial number. Each participant's folder gets
@@ -466,6 +492,49 @@ class SessionController extends ChangeNotifier {
           ],
       ];
 
+  /// The evaluator asked, when finishing, to calibrate the sensors again.
+  bool recalibrateAtEnd = false;
+
+  /// The offline sensors worn in the laboratory (still here when the
+  /// session ends), proposed for the final calibration. Without serials,
+  /// one entry per sensor type.
+  List<CalibrationDevice> get labDevices {
+    final offline = [
+      for (final p in participants)
+        for (final s in p.sensors)
+          if (s.connection == 'offline' && s.type != 'other' && s.inLab) s,
+    ];
+    final typed = {
+      for (final s in offline)
+        if (s.serial?.trim() case final serial? when serial.isNotEmpty) CalibrationDevice(s.type, serial),
+    };
+    if (typed.isNotEmpty) return typed.toList();
+    return [for (final s in offline) CalibrationDevice(s.type, '')];
+  }
+
+  /// Copies [record], done after the session, into the folder of each
+  /// participant whose laboratory sensors it has (all of them when it
+  /// matches none) as `calibracion_final_<time>.csv`. The original stays
+  /// in `calibraciones/`, so the next session of the day can use it.
+  /// Returns the files written.
+  Future<List<File>> keepFinalCalibration(CalibrationRecord record) async {
+    final s = store;
+    if (s == null) return const [];
+    bool wears(ParticipantEntry p) => p.sensors.any(
+        (x) => x.connection == 'offline' && x.inLab && CalibrationStore.forDevice([record], x.type, x.serial) != null);
+    final mine = participants.where(wears).toList();
+    final name = record.file.uri.pathSegments.last;
+    final finalName = name.startsWith(CalibrationStore.filePrefix)
+        ? '${CalibrationStore.filePrefix}final_${name.substring(CalibrationStore.filePrefix.length)}'
+        : 'final_$name';
+    final written = <File>[];
+    final dirs = {for (final p in mine.isEmpty ? participants : mine) s.directoryOf(p.participantId).path};
+    for (final dir in dirs) {
+      written.add(await record.file.copy('$dir${Platform.pathSeparator}$finalName'));
+    }
+    return written;
+  }
+
   /// Start of the first and end of the last calibration used.
   ({DateTime start, DateTime end})? get _calibrationSpan {
     final used = {
@@ -501,6 +570,7 @@ class SessionController extends ChangeNotifier {
     _store = value;
     value?.now = clock.nowUtc;
   }
+
   String? sessionId;
 
   /// True when this session was rebuilt after the app closed.
@@ -573,8 +643,7 @@ class SessionController extends ChangeNotifier {
 
   /// The devices of the Research Monitor: each participant's sensors and
   /// the cameras of the session.
-  ProtocolConfiguration get protocolConfiguration =>
-      protocolConfigurationFor(battery, participants);
+  ProtocolConfiguration get protocolConfiguration => protocolConfigurationFor(battery, participants);
 
   String get visitCode => SessionStore.visitCode(
         participants.isEmpty ? '' : participants.first.redcapEventName,
@@ -623,9 +692,7 @@ class SessionController extends ChangeNotifier {
       }
     }
 
-    final shown = engine.phase == SessionPhase.wait
-        ? engine.phaseElapsed.inSeconds
-        : engine.remainingSeconds;
+    final shown = engine.phase == SessionPhase.wait ? engine.phaseElapsed.inSeconds : engine.remainingSeconds;
     final sessionSecond = sessionElapsedSeconds;
     if (events.isNotEmpty || shown != _lastShownSecond || sessionSecond != _lastSessionSecond) {
       _lastShownSecond = shown;
@@ -674,8 +741,7 @@ class SessionController extends ChangeNotifier {
         return _run(name, engine.resume());
       case 'toggle':
         if (!engine.hasStarted) return start(video: args['video'] == true);
-        return _run(engine.isPaused ? 'resume' : 'pause',
-            engine.isPaused ? engine.resume() : engine.pause());
+        return _run(engine.isPaused ? 'resume' : 'pause', engine.isPaused ? engine.resume() : engine.pause());
       case 'advance':
         return _run(name, engine.advance());
       case 'repeat':
@@ -710,6 +776,7 @@ class SessionController extends ChangeNotifier {
         return const CommandResult.ok();
       case 'finish':
         if (args['notes'] != null) notes = args['notes'].toString();
+        if (args['recalibrate'] is bool) recalibrateAtEnd = args['recalibrate'] as bool;
         unawaited(finish());
         return const CommandResult.ok('Guardando la sesión...');
       case 'cancel':
@@ -894,9 +961,7 @@ class SessionController extends ChangeNotifier {
     }
     if (args.containsKey('rpe_before')) {
       final rpe = _int(args['rpe_before']);
-      log = rpe == null
-          ? log.copyWith(clearRpeBefore: true)
-          : log.copyWith(rpeBefore: rpe.clamp(0, 10));
+      log = rpe == null ? log.copyWith(clearRpeBefore: true) : log.copyWith(rpeBefore: rpe.clamp(0, 10));
     }
     if (args.containsKey('incident')) {
       final text = args['incident']?.toString().trim() ?? '';
@@ -1008,7 +1073,10 @@ class SessionController extends ChangeNotifier {
             detail: '${log.completion} ${log.endReason} ${log.durationSeconds.toStringAsFixed(1)} s',
           );
           // A resting heart rate needs a minute at least of real rest.
-          if (_planFor(log.activityIndex).restingHr && !log.isSkipped && log.durationSeconds >= 60 && closing != 'cancelled') {
+          if (_planFor(log.activityIndex).restingHr &&
+              !log.isSkipped &&
+              log.durationSeconds >= 60 &&
+              closing != 'cancelled') {
             _restingHrJob = _measureRestingHr(log);
           }
           _changed(saveState: true, outputs: true);
@@ -1055,8 +1123,7 @@ class SessionController extends ChangeNotifier {
   }
 
   /// Name of an activity to be read aloud.
-  String _spoken(ActivityPlan plan) =>
-      plan.name == null ? 'Actividad ${plan.index}' : plan.name!.toLowerCase();
+  String _spoken(ActivityPlan plan) => plan.name == null ? 'Actividad ${plan.index}' : plan.name!.toLowerCase();
 
   void _speakPhase(ActivityPlan plan, SessionPhase phase, int attempt, {required bool first}) {
     final count = activityCount;
@@ -1071,9 +1138,7 @@ class SessionController extends ChangeNotifier {
       case SessionPhase.post:
         audio.say('Para. Quédate quieto.');
       case SessionPhase.wait:
-        audio.say(engine.protocolComplete
-            ? 'Protocolo completado. ¡Muy bien!'
-            : 'Actividad terminada. Descansa.');
+        audio.say(engine.protocolComplete ? 'Protocolo completado. ¡Muy bien!' : 'Actividad terminada. Descansa.');
     }
   }
 
@@ -1145,9 +1210,9 @@ class SessionController extends ChangeNotifier {
             (store == null ? p : p.copyWith(folder: store!.directoryOf(p.participantId).path)).toJson(),
         ],
         'data_root': dataRoot,
+        if (operators.isNotEmpty) 'operators': operators,
         if (operator != null) 'operator': operator,
-        if (calibrations.isNotEmpty)
-          'calibrations': [for (final c in calibrations) _calibrationJson(c)],
+        if (calibrations.isNotEmpty) 'calibrations': [for (final c in calibrations) _calibrationJson(c)],
         if (notes != null) 'notes': notes,
         'battery': battery?.toJson(),
         'settings': settings.toJson(),
@@ -1164,12 +1229,10 @@ class SessionController extends ChangeNotifier {
   }
 
   /// Attempts written to the manifest: the skipped ones have no time span.
-  List<ActivityLog> get _manifestActivities =>
-      engine.logs.where((l) => !l.isSkipped).toList();
+  List<ActivityLog> get _manifestActivities => engine.logs.where((l) => !l.isSkipped).toList();
 
   /// The manifest of the session's main folder (the first participant's).
-  Map<String, dynamic> manifestJson({required String status, List<String> files = const []}) =>
-      manifestJsonFor(
+  Map<String, dynamic> manifestJson({required String status, List<String> files = const []}) => manifestJsonFor(
         participants.isEmpty ? null : participants.first,
         status: status,
         files: files,
@@ -1200,6 +1263,7 @@ class SessionController extends ChangeNotifier {
         participantId: participant?.participantId,
       ),
       'status': status,
+      if (operators.isNotEmpty) 'operators': operators,
       if (operator != null) 'operator': operator,
       // Calibration of each sensor, by serial number; the times of each
       // face are in the CSV, copied next to this manifest.
@@ -1236,9 +1300,7 @@ class SessionController extends ChangeNotifier {
     ];
     return [
       for (final path in files)
-        if (path.startsWith('$own$sep') ||
-            !others.any((other) => path.startsWith('$other$sep')))
-          path,
+        if (path.startsWith('$own$sep') || !others.any((other) => path.startsWith('$other$sep'))) path,
     ];
   }
 
@@ -1560,8 +1622,7 @@ class SessionController extends ChangeNotifier {
   Future<void> sendSnapshot() async {
     if (_disposed) return;
     final now = DateTime.now();
-    if (_lastSnapshotAt != null &&
-        now.difference(_lastSnapshotAt!) < const Duration(milliseconds: 180)) {
+    if (_lastSnapshotAt != null && now.difference(_lastSnapshotAt!) < const Duration(milliseconds: 180)) {
       if (_snapshotQueued) return;
       _snapshotQueued = true;
       await Future.delayed(const Duration(milliseconds: 200));
@@ -1580,6 +1641,7 @@ class SessionController extends ChangeNotifier {
         'visit': visitCode,
         'event_name': participants.isEmpty ? null : participants.first.redcapEventName,
         'operator': operator,
+        'operators': operators,
         'battery': battery?.toJson(),
         'settings': settings.toJson(),
         'data_root': dataRoot,

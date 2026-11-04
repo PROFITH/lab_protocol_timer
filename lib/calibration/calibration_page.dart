@@ -8,10 +8,11 @@ import '../session/session_controller.dart';
 import 'calibration_program.dart';
 import 'calibration_store.dart';
 import 'dodecahedron.dart';
+import '../ui/app_theme.dart';
 
-const _accent = Color(0xFF22D3EE);
-const _card = Color(0xFF1E293B);
-const _warning = Color(0xFFFBBF24);
+Color get _accent => Palette.current.cyan;
+Color get _card => Palette.current.surface;
+Color get _warning => Palette.current.warn;
 
 /// Calibration of the offline sensors, done by the technician alone before
 /// the participants arrive or after they leave. The app says when to turn
@@ -212,7 +213,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
         if (!didPop) unawaited(_cancel());
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF0F172A),
+        backgroundColor: context.pal.panel,
         appBar: AppBar(
           title: const Text('Calibración'),
           leading: IconButton(icon: const Icon(Icons.close), onPressed: _cancel),
@@ -269,7 +270,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
                 Text(
                   'Dura unos $minutes min. Espera en ${CalibrationStore.folderOf(widget.dataRoot).path} '
                   'y, al empezar la sesión, pasa a la carpeta de los participantes cuyos sensores lleva.',
-                  style: const TextStyle(fontSize: 12, color: Colors.white60),
+                  style: TextStyle(fontSize: 12, color: context.pal.on60),
                 ),
               ],
             ),
@@ -324,13 +325,13 @@ class _CalibrationPageState extends State<CalibrationPage> {
             CalibrationStepKind.face => 'CARA ${step.face} ARRIBA',
           },
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: _accent),
+          style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: _accent),
         ),
         if (faceIndex != null)
           Text(
             'Cara $faceIndex de ${program.faces}',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white60),
+            style: TextStyle(color: context.pal.on60),
           ),
         const SizedBox(height: 12),
         Center(child: DodecahedronView(face: step.face ?? 1, size: 280)),
@@ -342,7 +343,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
           style: TextStyle(
             fontSize: 56,
             fontWeight: FontWeight.w900,
-            color: warning ? _warning : Colors.white,
+            color: warning ? _warning : context.pal.on,
           ),
         ),
         if (next != null)
@@ -351,7 +352,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
                 ? 'Prepárate: ${_nextLabel(next)}'
                 : 'Después: ${_nextLabel(next)}',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, color: warning ? _warning : Colors.white70),
+            style: TextStyle(fontSize: 16, color: warning ? _warning : context.pal.on70),
           ),
         const SizedBox(height: 16),
         Card(
@@ -373,7 +374,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
         Text(
           'Total: ${_mmss(_elapsed.floor())} de ${_mmss(program.totalSeconds)}',
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 12, color: Colors.white54),
+          style: TextStyle(fontSize: 12, color: context.pal.on54),
         ),
       ],
     );
@@ -387,15 +388,15 @@ class _CalibrationPageState extends State<CalibrationPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'DISPOSITIVOS EN EL DODECAEDRO',
-              style: TextStyle(fontSize: 12, color: Colors.white60, fontWeight: FontWeight.w700),
+              style: TextStyle(fontSize: 12, color: context.pal.on60, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'La calibración se guarda por número de serie: así cada sesión encuentra la de sus '
               'sensores. Si no caben todos, calibra en tandas.',
-              style: TextStyle(fontSize: 12, color: Colors.white54),
+              style: TextStyle(fontSize: 12, color: context.pal.on54),
             ),
             const SizedBox(height: 8),
             for (var i = 0; i < _devices.length; i++)
