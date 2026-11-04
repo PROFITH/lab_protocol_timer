@@ -28,7 +28,7 @@ void main() {
   }
 
   FilledButton startButton(WidgetTester tester) => tester.widget<FilledButton>(find.ancestor(
-        of: find.textContaining('COMENZAR SESIÓN'),
+        of: find.textContaining('PREPARAR SESIÓN'),
         matching: find.byWidgetPredicate((w) => w is FilledButton),
       ));
 
@@ -42,11 +42,13 @@ void main() {
     List<String>? expectOperatorFields,
   }) async {
     SessionController? started;
+    var monitorOpened = 0;
     await tester.pumpWidget(const SizedBox());
     await tester.pumpWidget(MaterialApp(
       theme: ThemeData.dark(),
       home: ParticipantSetupPage(
         onStart: (controller) async => started = controller,
+        onPrepare: (configuration) async => monitorOpened++,
         monitor: NoMonitor(),
         audioFactory: SilentAudio.new,
         checkUnfinished: false,
@@ -64,10 +66,9 @@ void main() {
     expect(find.byKey(const ValueKey('setup_section_2_hint')), findsNothing);
     expect(find.byKey(const ValueKey('setup_section_3_hint')), findsNothing);
     expect(startButton(tester).onPressed, isNotNull);
-    expect(find.text('SENSORES DE $id'), findsOneWidget);
-    // Day 0: the protocol's free-living set (Matrix, SENS and both AX6)
-    // asks for the serial of the device the participant takes home.
-    expect(find.widgetWithText(TextFormField, 'Vida libre'), findsNWidgets(4));
+    // Serials and calibration wait for the waiting room.
+    expect(find.text('SENSORES DE $id'), findsNothing);
+    expect(find.byKey(const Key('calibrate')), findsNothing);
     expect(find.textContaining('R4H_$id${Platform.pathSeparator}D0'), findsOneWidget);
 
     if (expectOperatorFields != null) {
@@ -94,14 +95,36 @@ void main() {
       await tester.tap(find.byKey(ValueKey('sync_kind_${choose.name}')));
       await tester.pump();
     }
+
+    // The waiting room: the monitor opens to connect the Polar and camera.
+    await tester.ensureVisible(find.byKey(const Key('prepare_session')));
+    await tester.tap(find.byKey(const Key('prepare_session')));
+    await wait(tester, () => monitorOpened > 0);
+    expect(find.byKey(const Key('waiting_room')), findsOneWidget);
+    expect(find.byKey(const Key('calibrate')), findsOneWidget);
+    expect(find.text('SENSORES DE $id'), findsOneWidget);
+    // Day 0: the protocol's free-living set (Matrix, SENS and both AX6)
+    // asks for the serial of the device the participant takes home.
+    expect(find.widgetWithText(TextFormField, 'Vida libre'), findsNWidgets(4));
+
     if (h10Serial != null) {
       final field = find.widgetWithText(TextFormField, 'Polar H10 · Pecho');
       await tester.ensureVisible(field);
       await tester.enterText(field, h10Serial);
       await tester.pump();
     }
-    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
-    await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    // The evaluator ticks each device once initialized.
+    final checks = find.byType(Checkbox);
+    expect(checks, findsWidgets);
+    expect(find.textContaining('0/${checks.evaluate().length} inicializados'), findsOneWidget);
+    for (var i = 0; i < checks.evaluate().length; i++) {
+      await tester.ensureVisible(checks.at(i));
+      await tester.tap(checks.at(i));
+      await tester.pump();
+    }
+    expect(find.textContaining('0/'), findsNothing);
+    await tester.ensureVisible(find.byKey(const Key('go_to_session')));
+    await tester.tap(find.byKey(const Key('go_to_session')));
     // Sensors without a calibration of today (here they have no serial
     // numbers to match): the technician is asked first.
     await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);

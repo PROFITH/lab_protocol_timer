@@ -159,6 +159,61 @@ void main() {
     c.dispose();
   });
 
+  test('the final calibration goes to the folders of those who wore the sensors', () async {
+    final participants = [
+      ParticipantEntry(
+        participantId: '001',
+        redcapEventName: 'da_0__visita_inici_arm_1',
+        sensors: const [
+          SessionSensor(
+            sensorId: 'ax6_shoe_l',
+            type: 'ax6',
+            placement: 'shoe',
+            serial: 'A1',
+            use: SensorUse.both,
+            freeLivingSerial: 'B2',
+          ),
+          SessionSensor(sensorId: 'polar_h10', type: 'polar_h10', placement: 'chest', serial: 'P1'),
+        ],
+      ),
+      ParticipantEntry(
+        participantId: '002',
+        redcapEventName: 'da_0__visita_inici_arm_1',
+        sensors: const [
+          SessionSensor(sensorId: 'ax6_shoe_l', type: 'ax6', placement: 'shoe', serial: 'C3'),
+        ],
+      ),
+    ];
+    final c = SessionController(
+      participants: participants,
+      battery: null,
+      dataRoot: root.path,
+      clock: FakeSessionClock(),
+      importRecords: (_) async => null,
+      redcapConfigured: false,
+    );
+    // The lab set only: the free-living AX6 went home, the Polar is live.
+    expect(c.labDevices.map((d) => d.code), ['ax6:A1', 'ax6:C3']);
+    expect((await c.command('start', {'video': false})).ok, isTrue);
+    expect(c.recalibrateAtEnd, isFalse);
+    expect((await c.command('finish', {'notes': '', 'recalibrate': true})).ok, isTrue);
+    expect(c.recalibrateAtEnd, isTrue);
+    for (var i = 0; i < 250 && c.closing != 'saved'; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(c.closing, 'saved');
+
+    final record = await writeCalibration(DateTime.now().toUtc(), [const CalibrationDevice('ax6', 'A1')]);
+    final written = await c.keepFinalCalibration(record);
+    final dir1 = c.store!.directoryOf('001').path;
+    final name = 'calibracion_final_${record.fileName.substring('calibracion_'.length)}';
+    expect(written.map((f) => f.path), ['$dir1${Platform.pathSeparator}$name']);
+    expect(File('${c.store!.directoryOf('002').path}/$name').existsSync(), isFalse);
+    // The original stays for the next session of the day.
+    expect(record.file.existsSync(), isTrue);
+    c.dispose();
+  });
+
   testWidgets('the calibration screen beeps, says each face and writes its times', (tester) async {
     final clock = FakeSessionClock(DateTime.now().toUtc());
     final audio = SilentAudio();

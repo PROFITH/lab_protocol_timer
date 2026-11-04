@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../calibration/calibration_page.dart';
 import '../calibration/calibration_store.dart';
+import '../config/default_protocol_configuration.dart';
+import '../models/protocol_configuration.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/phone_records_import.dart';
@@ -61,6 +63,10 @@ class ParticipantFieldGroup {
     final typed = freeLivingSerials[sensorId]?.text.trim() ?? '';
     return typed.isEmpty ? null : typed;
   }
+
+  /// Devices the evaluator ticked as initialized in the waiting room:
+  /// `lab:<sensorId>` and `free_living:<sensorId>`.
+  final Set<String> initialized = {};
 
   void dispose() {
     controller.dispose();
@@ -142,10 +148,15 @@ class ParticipantSetupPage extends StatefulWidget {
     required this.onStart,
     required this.monitor,
     required this.audioFactory,
+    this.onPrepare,
     this.checkUnfinished = true,
   });
 
   final SessionStarter onStart;
+
+  /// Opens (or shows) the Research Monitor with the devices of the session,
+  /// so they can be connected from the waiting room.
+  final Future<void> Function(ProtocolConfiguration configuration)? onPrepare;
   final MonitorLink monitor;
   final SessionAudio Function() audioFactory;
 
@@ -173,6 +184,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   /// Calibration of the sensors done today under the data folder.
   List<CalibrationRecord> _calibrations = const [];
   bool _starting = false;
+
+  /// After «Preparar sesión»: serial numbers, Polar and camera, calibration.
+  bool _waitingRoom = false;
   bool _sendingSaved = false;
 
   /// While the phones' files go to REDCap: which one (e.g. «2 de 5»).
@@ -477,8 +491,6 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
             '${sensor.sensorId} (vida libre)',
         ],
       ];
-
-  int get _missingSerialCount => _participants.fold(0, (sum, g) => sum + _missingSerials(g).length);
 
   /// Fills the serial fields of [group] from a remembered setup.
   void _fillSerials(ParticipantFieldGroup group, List<SessionSensor> remembered) {
@@ -943,7 +955,33 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     ];
   }
 
+  /// From the session data to the waiting room, where a second evaluator
+  /// gets the sensors ready while the participant fills the questionnaires.
+  Future<void> _prepare() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (!_participantsReady) return;
+    setState(() => _waitingRoom = true);
+    await _loadCalibration();
+    await _openMonitor();
+  }
+
+  Future<void> _openMonitor() async {
+    final open = widget.onPrepare;
+    if (open == null) return;
+    try {
+      await open(protocolConfigurationFor(_sessionBattery, _entries()));
+    } catch (e) {
+      debugPrint('[SETUP] No se pudo abrir el Research Monitor: $e');
+    }
+  }
+
+  void _leaveWaitingRoom() => setState(() => _waitingRoom = false);
+
   Future<void> _submitAndStart() async {
+    if (!_waitingRoom) {
+      await _prepare();
+      return;
+    }
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
@@ -951,6 +989,28 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
 
     final entries = _entries();
     final activity = int.tryParse(_activityController.text.trim()) ?? 1;
+
+    final notReady = [
+      for (final group in _participants)
+        if (_uninitialized(group) case final devices when devices.isNotEmpty) '${group.id}: ${devices.join(', ')}',
+    ];
+    if (notReady.isNotEmpty) {
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Dispositivos sin marcar'),
+          content: Text(
+            'Sin marcar como inicializados:\n${notReady.join('\n')}\n\n¿Pasar a la sesión igualmente?',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Volver')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Seguir')),
+          ],
+        ),
+      );
+      if (proceed != true || !mounted) return;
+    }
 
     final root = _dataRoot ?? await SetupPrefs.defaultDataRoot();
     final calibrations = await CalibrationStore.recentBefore(root, DateTime.now());
@@ -995,7 +1055,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
             title: const Text('Faltan números de serie'),
             content: Text(
               'Sin número de serie:\n${missing.join('\n')}\n\n'
-              'Se escriben en «Protocolo y sensores», junto a cada participante. '
+              'Se escriben aquí, en la sala de espera, junto a cada participante. '
               '¿Empezar igualmente?',
             ),
             actions: [
@@ -1272,9 +1332,53 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
   }
 
   /// The serial of each sensor of the protocol, for one participant.
+  /// One entry per device a participant wears in the lab or takes home,
+  /// with its label: `lab:<sensorId>` or `free_living:<sensorId>`.
+  Map<String, String> _deviceKeys(ParticipantFieldGroup group) => {
+        for (final s in _layoutSensors) ...{
+          if (s.inLab) 'lab:${s.sensorId}': s.displayName,
+          if (s.inFreeLiving) 'free_living:${s.sensorId}': '${s.displayName} · vida libre',
+        },
+      };
+
+  /// Devices of [group] the evaluator has not ticked yet.
+  List<String> _uninitialized(ParticipantFieldGroup group) => [
+        for (final e in _deviceKeys(group).entries)
+          if (!group.initialized.contains(e.key)) e.value,
+      ];
+
+  /// The tick the evaluator marks once the device is initialized (an
+  /// offline sensor set to record) or ready (a live one, put on).
+  Widget _initializedCheck(ParticipantFieldGroup group, SessionSensor sensor, {required bool freeLiving}) {
+    final key = '${freeLiving ? 'free_living' : 'lab'}:${sensor.sensorId}';
+    final done = group.initialized.contains(key);
+    final offline = sensor.connection == 'offline';
+    return InkWell(
+      key: ValueKey('init-${identityHashCode(group)}-$key'),
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(() => done ? group.initialized.remove(key) : group.initialized.add(key)),
+      child: Row(
+        children: [
+          Checkbox(
+            value: done,
+            visualDensity: VisualDensity.compact,
+            onChanged: (v) => setState(() => v == true ? group.initialized.add(key) : group.initialized.remove(key)),
+          ),
+          Expanded(
+            child: Text(
+              offline ? 'Inicializado' : 'Preparado (puesto y listo para conectar)',
+              style: TextStyle(color: done ? _accent : context.pal.on60, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _participantSensorsCard(ParticipantFieldGroup group, int index) {
     final layout = _layoutSensors;
     final missing = _missingSerials(group).length;
+    final pending = _uninitialized(group).length;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1302,8 +1406,10 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
               ),
               if (layout.isNotEmpty)
                 Text(
-                  missing == 0 ? 'Todos con número de serie' : '$missing sin número de serie',
-                  style: TextStyle(color: missing == 0 ? context.pal.on54 : _warning, fontSize: 12),
+                  '${missing == 0 ? 'Todos con número de serie' : '$missing sin número de serie'} · '
+                  '${_deviceKeys(group).length - pending}/${_deviceKeys(group).length} inicializados',
+                  key: ValueKey('init-count-$index'),
+                  style: TextStyle(color: missing == 0 && pending == 0 ? context.pal.on54 : _warning, fontSize: 12),
                 ),
             ],
           ),
@@ -1335,6 +1441,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                               hint: 'Número de serie',
                             ).copyWith(isDense: true),
                           ),
+                        if (sensor.inLab) _initializedCheck(group, sensor, freeLiving: false),
                         // The device taken home for the free-living days
                         // (another one, with its own serial), so its
                         // calibration reaches this participant too.
@@ -1354,6 +1461,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                               hint: 'Número de serie del que se lleva',
                             ).copyWith(isDense: true),
                           ),
+                          _initializedCheck(group, sensor, freeLiving: true),
                         ],
                       ],
                     ),
@@ -1430,7 +1538,7 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     String hhmm(DateTime t) => '${two(t.toLocal().hour)}:${two(t.toLocal().minute)}';
     final devices = {for (final r in calibrations) ...r.devices}.length;
     final status = c == null
-        ? 'Sin calibrar hoy. Hazla antes de que llegue el participante, con los sensores ya grabando.'
+        ? 'Sin calibrar hoy. Mientras el participante hace los cuestionarios, calibra aquí sus sensores, ya grabando.'
         : '${calibrations.length == 1 ? 'Calibración' : '${calibrations.length} calibraciones'} de hoy '
             '(la última ${hhmm(c.start)}–${hhmm(c.end)}), $devices '
             '${devices == 1 ? 'dispositivo' : 'dispositivos'}. '
@@ -1478,6 +1586,156 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
     );
   }
 
+  /// The Polar and the camera are connected in the Research Monitor.
+  Widget _monitorCard() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: context.pal.on12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.monitor_heart_rounded, color: _accent, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'POLAR Y CÁMARA',
+                  style: TextStyle(color: context.pal.on60, fontSize: 12),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Se conectan en el Research Monitor (la otra ventana) y siguen conectados al pasar a la '
+                  'sesión. La sesión se empieza allí, con «Empezar sesión», cuando el participante esté listo.',
+                  style: TextStyle(color: context.pal.on, fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            key: const Key('show_monitor'),
+            onPressed: widget.onPrepare == null ? null : _openMonitor,
+            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+            label: const Text('Mostrar monitor'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Between the session data and the session: the sensors are got ready
+  /// (serial numbers, Polar and camera, calibration) while the participant
+  /// fills the questionnaires with another evaluator.
+  Widget _waitingRoomColumn() {
+    final count = _participants.length;
+    final ids = [for (final p in _participants) p.id].join(', ');
+    return Column(
+      key: const Key('waiting_room'),
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Center(
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: _accent.withAlpha(30),
+              border: Border.all(color: _accent.withAlpha(100), width: 2),
+            ),
+            child: Icon(Icons.meeting_room_rounded, size: 54, color: _accent),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          'SALA DE ESPERA',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 2.0, color: context.pal.on),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '$ids · ${_sessionBattery?.displayName ?? 'sin protocolo'}',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: context.pal.on70, fontSize: 14, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Mientras el participante hace los cuestionarios con un evaluador, otro prepara aquí sus sensores.',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: context.pal.on54, fontSize: 12),
+        ),
+        const SizedBox(height: 28),
+        _SetupSection(
+          number: 1,
+          title: 'NÚMEROS DE SERIE',
+          enabled: true,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < count; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                _participantSensorsCard(_participants[i], i),
+              ],
+              const SizedBox(height: 6),
+              Text(
+                'Cada participante lleva los sensores del protocolo; su número de serie va al manifiesto y a '
+                'REDCap, y decide qué calibración es suya. Las cámaras son de la sesión.',
+                style: TextStyle(color: context.pal.on38, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 28),
+        _SetupSection(
+          number: 2,
+          title: 'CONECTAR POLAR Y CÁMARA',
+          enabled: true,
+          child: _monitorCard(),
+        ),
+        const SizedBox(height: 28),
+        _SetupSection(
+          number: 3,
+          title: 'CALIBRACIÓN',
+          enabled: true,
+          child: _calibrationCard(),
+        ),
+        const SizedBox(height: 28),
+        SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: FilledButton.icon(
+            key: const Key('go_to_session'),
+            onPressed: _starting ? null : _submitAndStart,
+            style: FilledButton.styleFrom(
+              backgroundColor: _accent,
+              foregroundColor: context.pal.onAccent,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            ),
+            icon: const Icon(Icons.arrow_forward_rounded, size: 24),
+            label: Text(
+              'PASAR A LA SESIÓN ($count SUJETO${count > 1 ? 'S' : ''})',
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.2),
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Center(
+          child: TextButton.icon(
+            key: const Key('leave_waiting_room'),
+            onPressed: _starting ? null : _leaveWaitingRoom,
+            style: TextButton.styleFrom(foregroundColor: context.pal.on60),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Volver a los datos de la sesión'),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final ready = _participantsReady;
@@ -1501,209 +1759,209 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                     constraints: const BoxConstraints(maxWidth: 640),
                     child: Form(
                       key: _formKey,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Center(
-                            child: Container(
-                              padding: const EdgeInsets.all(18),
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: _accent.withAlpha(30),
-                                border: Border.all(
-                                  color: _accent.withAlpha(100),
-                                  width: 2,
-                                ),
-                              ),
-                              child: Icon(
-                                Icons.groups_rounded,
-                                size: 54,
-                                color: _accent,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          Text(
-                            'NUEVA SESIÓN',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 2.0,
-                              color: context.pal.on,
-                            ),
-                          ),
-                          const SizedBox(height: 28),
-
-                          // 1. Participants
-                          _SetupSection(
-                            number: 1,
-                            title: 'PARTICIPANTES',
-                            enabled: true,
-                            child: Column(
+                      child: _waitingRoom
+                          ? _waitingRoomColumn()
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                for (var i = 0; i < count; i++) ...[
-                                  if (i > 0) const SizedBox(height: 14),
-                                  _participantCard(i),
-                                ],
-                                const SizedBox(height: 12),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: OutlinedButton.icon(
-                                    onPressed: _addParticipantField,
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: _accent,
-                                      side: BorderSide(color: _accent),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                Center(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(18),
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: _accent.withAlpha(30),
+                                      border: Border.all(
+                                        color: _accent.withAlpha(100),
+                                        width: 2,
+                                      ),
                                     ),
-                                    icon: const Icon(Icons.add_rounded),
-                                    label: const Text('Añadir Otro Participante'),
+                                    child: Icon(
+                                      Icons.groups_rounded,
+                                      size: 54,
+                                      color: _accent,
+                                    ),
                                   ),
                                 ),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 28),
-
-                          // 2. Protocol and sensors of each participant
-                          _SetupSection(
-                            number: 2,
-                            title: 'PROTOCOLO Y SENSORES',
-                            enabled: ready,
-                            hint: 'Escribe el ID de cada participante para configurar el protocolo.',
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                SessionSetupCard(
-                                  protocols: _allProtocols,
-                                  battery: _sessionBattery,
-                                  modified: _batteryModified,
-                                  note: _setupNote,
-                                  loading: _loadingProtocols,
-                                  missingSerials: _missingSerialCount,
-                                  onSelect: _selectProtocol,
-                                  onEdit: _editProtocol,
-                                  onImport: _loadBattery,
-                                  onReset: _batteryModified ? () => _selectProtocol(_battery?.protocolId) : null,
-                                  onDeleteCustom: _customProtocols.any((p) => p.protocolId == _battery?.protocolId)
-                                      ? _deleteCustomProtocol
-                                      : null,
-                                  onSyncKind: _chooseSyncKind,
-                                ),
-                                if (_battery != null) ...[
-                                  const SizedBox(height: 14),
-                                  for (var i = 0; i < count; i++) ...[
-                                    if (i > 0) const SizedBox(height: 10),
-                                    _participantSensorsCard(_participants[i], i),
-                                  ],
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Cada participante lleva los sensores del protocolo; su número de serie se '
-                                    'escribe aquí y va al manifiesto y a REDCap. Las cámaras son de la sesión.',
-                                    style: TextStyle(color: context.pal.on38, fontSize: 11),
+                                const SizedBox(height: 20),
+                                Text(
+                                  'NUEVA SESIÓN',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 22,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 2.0,
+                                    color: context.pal.on,
                                   ),
-                                ],
+                                ),
+                                const SizedBox(height: 28),
+
+                                // 1. Participants
+                                _SetupSection(
+                                  number: 1,
+                                  title: 'PARTICIPANTES',
+                                  enabled: true,
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      for (var i = 0; i < count; i++) ...[
+                                        if (i > 0) const SizedBox(height: 14),
+                                        _participantCard(i),
+                                      ],
+                                      const SizedBox(height: 12),
+                                      Align(
+                                        alignment: Alignment.centerLeft,
+                                        child: OutlinedButton.icon(
+                                          onPressed: _addParticipantField,
+                                          style: OutlinedButton.styleFrom(
+                                            foregroundColor: _accent,
+                                            side: BorderSide(color: _accent),
+                                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                          ),
+                                          icon: const Icon(Icons.add_rounded),
+                                          label: const Text('Añadir Otro Participante'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                const SizedBox(height: 28),
+
+                                // 2. Protocol and sensors of each participant
+                                _SetupSection(
+                                  number: 2,
+                                  title: 'PROTOCOLO Y SENSORES',
+                                  enabled: ready,
+                                  hint: 'Escribe el ID de cada participante para configurar el protocolo.',
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      SessionSetupCard(
+                                        protocols: _allProtocols,
+                                        battery: _sessionBattery,
+                                        modified: _batteryModified,
+                                        note: _setupNote,
+                                        loading: _loadingProtocols,
+                                        missingSerials: 0, // typed in the waiting room
+                                        onSelect: _selectProtocol,
+                                        onEdit: _editProtocol,
+                                        onImport: _loadBattery,
+                                        onReset: _batteryModified ? () => _selectProtocol(_battery?.protocolId) : null,
+                                        onDeleteCustom:
+                                            _customProtocols.any((p) => p.protocolId == _battery?.protocolId)
+                                                ? _deleteCustomProtocol
+                                                : null,
+                                        onSyncKind: _chooseSyncKind,
+                                      ),
+                                      if (_battery != null) ...[
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          'Los números de serie de los sensores se escriben en la sala de espera, '
+                                          'al preparar la sesión.',
+                                          style: TextStyle(color: context.pal.on38, fontSize: 11),
+                                        ),
+                                      ],
+                                      const SizedBox(height: 14),
+                                      TextFormField(
+                                        controller: _activityController,
+                                        keyboardType: TextInputType.number,
+                                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                                        style:
+                                            TextStyle(color: context.pal.on, fontWeight: FontWeight.w700, fontSize: 16),
+                                        decoration: _decoration(
+                                          label: 'ACTIVIDAD INICIAL *',
+                                          hint: 'Ej. 1',
+                                          icon: Icons.pin_rounded,
+                                          fill: _card,
+                                          radius: 16,
+                                        ),
+                                        validator: (value) {
+                                          final numVal = int.tryParse(value ?? '');
+                                          if (numVal == null || numVal < 1) return 'Debe ser mínimo 1';
+                                          return null;
+                                        },
+                                      ),
+                                    ],
+                                  ),
+                                ),
+
+                                const SizedBox(height: 28),
+
+                                // 3. One folder per participant
+                                _SetupSection(
+                                  number: 3,
+                                  title: 'CARPETAS DE LA SESIÓN',
+                                  enabled: ready,
+                                  hint: 'Escribe el ID de cada participante para ver sus carpetas.',
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      _foldersCard(),
+                                    ],
+                                  ),
+                                ),
+
+                                const SizedBox(height: 24),
+                                _operatorsCard(),
                                 const SizedBox(height: 14),
-                                TextFormField(
-                                  controller: _activityController,
-                                  keyboardType: TextInputType.number,
-                                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                  style: TextStyle(color: context.pal.on, fontWeight: FontWeight.w700, fontSize: 16),
-                                  decoration: _decoration(
-                                    label: 'ACTIVIDAD INICIAL *',
-                                    hint: 'Ej. 1',
-                                    icon: Icons.pin_rounded,
-                                    fill: _card,
-                                    radius: 16,
+                                _redcapCard(),
+
+                                const SizedBox(height: 28),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 54,
+                                  child: FilledButton.icon(
+                                    key: const Key('prepare_session'),
+                                    onPressed: _starting || !ready ? null : _prepare,
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor: _accent,
+                                      foregroundColor: context.pal.onAccent,
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                                    ),
+                                    icon: const Icon(Icons.arrow_forward_rounded, size: 24),
+                                    label: Text(
+                                      'PREPARAR SESIÓN ($count SUJETO${count > 1 ? 'S' : ''})',
+                                      style: const TextStyle(
+                                          fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.2),
+                                    ),
                                   ),
-                                  validator: (value) {
-                                    final numVal = int.tryParse(value ?? '');
-                                    if (numVal == null || numVal < 1) return 'Debe ser mínimo 1';
-                                    return null;
-                                  },
+                                ),
+                                const SizedBox(height: 10),
+                                Center(
+                                  child: Tooltip(
+                                    message: 'Para una sesión que se guardó sin llegar a REDCap: elige su carpeta '
+                                        '(por ejemplo R4H_001\\D0) y se envía lo que quedó pendiente.',
+                                    child: TextButton.icon(
+                                      onPressed: _sendingSaved ? null : _sendSavedSession,
+                                      style: TextButton.styleFrom(foregroundColor: context.pal.on60),
+                                      icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                                      label: Text(_sendingSaved
+                                          ? 'Enviando a REDCap…'
+                                          : 'Enviar a REDCap una sesión guardada…'),
+                                    ),
+                                  ),
+                                ),
+                                Center(
+                                  child: Tooltip(
+                                    message:
+                                        'Para los registros de los móviles (healthy_tracker): elige la carpeta de Google '
+                                        'Drive del estudio, o la de un archivo copiado del móvil por cable. Lo que REDCap ya '
+                                        'tiene no se repite.',
+                                    child: TextButton.icon(
+                                      key: const ValueKey('send_phone_records'),
+                                      onPressed: _sendingPhone != null ? null : _sendPhoneRecords,
+                                      style: TextButton.styleFrom(foregroundColor: context.pal.on60),
+                                      icon: const Icon(Icons.phone_android_outlined, size: 18),
+                                      label: Text(_sendingPhone == null
+                                          ? 'Enviar a REDCap los registros del móvil (healthy_tracker)…'
+                                          : 'Enviando los registros del móvil${_sendingPhone!.isEmpty ? '' : ' ($_sendingPhone)'}…'),
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
-                          ),
-
-                          const SizedBox(height: 28),
-
-                          // 3. One folder per participant
-                          _SetupSection(
-                            number: 3,
-                            title: 'CARPETAS DE LA SESIÓN',
-                            enabled: ready,
-                            hint: 'Escribe el ID de cada participante para ver sus carpetas.',
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                _foldersCard(),
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-                          _operatorsCard(),
-                          const SizedBox(height: 14),
-                          _redcapCard(),
-                          const SizedBox(height: 14),
-                          _calibrationCard(),
-
-                          const SizedBox(height: 28),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 54,
-                            child: FilledButton.icon(
-                              onPressed: _starting || !ready ? null : _submitAndStart,
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _accent,
-                                foregroundColor: context.pal.onAccent,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                              ),
-                              icon: const Icon(Icons.arrow_forward_rounded, size: 24),
-                              label: Text(
-                                'COMENZAR SESIÓN ($count SUJETO${count > 1 ? 'S' : ''})',
-                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, letterSpacing: 1.2),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          Center(
-                            child: Tooltip(
-                              message: 'Para una sesión que se guardó sin llegar a REDCap: elige su carpeta '
-                                  '(por ejemplo R4H_001\\D0) y se envía lo que quedó pendiente.',
-                              child: TextButton.icon(
-                                onPressed: _sendingSaved ? null : _sendSavedSession,
-                                style: TextButton.styleFrom(foregroundColor: context.pal.on60),
-                                icon: const Icon(Icons.cloud_upload_outlined, size: 18),
-                                label:
-                                    Text(_sendingSaved ? 'Enviando a REDCap…' : 'Enviar a REDCap una sesión guardada…'),
-                              ),
-                            ),
-                          ),
-                          Center(
-                            child: Tooltip(
-                              message:
-                                  'Para los registros de los móviles (healthy_tracker): elige la carpeta de Google '
-                                  'Drive del estudio, o la de un archivo copiado del móvil por cable. Lo que REDCap ya '
-                                  'tiene no se repite.',
-                              child: TextButton.icon(
-                                key: const ValueKey('send_phone_records'),
-                                onPressed: _sendingPhone != null ? null : _sendPhoneRecords,
-                                style: TextButton.styleFrom(foregroundColor: context.pal.on60),
-                                icon: const Icon(Icons.phone_android_outlined, size: 18),
-                                label: Text(_sendingPhone == null
-                                    ? 'Enviar a REDCap los registros del móvil (healthy_tracker)…'
-                                    : 'Enviando los registros del móvil${_sendingPhone!.isEmpty ? '' : ' ($_sendingPhone)'}…'),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
                     ),
                   ),
                 ),

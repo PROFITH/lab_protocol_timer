@@ -191,7 +191,8 @@ class _StatusRow extends StatelessWidget {
             children: [
               Text(
                 [if (s.study != null) s.study!, s.visit].where((t) => t.isNotEmpty).join(' · ').toUpperCase(),
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: context.pal.on38, letterSpacing: 1.1),
+                style:
+                    TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: context.pal.on38, letterSpacing: 1.1),
               ),
               const SizedBox(height: 2),
               Text(
@@ -521,7 +522,15 @@ class _Controls extends StatelessWidget {
 
     // Primary: start, pause, resume.
     final Widget primary;
-    if (!started) {
+    if (!started && !s.hasSession) {
+      primary = _BigButton(
+        label: 'SALA DE ESPERA',
+        icon: Icons.meeting_room_rounded,
+        color: _green,
+        tooltip: 'Conecta aquí los Polar y la cámara. La sesión se puede empezar cuando la pantalla principal '
+            'pase de la sala de espera a la sesión («Pasar a la sesión»).',
+      );
+    } else if (!started) {
       primary = _BigButton(
         label: 'EMPEZAR SESIÓN',
         shortcut: 'F5',
@@ -725,10 +734,8 @@ Future<void> confirmFinish(BuildContext context, MonitorSession s, SessionComman
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (s.isMain)
-              const _DialogWarning('La actividad en curso se corta y queda como parcial.'),
-            if (missing.isNotEmpty)
-              _DialogWarning('Sin hacer (${missing.length}): ${missing.join(', ')}.'),
+            if (s.isMain) const _DialogWarning('La actividad en curso se corta y queda como parcial.'),
+            if (missing.isNotEmpty) _DialogWarning('Sin hacer (${missing.length}): ${missing.join(', ')}.'),
             if (pendingRpe) const _DialogWarning('Falta el esfuerzo (RPE) de la última actividad.'),
             Text(
               'Se paran la cámara y los Polar, se guarda todo en la carpeta de la sesión '
@@ -760,7 +767,46 @@ Future<void> confirmFinish(BuildContext context, MonitorSession s, SessionComman
   );
   final text = notes.text.trim();
   notes.dispose();
-  if (ok == true) await send('finish', {'notes': text});
+  if (ok != true || !context.mounted) return;
+  final recalibrate = await askRecalibrate(context);
+  await send('finish', {'notes': text, 'recalibrate': recalibrate});
+}
+
+/// At the end of the activities: calibrate the lab sensors again? The
+/// calibration opens in the participant window when the session closes
+/// («Terminar» in the summary) and goes to each participant's folder.
+Future<bool> askRecalibrate(BuildContext context) async {
+  final yes = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      backgroundColor: context.pal.surface,
+      title: const Text('¿Volver a calibrar los sensores?'),
+      content: SizedBox(
+        width: 480,
+        child: Text(
+          'Si eliges sí, al cerrar la sesión («Terminar» en el resumen) la pantalla principal abre la '
+          'calibración con los sensores de laboratorio de esta sesión. Se guarda en la carpeta de cada '
+          'participante como calibración final.',
+          style: TextStyle(color: context.pal.on70, height: 1.4),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const Key('recalibrate_no'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('No'),
+        ),
+        FilledButton.icon(
+          key: const Key('recalibrate_yes'),
+          onPressed: () => Navigator.of(context).pop(true),
+          icon: const Icon(Icons.threed_rotation_rounded),
+          label: const Text('Sí, calibrar'),
+        ),
+      ],
+    ),
+  );
+  return yes == true;
 }
 
 Future<void> confirmCancel(BuildContext context, MonitorSession s, SessionCommandSender send) async {
@@ -1238,8 +1284,7 @@ class _LogEditorState extends State<_LogEditor> {
   late String _completion = widget.log.completion;
   late int? _rpe = widget.log.rpe;
   late final TextEditingController _incident = TextEditingController(text: widget.log.incident ?? '');
-  late final TextEditingController _restingHr =
-      TextEditingController(text: widget.log.restingHr?.toString() ?? '');
+  late final TextEditingController _restingHr = TextEditingController(text: widget.log.restingHr?.toString() ?? '');
   final Map<String, TextEditingController> _fields = {};
   final Map<String, String?> _choices = {};
   String? _error;
@@ -1461,55 +1506,55 @@ Future<bool?> showPreflightDialog(
         width: 560,
         child: SingleChildScrollView(
           child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final item in items)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      item.manual
-                          ? Icons.back_hand_outlined
-                          : item.info
-                              ? Icons.info_outline_rounded
-                              : item.ok
-                                  ? Icons.check_circle_rounded
-                                  : Icons.warning_amber_rounded,
-                      color: item.manual
-                          ? _accent
-                          : item.info
-                              ? context.pal.on60
-                              : item.ok
-                                  ? _green
-                                  : _amber,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(item.label, style: const TextStyle(fontWeight: FontWeight.w800)),
-                          Text(item.detail, style: TextStyle(color: context.pal.on60, fontSize: 12)),
-                        ],
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final item in items)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        item.manual
+                            ? Icons.back_hand_outlined
+                            : item.info
+                                ? Icons.info_outline_rounded
+                                : item.ok
+                                    ? Icons.check_circle_rounded
+                                    : Icons.warning_amber_rounded,
+                        color: item.manual
+                            ? _accent
+                            : item.info
+                                ? context.pal.on60
+                                : item.ok
+                                    ? _green
+                                    : _amber,
+                        size: 20,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(item.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                            Text(item.detail, style: TextStyle(color: context.pal.on60, fontSize: 12)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            if (problems.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  'Se puede empezar igualmente; lo que no esté conectado no se registra '
-                  'hasta que se conecte.',
-                  style: TextStyle(color: context.pal.on60, fontSize: 12),
+              if (problems.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    'Se puede empezar igualmente; lo que no esté conectado no se registra '
+                    'hasta que se conecte.',
+                    style: TextStyle(color: context.pal.on60, fontSize: 12),
+                  ),
                 ),
-              ),
-          ],
+            ],
           ),
         ),
       ),
@@ -1603,9 +1648,9 @@ Future<void> showSessionSummaryDialog(
                   Icons.checklist_rounded,
                   notDone + skipped > 0 ? _amber : _green,
                   'Actividades: $done ${done == 1 ? 'completa' : 'completas'}'
-                      '${partial > 0 ? ', $partial ${partial == 1 ? 'parcial' : 'parciales'}' : ''}'
-                      '${skipped > 0 ? ', $skipped ${skipped == 1 ? 'saltada' : 'saltadas'}' : ''}'
-                      '${notDone > 0 ? ', $notDone sin hacer' : ''}',
+                  '${partial > 0 ? ', $partial ${partial == 1 ? 'parcial' : 'parciales'}' : ''}'
+                  '${skipped > 0 ? ', $skipped ${skipped == 1 ? 'saltada' : 'saltadas'}' : ''}'
+                  '${notDone > 0 ? ', $notDone sin hacer' : ''}',
                 ),
                 line(Icons.sync_rounded, syncs > 0 ? _green : _amber, '$syncs ventanas de sincronización'),
                 line(
@@ -1617,12 +1662,16 @@ Future<void> showSessionSummaryDialog(
                 if (storeError != null) line(Icons.error_rounded, _red, 'Error al escribir: $storeError'),
                 const SizedBox(height: 6),
                 if (redcapSkipped)
-                  line(Icons.cloud_off_rounded, context.pal.on70,
+                  line(
+                      Icons.cloud_off_rounded,
+                      context.pal.on70,
                       'Sin conexión con REDCap: la sesión se ha guardado solo en su carpeta (los registros, en '
                       'redcap_records.json). Para enviarla, pon el token en «Conexión con REDCap» y usa '
                       '«Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else if (redcapError != null)
-                  line(Icons.cloud_off_rounded, _red,
+                  line(
+                      Icons.cloud_off_rounded,
+                      _red,
                       'REDCap: $redcapError\nLos registros quedan en redcap_records.json. Si cierras la app sin '
                       'reintentar, se envían después con «Enviar a REDCap una sesión guardada…» en la pantalla de inicio.')
                 else
@@ -1643,15 +1692,21 @@ Future<void> showSessionSummaryDialog(
                     line(Icons.download_rounded, _amber,
                         'Descarga y copia a la carpeta de la sesión: ${names(after.download)}.'),
                   if (after.downloadAndRestart.isNotEmpty)
-                    line(Icons.restart_alt_rounded, _amber,
+                    line(
+                        Icons.restart_alt_rounded,
+                        _amber,
                         'Descarga, copia a la carpeta y vuelve a inicializar para la vida libre: '
                         '${names(after.downloadAndRestart)}.'),
                   if (after.startFreeLiving.isNotEmpty)
-                    line(Icons.play_circle_outline_rounded, _amber,
+                    line(
+                        Icons.play_circle_outline_rounded,
+                        _amber,
                         'Ponle el juego de vida libre (otros dispositivos, ya grabando y calibrados, '
                         'con su número de serie): ${names(after.startFreeLiving)}.'),
                   if (unnamed.isNotEmpty)
-                    line(Icons.drive_file_rename_outline_rounded, context.pal.on70,
+                    line(
+                        Icons.drive_file_rename_outline_rounded,
+                        context.pal.on70,
                         'Sin número de serie en la configuración: nombra sus archivos ${unnamed.join(', ')} '
                         '(con su extensión) para que SAVES los reconozca.'),
                 ],

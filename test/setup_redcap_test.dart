@@ -60,8 +60,14 @@ void main() {
 
     await tester.enterText(find.byType(TextFormField).first, 'P01');
     await tester.pump();
-    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
-    await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    await tester.ensureVisible(find.byKey(const Key('prepare_session')));
+    await tester.tap(find.byKey(const Key('prepare_session')));
+    await wait(tester, () => find.byKey(const Key('waiting_room')).evaluate().isNotEmpty);
+    await tester.ensureVisible(find.byKey(const Key('go_to_session')));
+    await tester.tap(find.byKey(const Key('go_to_session')));
+    // Nothing ticked as initialized: asked first.
+    await wait(tester, () => find.text('Dispositivos sin marcar').evaluate().isNotEmpty);
+    await tester.tap(find.text('Seguir'));
     await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar sin calibrar'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);
@@ -71,6 +77,9 @@ void main() {
     expect(started!.redcapConfigured, isTrue);
     started!.dispose();
     started = null;
+    // Back from the waiting room to the session data.
+    await tester.tap(find.byKey(const Key('leave_waiting_room')));
+    await tester.pump();
 
     // The token is removed: RUN4HEALTH's visits again, and the session goes
     // on without REDCap.
@@ -81,8 +90,14 @@ void main() {
     expect(find.text('Visita Inicial (Día 0)'), findsOneWidget);
     expect(find.text('Baseline'), findsNothing);
 
-    await tester.ensureVisible(find.textContaining('COMENZAR SESIÓN'));
-    await tester.tap(find.textContaining('COMENZAR SESIÓN'));
+    await tester.ensureVisible(find.byKey(const Key('prepare_session')));
+    await tester.tap(find.byKey(const Key('prepare_session')));
+    await wait(tester, () => find.byKey(const Key('waiting_room')).evaluate().isNotEmpty);
+    await tester.ensureVisible(find.byKey(const Key('go_to_session')));
+    await tester.tap(find.byKey(const Key('go_to_session')));
+    // Nothing ticked as initialized: asked first.
+    await wait(tester, () => find.text('Dispositivos sin marcar').evaluate().isNotEmpty);
+    await tester.tap(find.text('Seguir'));
     await wait(tester, () => find.text('Sensores sin calibrar').evaluate().isNotEmpty);
     await tester.tap(find.text('Empezar sin calibrar'));
     await wait(tester, () => find.text('Faltan números de serie').evaluate().isNotEmpty);

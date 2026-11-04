@@ -207,6 +207,26 @@ void main() {
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
         await File('$out/theme_${mode.name}.png').writeAsBytes(bytes!.buffer.asUint8List());
       });
+      // The waiting room, after «Preparar sesión».
+      // (The page keeps its state across themes: in the waiting room already.)
+      if (find.byKey(const Key('prepare_session')).evaluate().isNotEmpty) {
+        await tester.enterText(find.byType(TextFormField).first, 'P01');
+        await tester.pump();
+        await tester.ensureVisible(find.byKey(const Key('prepare_session')));
+        await tester.tap(find.byKey(const Key('prepare_session')));
+        for (var i = 0; i < 20; i++) {
+          await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        await tester.tap(find.byType(Checkbox).first);
+        await tester.pump();
+      }
+      await tester.runAsync(() async {
+        final boundary = key.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 0.8);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File('$out/waiting_room_${mode.name}.png').writeAsBytes(bytes!.buffer.asUint8List());
+      });
     }
   });
 }

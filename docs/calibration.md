@@ -1,10 +1,10 @@
 # Calibration of the offline sensors
 
-The offline sensors (AX3, AX6, SENS motion, Matrix, SensWear…) are calibrated in the 12-face dodecahedron (or a rigid 6-face box) by the technician alone, **before the participants arrive or after they leave**. The app only keeps time: what each sensor felt is in its own file, and the times written here let the analysis find the still segment of every face (for example, GGIR's calibration coefficients).
+The offline sensors (AX3, AX6, SENS motion, Matrix, SensWear…) are calibrated in the 12-face dodecahedron (or a rigid 6-face box) by the technician alone: in the **waiting room**, while the participant fills the questionnaires with another evaluator, and, if wanted, again **after the session**. The app only keeps time: what each sensor felt is in its own file, and the times written here let the analysis find the still segment of every face (for example, GGIR's calibration coefficients).
 
-## On the start screen
+## In the waiting room
 
-**Calibración** (under the REDCap card) opens the calibration screen:
+After the session data, **Preparar sesión** opens the waiting room: serial numbers of each participant's sensors (each device ticked as **Inicializado** once set to record), Polar and camera in the Research Monitor, and calibration. **Calibración** opens the calibration screen:
 
 1. Set up and start recording on every offline sensor, put them in the foam of the dodecahedron and close it.
 2. Check the list of **devices in the dodecahedron**: type and serial number. It is proposed from the serials already typed for the participants (or from the protocol's offline sensors, without serial); rows can be added and removed. A device without a serial number is not recorded. If they do not all fit, calibrate in batches.
@@ -23,7 +23,7 @@ About 8 min 20 s with 12 faces (the 2-min still start became 10 s to get ready i
 
 Closing the screen during a calibration asks first; what was done is kept but does not count as a calibration.
 
-The start screen shows the calibrations of today. Starting a session when an offline sensor of a participant has no calibration of today (or has no serial number, so it cannot be matched) asks «¿Seguro que quieres empezar la sesión sin haber calibrado los sensores?» and lists those sensors.
+The waiting room shows the calibrations of today. Going to the session when an offline sensor of a participant has no calibration of today (or has no serial number, so it cannot be matched) asks «¿Seguro que quieres empezar la sesión sin haber calibrado los sensores?» and lists those sensors.
 
 ## Files
 
@@ -54,6 +54,10 @@ When a session starts, each offline sensor of each participant takes the latest 
 - the calibration CSVs of their sensors;
 - in `session_manifest.json`, `calibrations`: one entry per calibrated device with `sensor_id`, `device_type`, `serial`, `set` (`lab` or `free_living`), `file`, `start_utc`, `end_utc` and `faces`; each sensor also carries `free_living_serial`;
 - in the event log, one `calibration` event per sensor.
+
+### Final calibration
+
+«Finalizar y guardar» in the monitor asks **«¿Volver a calibrar los sensores?»**. With **Sí**, when the session closes («Terminar» in the summary) the main window opens the calibration screen with the laboratory sensors of the session (not the free-living ones, which went home). The result is copied to the folder of each participant whose sensors it has as `calibracion_final_<time>.csv` (to all of them when it matches none), and the original stays in `calibraciones/`: the next session of the day, within 12 h, takes it as its starting calibration. The final calibration is not in the manifest or REDCap, which were written when the session was saved.
 
 REDCap receives `ws_calibration = 1`, `ws_calib_start` (start of the first calibration used) and `ws_calib_end` (end of the last one).
 

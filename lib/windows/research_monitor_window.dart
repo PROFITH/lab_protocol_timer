@@ -851,6 +851,10 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   /// Checks the devices and starts the session, with or without video.
   Future<void> _onStartRequested() async {
     if (!_session.isIdle) return;
+    if (!_session.hasSession) {
+      _snack('Primero pulsa «Pasar a la sesión» en la sala de espera de la pantalla principal.');
+      return;
+    }
     final items = <PreflightItem>[];
     final manual = <PreflightItem>[];
     for (final device in _protocolConfiguration.devices) {
@@ -1241,6 +1245,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
         } catch (e) {
           debugPrint('[MONITOR] Error liberando cámara/Bluetooth: $e');
         }
+        // The session is over: the next one starts in the waiting room.
+        _session.clear();
         if (mounted) setState(() {});
         return true;
     }

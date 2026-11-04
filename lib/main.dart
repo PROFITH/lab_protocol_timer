@@ -164,6 +164,7 @@ class _LabTimerAppState extends State<LabTimerApp> with WindowListener {
 
   Widget _setupPage() => ParticipantSetupPage(
         onStart: _startSession,
+        onPrepare: openResearchMonitorWindow,
         monitor: ResearchMonitorBridge.instance,
         audioFactory: DeviceSessionAudio.new,
       );

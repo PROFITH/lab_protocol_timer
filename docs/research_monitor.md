@@ -3,6 +3,13 @@
 The second window of lab_protocol_timer: connects the live sensors, shows
 their signals and records the video of the session.
 
+It opens with «Preparar sesión» on the start page, while the main window is
+in the waiting room: the Polar and the cameras can be connected then. Until
+the main window goes on («Pasar a la sesión») the start button reads
+«SALA DE ESPERA» and does nothing; then it becomes «EMPEZAR SESIÓN». When
+the session closes the monitor forgets it, so the next one starts again in
+the waiting room.
+
 ## Devices
 
 The list under «Dispositivos y sensores» is the sensor list of the session
