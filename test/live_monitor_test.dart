@@ -78,7 +78,7 @@ void main() {
   });
 
   group('Polar ACC settings', () {
-    test('asks the H10 for 200 Hz, 16 bit and 8 G', () {
+    test('asks the H10 for 100 Hz, 16 bit and 8 G', () {
       // Settings offered by an H10: 25/50/100/200 Hz, 16 bit, 2/4/8 G.
       final offered = PolarBleService.parsePmdSettingOptions(Uint8List.fromList([
         0x00, 0x04, 0x19, 0x00, 0x32, 0x00, 0x64, 0x00, 0xC8, 0x00, //
@@ -88,7 +88,7 @@ void main() {
       expect(offered[0], [25, 50, 100, 200]);
       expect(
         PolarBleService.accStartCommandFor(offered),
-        [0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00],
+        [0x02, 0x02, 0x00, 0x01, 0x64, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00],
       );
     });
 
@@ -101,7 +101,7 @@ void main() {
       ]));
       final rate = PolarBleService.accRateFor(deviceType: 'verity_sense');
       expect(rate, 52);
-      expect(PolarBleService.accRateFor(deviceType: 'polar_h10'), 200);
+      expect(PolarBleService.accRateFor(deviceType: 'polar_h10'), 100);
       expect(PolarBleService.accRateFor(deviceName: 'Polar Sense 22C3ED3F'), 52);
       final command = PolarBleService.accStartCommandFor(offered, preferredRateHz: rate);
       expect(command.sublist(2, 6), [0x00, 0x01, 0x34, 0x00]);

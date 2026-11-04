@@ -143,7 +143,11 @@ class PolarBleService {
   // ACC SETTINGS
   // ===========================================================================
 
-  static const int defaultAccSampleRateHz = 200;
+  /// ACC rate of the H10: 100 Hz since 1.4.1. At 200 Hz, with a Verity
+  /// Sense on the same Bluetooth adapter, the H10 dropped 76 % of its ACC
+  /// frames (test of 04/11/2026); 100 Hz halves the data and is plenty for
+  /// steps and activity.
+  static const int defaultAccSampleRateHz = 100;
 
   int _accSampleRateHz = defaultAccSampleRateHz;
 
@@ -1655,7 +1659,7 @@ class PolarBleService {
     // The settings are asked to the device first (opcode 0x01), as the
     // Polar SDK does: the H10 offers 25-200 Hz and ±2/4/8 G; the Verity Sense
     // 52 Hz, ±8 G and 3 channels. Without an answer, the H10 settings are
-    // requested (200 Hz, 16 bit, ±8 G).
+    // requested (100 Hz, 16 bit, ±8 G).
     final command = await _accStartCommand();
     debugPrint(
       '[POLAR DEBUG] ACC START TX: '
@@ -1678,7 +1682,7 @@ class PolarBleService {
     }
 
     // The rate in force is the one asked for (52 Hz for the Verity Sense,
-    // 200 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
+    // 100 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
     // a Verity at 52 Hz packed each frame in a quarter of its time and the
     // file looked 74 % empty (test of 04/11/2026). If the start response
     // reports a rate, _updatePmdSettingsFromResponse() takes that one.
@@ -2239,7 +2243,7 @@ class PolarBleService {
   /// offered (else the highest rate), the highest resolution, ±8 G if
   /// offered (else the highest range) and the most channels.
   /// ACC rate asked to each sensor: 52 Hz for the Verity Sense (enough on
-  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 200 Hz
+  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 100 Hz
   /// for the H10.
   static int accRateFor({String deviceType = '', String deviceName = ''}) {
     final verity = deviceType == 'verity_sense' || deviceName.toLowerCase().contains('sense');
@@ -2315,7 +2319,7 @@ class PolarBleService {
 
   static final Uint8List _h10AccStartCommand = Uint8List.fromList([
     0x02, pmdTypeAcc, //
-    0x00, 0x01, 0xC8, 0x00, // 200 Hz
+    0x00, 0x01, 0x64, 0x00, // 100 Hz
     0x01, 0x01, 0x10, 0x00, // 16 bit
     0x02, 0x01, 0x08, 0x00, // 8 G
   ]);

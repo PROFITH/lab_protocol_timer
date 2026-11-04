@@ -24,7 +24,7 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
 - **Live** (Polar H10, Polar Verity Sense): the gear button scans Bluetooth
   and links the device. The sensor whose name carries the serial of the
   setup goes first, then those of the same type. Connecting is optional.
-  - H10: HR, RR, ACC (200 Hz, ±8 G) and ECG (130 Hz).
+  - H10: HR, RR, ACC (100 Hz since 1.4.1, ±8 G) and ECG (130 Hz).
   - Verity Sense: HR, ACC (52 Hz, ±8 G), raw PPG (55 Hz: three green
     channels and the ambient light, 22 bit), PPI (Polar's pulse-to-pulse
     intervals, with the heart rate it derives from them and an error
@@ -126,7 +126,7 @@ then stop: they show what has arrived. The files stay right:
   times always increase.
 - **Samples of a frame:** spread evenly between its time and that of the
   frame before when it is the one just before (the H10 accelerometer set to
-  200 Hz runs at about 203 Hz); after lost frames, with the period measured
+  a nominal rate runs about 1.5 % fast); after lost frames, with the period measured
   last.
 - **Phase:** `activity_index` and `phase_name` are those at `timestamp_iso`
   (when the sample was measured), not at its arrival.

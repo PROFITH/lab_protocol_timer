@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **H10 accelerometer at 100 Hz** (was 200 Hz). In the test of 04/11 afternoon, with a Verity Sense on the same Bluetooth adapter, the H10 lost 76 % of its ACC frames from the moment the Verity connected (48.8 samples/s arrived out of 200; its ECG and every Verity stream were complete and the times were right). 100 Hz halves the data and is enough for steps and activity.
 - **Devices ticked in the waiting room:** each offline device ticked as initialized shows a green dot in the monitor's device tab («Inicializado en la sala de espera; graba por su cuenta»), and the participant's manifest and session state keep it (`initialized`, `free_living_initialized`).
 - **Device tab:** the cameras first, since they are what is left to connect in the monitor.
 
