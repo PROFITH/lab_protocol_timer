@@ -40,6 +40,12 @@ class SensorChartCard extends StatelessWidget {
   final VoidCallback? onExpand;
   final bool expanded;
 
+  /// Draws the trace this much behind the computer's clock, so that a
+  /// sensor that sends its samples in bursts (the Verity Sense, about one
+  /// frame a second) scrolls smoothly; null draws up to the newest sample.
+  /// The [clock] then has to tick every frame.
+  final Duration? lag;
+
   const SensorChartCard({
     super.key,
     required this.title,
@@ -54,6 +60,7 @@ class SensorChartCard extends StatelessWidget {
     this.onPopOut,
     this.onExpand,
     this.expanded = false,
+    this.lag,
   });
 
   @override
@@ -152,6 +159,7 @@ class SensorChartCard extends StatelessWidget {
                       seriesList: seriesList,
                       window: window,
                       pal: context.pal,
+                      lag: lag,
                       repaint: clock,
                     ),
                   ),
@@ -169,27 +177,46 @@ class LiveChartPainter extends CustomPainter {
   final List<ChartSeries> seriesList;
   final Duration window;
   final Palette pal;
+  final Duration? lag;
+
+  /// Microseconds since the epoch now (UTC), for [lag].
+  final double Function() now;
 
   LiveChartPainter({
     required this.seriesList,
     required this.window,
     required this.pal,
+    this.lag,
+    this.now = _nowMicros,
     super.repaint,
   });
 
   static const double rightPadding = 45.0;
+
+  /// Where the chart ends (µs since the epoch): the newest sample of any
+  /// series or, with a [lag], [nowMicros] less the lag if that is earlier
+  /// (when the link falls further behind it waits for the data).
+  static double? chartEnd(List<ChartSeries> seriesList, {Duration? lag, required double nowMicros}) {
+    double? end;
+    for (final series in seriesList) {
+      final t = series.buffer.lastTime;
+      if (t != null && (end == null || t > end)) end = t;
+    }
+    if (lag != null && end != null) {
+      final behind = nowMicros - lag.inMicroseconds;
+      if (behind < end) end = behind;
+    }
+    return end;
+  }
+
+  static double _nowMicros() => DateTime.now().toUtc().microsecondsSinceEpoch.toDouble();
 
   @override
   void paint(Canvas canvas, Size size) {
     final chartWidth = size.width - rightPadding;
     if (seriesList.isEmpty || chartWidth <= 4) return;
 
-    // The chart ends at the newest sample of any series.
-    double? end;
-    for (final series in seriesList) {
-      final t = series.buffer.lastTime;
-      if (t != null && (end == null || t > end)) end = t;
-    }
+    final end = chartEnd(seriesList, lag: lag, nowMicros: now());
 
     final columns = chartWidth.floor();
     final envelopes = <ColumnEnvelope>[];
@@ -326,6 +353,7 @@ class LiveChartPainter extends CustomPainter {
   bool shouldRepaint(covariant LiveChartPainter oldDelegate) {
     return oldDelegate.window != window ||
         oldDelegate.pal != pal ||
+        oldDelegate.lag != lag ||
         oldDelegate.seriesList.length != seriesList.length ||
         [
           for (var i = 0; i < seriesList.length; i++)

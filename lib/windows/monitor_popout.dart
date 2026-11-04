@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:multi_window_manager/multi_window_manager.dart';
 
 import '../ui/app_theme.dart';
@@ -43,6 +44,7 @@ class PopoutSource {
     required this.window,
     required this.series,
     required this.currentValue,
+    this.lag,
   });
 
   final String title;
@@ -54,6 +56,7 @@ class PopoutSource {
   final Duration window;
   final List<ChartSeries> series;
   final String Function() currentValue;
+  final Duration? lag;
 
   /// Changes when the other window has to start again from the whole
   /// buffers (another sensor, mode or theme).
@@ -63,6 +66,7 @@ class PopoutSource {
         unit,
         visualization,
         window.inMilliseconds,
+        lag?.inMilliseconds,
         Palette.current.dark,
         for (final s in series) '${s.label}/${s.color.toARGB32()}/${identityHashCode(s.buffer)}',
       ].join('|');
@@ -248,6 +252,7 @@ class MonitorPopouts {
       'unit': source.unit,
       'visualization': source.visualization,
       'windowMs': source.window.inMilliseconds,
+      if (source.lag != null) 'lagMs': source.lag!.inMilliseconds,
       'dark': Palette.current.dark,
       'value': value,
       'series': [
@@ -356,8 +361,11 @@ class _MonitorPopoutPage extends StatefulWidget {
   State<_MonitorPopoutPage> createState() => _MonitorPopoutPageState();
 }
 
-class _MonitorPopoutPageState extends State<_MonitorPopoutPage> with WindowListener {
+class _MonitorPopoutPageState extends State<_MonitorPopoutPage>
+    with WindowListener, SingleTickerProviderStateMixin {
   final LiveFrameClock _clock = LiveFrameClock();
+  late final Ticker _ticker = createTicker((_) => _clock.tick());
+  Duration? _lag;
 
   int? _slot;
   String _title = '';
@@ -385,6 +393,7 @@ class _MonitorPopoutPageState extends State<_MonitorPopoutPage> with WindowListe
   @override
   void dispose() {
     MultiWindowManager.current.removeListener(this);
+    _ticker.dispose();
     _clock.dispose();
     super.dispose();
   }
@@ -443,7 +452,12 @@ class _MonitorPopoutPageState extends State<_MonitorPopoutPage> with WindowListe
           _window = window;
           _series = series;
           _value = arguments['value']?.toString() ?? '--';
+          final lagMs = (arguments['lagMs'] as num?)?.toInt();
+          _lag = lagMs == null ? null : Duration(milliseconds: lagMs);
         });
+        // A chart with a lag scrolls with the clock: repaint every frame.
+        if (_lag != null && !_ticker.isActive) _ticker.start();
+        if (_lag == null && _ticker.isActive) _ticker.stop();
         unawaited(
           MultiWindowManager.current.setTitle('$_title · $_subtitle').catchError((Object _) {}),
         );
@@ -486,6 +500,7 @@ class _MonitorPopoutPageState extends State<_MonitorPopoutPage> with WindowListe
                 seriesList: _series,
                 window: _window,
                 clock: _clock,
+                lag: _lag,
               ),
       ),
     );

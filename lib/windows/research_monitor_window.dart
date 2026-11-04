@@ -440,7 +440,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     _syncDevices();
 
     _frameTicker = createTicker((_) {
-      if (_samplesPending) {
+      // Charts drawn with a lag scroll with the clock: every frame.
+      if (_samplesPending || _liveDevices.values.any((d) => _chartLag(d) != null && d.service.isConnected)) {
         _samplesPending = false;
         _frameClock.tick();
       }
@@ -2109,6 +2110,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
+  /// The Verity Sense sends its samples in bursts (about a frame a second
+  /// per stream): its charts are drawn 3 s behind the clock to scroll
+  /// smoothly. The H10 sends several frames a second and is drawn live.
+  static Duration? _chartLag(_LiveDevice? device) =>
+      device?.configuration.type == 'verity_sense' ? const Duration(seconds: 3) : null;
+
   Widget _buildChart({
     required MonitorSlot slot,
     required String label,
@@ -2132,6 +2139,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
           window: window,
           series: series,
           currentValue: currentValue,
+          lag: _chartLag(_liveDevices[slot.deviceId]),
         ),
       );
       return _buildPoppedMonitor(slot, subtitle, trailingAction);
@@ -2146,6 +2154,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       clock: _frameClock,
       seriesList: series,
       trailingAction: trailingAction,
+      lag: _chartLag(_liveDevices[slot.deviceId]),
       onPopOut: () {
         if (_expandedSlot == slot.slotId) _expandedSlot = null;
         unawaited(_popouts.popOut(slot.slotId));
