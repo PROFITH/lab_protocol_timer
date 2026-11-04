@@ -9,9 +9,27 @@ import 'live_signal.dart';
 import 'sensor_chart_card.dart';
 import 'window_messages.dart';
 
-/// Second argument of a window that shows one monitor of the Research
-/// Monitor (the third is the id of the Research Monitor's window).
+/// Argument of a window that shows one monitor of the Research Monitor:
+/// `monitor_popout|<id of the Research Monitor's window>`.
+///
+/// One argument only: the plugin puts the window id in front with
+/// `std::merge`, which needs both lists sorted. With three arguments the
+/// debug build of the plugin stopped on «sequence not ordered» (04/11/2026),
+/// and a release build could reorder them.
 const String monitorPopoutArg = 'monitor_popout';
+
+String monitorPopoutArgument(int ownerWindowId) => '$monitorPopoutArg|$ownerWindowId';
+
+/// The id of the Research Monitor's window in the arguments of a monitor
+/// window, or null when they are not those of a monitor window.
+int? monitorPopoutOwner(List<String> args) {
+  for (final arg in args) {
+    if (arg.startsWith('$monitorPopoutArg|')) {
+      return int.tryParse(arg.substring(monitorPopoutArg.length + 1));
+    }
+  }
+  return null;
+}
 
 /// What a chart of the Research Monitor shows, for its copy in another
 /// window. Built with the chart, so it follows the sensor, the VM/XYZ mode
@@ -91,7 +109,7 @@ class MonitorPopouts {
   }
 
   /// Opens monitor [slotId] in its own window (a hidden one if there is).
-  Future<void> popOut(int slotId, String title) async {
+  Future<void> popOut(int slotId) async {
     if (_popped.containsKey(slotId) || _disposed) return;
     int? windowId;
     try {
@@ -111,9 +129,7 @@ class MonitorPopouts {
       }
     } else {
       final window = await MultiWindowManager.createWindow([
-        monitorPopoutArg,
-        '${MultiWindowManager.current.id}',
-        title,
+        monitorPopoutArgument(MultiWindowManager.current.id),
       ]);
       if (window == null) {
         debugPrint('[POPOUT] No se pudo crear la ventana del monitor $slotId.');

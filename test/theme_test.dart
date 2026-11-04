@@ -122,6 +122,14 @@ void main() {
     expect(copy.capacity, buffer.capacity);
   });
 
+  test('a monitor window gets its owner in one argument', () {
+    // The plugin merges the window id with std::merge, which needs sorted
+    // lists: three arguments stopped the debug build (04/11/2026).
+    final arg = monitorPopoutArgument(1);
+    expect(monitorPopoutOwner(['3', arg]), 1);
+    expect(monitorPopoutOwner(['1', 'research_monitor']), isNull);
+  });
+
   testWidgets('render the setup page and a chart in both themes', (tester) async {
     if (out == null) return;
     await tester.runAsync(loadFonts);

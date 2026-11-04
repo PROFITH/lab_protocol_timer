@@ -35,6 +35,11 @@ class SensorChartCard extends StatelessWidget {
   /// Opens this monitor in its own window (a button next to the value).
   final VoidCallback? onPopOut;
 
+  /// Makes this monitor take the whole monitoring area, or gives the area
+  /// back to the four ([expanded]).
+  final VoidCallback? onExpand;
+  final bool expanded;
+
   const SensorChartCard({
     super.key,
     required this.title,
@@ -47,6 +52,8 @@ class SensorChartCard extends StatelessWidget {
     required this.clock,
     this.trailingAction,
     this.onPopOut,
+    this.onExpand,
+    this.expanded = false,
   });
 
   @override
@@ -104,6 +111,19 @@ class SensorChartCard extends StatelessWidget {
                 unit,
                 style: TextStyle(color: context.pal.on38, fontSize: 10),
               ),
+              if (onExpand != null) ...[
+                const SizedBox(width: 6),
+                IconButton(
+                  tooltip: expanded ? 'Volver a los cuatro monitores' : 'Ampliar este monitor',
+                  onPressed: onExpand,
+                  icon: Icon(expanded ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded),
+                  iconSize: 16,
+                  color: context.pal.on54,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+                ),
+              ],
               if (onPopOut != null) ...[
                 const SizedBox(width: 6),
                 IconButton(

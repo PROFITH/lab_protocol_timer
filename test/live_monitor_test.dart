@@ -92,6 +92,23 @@ void main() {
       );
     });
 
+    test('asks the Verity Sense for 52 Hz when it offers up to 208 Hz', () {
+      // With 208 Hz on the arm and an H10 on the same adapter both lost
+      // about 70 % of their ACC frames (04/11/2026).
+      final offered = PolarBleService.parsePmdSettingOptions(Uint8List.fromList([
+        0x00, 0x04, 0x1A, 0x00, 0x34, 0x00, 0x68, 0x00, 0xD0, 0x00, //
+        0x01, 0x01, 0x10, 0x00, //
+        0x02, 0x01, 0x08, 0x00, //
+        0x04, 0x01, 0x03,
+      ]));
+      final rate = PolarBleService.accRateFor(deviceType: 'verity_sense');
+      expect(rate, 52);
+      expect(PolarBleService.accRateFor(deviceType: 'polar_h10'), 200);
+      expect(PolarBleService.accRateFor(deviceName: 'Polar Sense 22C3ED3F'), 52);
+      final command = PolarBleService.accStartCommandFor(offered, preferredRateHz: rate);
+      expect(command.sublist(2, 6), [0x00, 0x01, 0x34, 0x00]);
+    });
+
     test('asks the Verity Sense for what it offers (52 Hz, 3 channels)', () {
       final offered = PolarBleService.parsePmdSettingOptions(Uint8List.fromList([
         0x00, 0x01, 0x34, 0x00, //

@@ -121,6 +121,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   final LiveFrameClock _frameClock = LiveFrameClock();
   late final Ticker _frameTicker;
 
+  /// The monitor that takes the whole monitoring area (null: the four).
+  int? _expandedSlot;
+
+  void _toggleExpanded(int slotId) =>
+      setState(() => _expandedSlot = _expandedSlot == slotId ? null : slotId);
+
   /// Monitors opened in their own window.
   late final MonitorPopouts _popouts = MonitorPopouts(
     onChanged: () {
@@ -2009,6 +2015,8 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
   }
 
   Widget _buildVideoAndCharts() {
+    final expanded = _monitorSlots.where((s) => s.slotId == _expandedSlot && s.isAssigned).firstOrNull;
+    if (expanded != null) return _buildMonitorSlot(expanded);
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -2138,7 +2146,12 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       clock: _frameClock,
       seriesList: series,
       trailingAction: trailingAction,
-      onPopOut: () => unawaited(_popouts.popOut(slot.slotId, title)),
+      onPopOut: () {
+        if (_expandedSlot == slot.slotId) _expandedSlot = null;
+        unawaited(_popouts.popOut(slot.slotId));
+      },
+      onExpand: () => _toggleExpanded(slot.slotId),
+      expanded: _expandedSlot == slot.slotId,
     );
   }
 
@@ -2375,11 +2388,11 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                   left: 10,
                   child: Text(
                     slot.deviceId ?? '',
-                    style: TextStyle(
-                      color: context.pal.on70,
+                    style: const TextStyle(
+                      color: Colors.white70,
                       fontWeight: FontWeight.w800,
                       fontSize: 11,
-                      shadows: const [Shadow(blurRadius: 4)],
+                      shadows: [Shadow(blurRadius: 4)],
                     ),
                   ),
                 ),
@@ -2396,19 +2409,19 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         color: context.pal.bad,
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Row(
+                      child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
                             Icons.fiber_manual_record,
-                            color: context.pal.on,
+                            color: Colors.white,
                             size: 12,
                           ),
-                          const SizedBox(width: 6),
+                          SizedBox(width: 6),
                           Text(
                             'REC',
                             style: TextStyle(
-                              color: context.pal.on,
+                              color: Colors.white,
                               fontWeight: FontWeight.w900,
                               fontSize: 11,
                             ),
@@ -2417,6 +2430,20 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                       ),
                     ),
                   ),
+                // Video cannot go to another window (the camera preview
+                // belongs to this one), but it can take the whole area.
+                Positioned(
+                  bottom: 8,
+                  right: 8,
+                  child: IconButton.filledTonal(
+                    tooltip: _expandedSlot == slot.slotId ? 'Volver a los cuatro monitores' : 'Ampliar el vídeo',
+                    onPressed: () => _toggleExpanded(slot.slotId),
+                    icon: Icon(
+                      _expandedSlot == slot.slotId ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded,
+                      size: 18,
+                    ),
+                  ),
+                ),
               ],
             )
           : Center(

@@ -32,19 +32,18 @@ Future<void> main(List<String> args) async {
   }
 
   final isResearchMonitor = args.length > 1 && args[1] == 'research_monitor';
-  final isMonitorPopout = args.length > 2 && args[1] == monitorPopoutArg;
+  final popoutOwner = monitorPopoutOwner(args);
 
   // Light or dark, as it was left on this computer.
   await ThemeController.load();
 
-  if (isMonitorPopout) {
-    final owner = int.tryParse(args[2]) ?? 1;
-    final title = args.length > 3 ? args[3] : 'Monitor';
-    debugPrint('[MAIN] Iniciando ventana de monitor ($title)...');
+  if (popoutOwner != null) {
+    const title = 'Monitor';
+    debugPrint('[MAIN] Iniciando ventana de monitor...');
     await MultiWindowManager.current.waitUntilReadyToShow(
-      WindowOptions(
-        size: const Size(960, 540),
-        minimumSize: const Size(360, 220),
+      const WindowOptions(
+        size: Size(960, 540),
+        minimumSize: Size(360, 220),
         center: true,
         title: title,
       ),
@@ -53,7 +52,7 @@ Future<void> main(List<String> args) async {
         await MultiWindowManager.current.focus();
       },
     );
-    runApp(MonitorPopoutApp(ownerWindowId: owner));
+    runApp(MonitorPopoutApp(ownerWindowId: popoutOwner));
     return;
   }
 
