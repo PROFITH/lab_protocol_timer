@@ -153,8 +153,12 @@ Every sample is kept for the window of the chart (ECG 6 s, ACC 10 s, HR and
 RR 2 min) with the sensor's own timestamps; nothing is downsampled on
 arrival. When painted, each pixel column draws from the lowest to the
 highest sample that falls in it, so a one-sample R peak or impact is never
-lost. Charts repaint once per screen frame, only when new samples arrived,
-without rebuilding the window.
+lost. Charts repaint once per screen frame without rebuilding the window. Every
+chart of a Polar is drawn 2.5 s behind the computer's clock, the same for
+all devices: the Verity Sense sends a frame of ACC, gyroscope or
+magnetometer about every 2 s, and with that delay its traces scroll as
+smoothly as the H10's. If the link falls further behind, the chart waits
+at the newest sample.
 
 ### A chart in its own window
 

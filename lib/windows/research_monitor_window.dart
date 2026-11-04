@@ -441,7 +441,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
 
     _frameTicker = createTicker((_) {
       // Charts drawn with a lag scroll with the clock: every frame.
-      if (_samplesPending || _liveDevices.values.any((d) => _chartLag(d) != null && d.service.isConnected)) {
+      if (_samplesPending || _liveDevices.values.any((d) => d.service.isConnected)) {
         _samplesPending = false;
         _frameClock.tick();
       }
@@ -2110,11 +2110,14 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     );
   }
 
-  /// The Verity Sense sends its samples in bursts (about a frame a second
-  /// per stream): its charts are drawn 3 s behind the clock to scroll
-  /// smoothly. The H10 sends several frames a second and is drawn live.
-  static Duration? _chartLag(_LiveDevice? device) =>
-      device?.configuration.type == 'verity_sense' ? const Duration(seconds: 3) : null;
+  /// Every chart is drawn the same time behind the computer's clock, so
+  /// that all of them scroll smoothly and stay aligned with each other. The
+  /// Verity Sense sends a frame of ACC, gyroscope or magnetometer about
+  /// every 2 s (PPG every 0.7 s), so less than 2.5 s would still show its
+  /// bursts; the H10 sends several frames a second.
+  static const Duration chartLag = Duration(milliseconds: 2500);
+
+  static Duration? _chartLag(_LiveDevice? device) => device == null ? null : chartLag;
 
   Widget _buildChart({
     required MonitorSlot slot,
