@@ -105,7 +105,7 @@ session ends.
 | `polar_gyro_<id>_<ts>.csv` | `gyro_x_dps,gyro_y_dps,gyro_z_dps,sensor_time_ns` | Verity |
 | `polar_mag_<id>_<ts>.csv` | `mag_x_gauss,mag_y_gauss,mag_z_gauss,sensor_time_ns` | Verity |
 | `polar_clock_<id>_<ts>.csv` | `arrival_utc,stream,frame_sensor_time_ns,offset_us`: one row per PMD frame, for checking the clock mapping | both |
-| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`; `frames_lost` when the sensor dropped frames, `link_behind` / `link_caught_up` when the link fell more than 2 s behind and caught up) | both |
+| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`; `frames_lost` when the sensor dropped frames, `link_behind` / `link_caught_up` when the link fell more than 2 s behind and caught up; `pmd_flush` when it stayed more than 5 s behind for 10 s and the streams were restarted to empty the sensor's queue) | both |
 
 `sensor_time_ns` is the sensor's own clock before the mapping to the host
 clock; `timestamp_iso` is that time mapped. PPI rows without a sensor time

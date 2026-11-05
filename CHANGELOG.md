@@ -10,10 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Voice between activities without a still phase:** walking straight into the next speed (`prep_seconds` and `post_seconds` 0) no longer says «Para. Quédate quieto.» and «… Quédate quieto.» nor beeps the end in between: the next activity is announced as it starts («Actividad 3 de 5: caminar rápido. ¡Empieza!»).
+- **H10 stuck behind:** in the test of 05/11, after the Verity Sense paired and reconnected on the same adapter, the H10 sent every frame 17 s late for the rest of the session and dropped 48 % of its ACC frames, even at 100 Hz (ECG complete; times right, checked against the Verity). When a Polar has been more than 5 s behind for 10 s, the app now stops and restarts its streams to empty the sensor's queue (at most once a minute), keeps its clock, and logs `pmd_flush` (or `pmd_flush_failed`) in its connection events.
 
 ### Changed
 
-- **H10 accelerometer at 100 Hz** (was 200 Hz). In the test of 04/11 afternoon, with a Verity Sense on the same Bluetooth adapter, the H10 lost 76 % of its ACC frames from the moment the Verity connected (48.8 samples/s arrived out of 200; its ECG and every Verity stream were complete and the times were right). 100 Hz halves the data and is enough for steps and activity.
+- **H10 accelerometer at 100 Hz** (was 200 Hz). In the test of 04/11 afternoon, with a Verity Sense on the same Bluetooth adapter, the H10 lost 76 % of its ACC frames from the moment the Verity connected (48.8 samples/s arrived out of 200; its ECG and every Verity stream were complete and the times were right). 100 Hz halves the data and is enough for steps and activity; it did not stop the losses on its own (see «H10 stuck behind»).
 - **Devices ticked in the waiting room:** each offline device ticked as initialized shows a green dot in the monitor's device tab («Inicializado en la sala de espera; graba por su cuenta»), and the participant's manifest and session state keep it (`initialized`, `free_living_initialized`).
 - **Device tab:** the cameras first, since they are what is left to connect in the monitor.
 

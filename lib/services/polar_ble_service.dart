@@ -134,6 +134,10 @@ class PolarBleService {
   final List<PmdClockObservation> clockObservations = [];
 
   void _resetClockSync() {
+    // A flush restarts the streams of the same sensor on the same link: its
+    // clock has not changed, and frames still queued would set the offset
+    // late by the backlog.
+    if (_flushing) return;
     _clock.reset();
   }
 
@@ -191,6 +195,10 @@ class PolarBleService {
     pmdTypePpi: 'ppi',
     pmdTypeGyro: 'gyro',
     pmdTypeMagnetometer: 'mag',
+  };
+
+  static final Map<String, int> pmdStreamTypes = {
+    for (final e in pmdStreamNames.entries) e.value: e.key,
   };
 
   /// Sample rate and factor the sensor reported when each of those streams
@@ -567,14 +575,89 @@ class PolarBleService {
     if (worst == null) {
       if (delay > behindMicros) {
         _behindMaxMicros = delay;
+        _behindSince = DateTime.now();
         _logEvent('link_behind', '${(delay / 1e6).toStringAsFixed(1)} s');
       }
     } else if (delay < caughtUpMicros) {
       _behindMaxMicros = null;
+      _behindSince = null;
       _logEvent('link_caught_up', 'máximo ${(worst / 1e6).toStringAsFixed(1)} s');
     } else if (delay > worst) {
       _behindMaxMicros = delay;
     }
+    _maybeFlushBacklog(delay);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Backlog flush
+  //
+  // When the link falls behind, the H10 keeps the frames it could not send
+  // and never catches up: on 05/11/2026, after the Verity Sense paired and
+  // reconnected on the same adapter, the H10 sent every frame 17 s late for
+  // the whole session and dropped half of its ACC frames (ECG complete).
+  // Stopping and starting its streams empties that queue: a second or two of
+  // data is lost once instead of half of the ACC from then on. The
+  // timestamps do not depend on it (they come from the sensor clock).
+  // ---------------------------------------------------------------------------
+
+  DateTime? _behindSince;
+  DateTime? _lastFlushAt;
+  bool _flushing = false;
+
+  /// Delay above which a backlog that lasts [flushAfter] is flushed.
+  static const flushMicros = 5 * 1000 * 1000;
+  static const flushAfter = Duration(seconds: 10);
+  static const flushEvery = Duration(seconds: 60);
+
+  /// Whether to restart the streams to empty the sensor's queue: the link has
+  /// been behind for [flushAfter], it is still more than [flushMicros] late,
+  /// and the last flush was more than [flushEvery] ago.
+  static bool shouldFlushBacklog({
+    required int delayMicros,
+    required DateTime? behindSince,
+    required DateTime? lastFlush,
+    required DateTime now,
+  }) =>
+      delayMicros > flushMicros &&
+      behindSince != null &&
+      now.difference(behindSince) >= flushAfter &&
+      (lastFlush == null || now.difference(lastFlush) >= flushEvery);
+
+  void _maybeFlushBacklog(int delay) {
+    if (_flushing || _pmdControlPoint == null || linkStatus.value.isBusy) return;
+    final now = DateTime.now();
+    if (!shouldFlushBacklog(delayMicros: delay, behindSince: _behindSince, lastFlush: _lastFlushAt, now: now)) {
+      return;
+    }
+    final active = {
+      for (final name in const ['ecg', 'acc', 'ppg', 'gyro', 'mag'])
+        if (isStreaming(name)) name,
+    };
+    if (active.isEmpty) return;
+    _flushing = true;
+    _lastFlushAt = now;
+    _logEvent('pmd_flush', '${(delay / 1e6).toStringAsFixed(1)} s de retraso: reinicio ${active.join(', ')}');
+    unawaited(() async {
+      try {
+        for (final name in active) {
+          switch (name) {
+            case 'ecg':
+              await stopEcg();
+            case 'acc':
+              await stopAcceleration();
+            default:
+              await _stopPmdStream(pmdStreamTypes[name]!);
+          }
+        }
+        await startConfiguredSensors(
+          DeviceConfiguration(deviceId: 'polar', deviceName: _lastDeviceName, sensors: active),
+        );
+      } catch (e) {
+        _logEvent('pmd_flush_failed', '$e');
+      } finally {
+        _flushing = false;
+      }
+    }());
   }
 
   String exportConnectionEventsCsv() {
