@@ -24,7 +24,7 @@ serial. Without a sensor list it shows the Polar H10 and one camera.
 - **Live** (Polar H10, Polar Verity Sense): the gear button scans Bluetooth
   and links the device. The sensor whose name carries the serial of the
   setup goes first, then those of the same type. Connecting is optional.
-  - H10: HR, RR, ACC (200 Hz, ±8 G) and ECG (130 Hz).
+  - H10: HR, RR, ACC (100 Hz since 1.4.1, ±8 G) and ECG (130 Hz).
   - Verity Sense: HR, ACC (52 Hz, ±8 G), raw PPG (55 Hz: three green
     channels and the ambient light, 22 bit), PPI (Polar's pulse-to-pulse
     intervals, with the heart rate it derives from them and an error
@@ -105,7 +105,7 @@ session ends.
 | `polar_gyro_<id>_<ts>.csv` | `gyro_x_dps,gyro_y_dps,gyro_z_dps,sensor_time_ns` | Verity |
 | `polar_mag_<id>_<ts>.csv` | `mag_x_gauss,mag_y_gauss,mag_z_gauss,sensor_time_ns` | Verity |
 | `polar_clock_<id>_<ts>.csv` | `arrival_utc,stream,frame_sensor_time_ns,offset_us`: one row per PMD frame, for checking the clock mapping | both |
-| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`; `frames_lost` when the sensor dropped frames, `link_behind` / `link_caught_up` when the link fell more than 2 s behind and caught up) | both |
+| `polar_connection_events_<id>_<ts>.csv` | `timestamp_utc,event,detail` (a refused stream appears as `sensor_start_failed`; `frames_lost` when the sensor dropped frames, `link_behind` / `link_caught_up` when the link fell more than 2 s behind and caught up; `pmd_flush` when it stayed more than 5 s behind for 10 s and the streams were restarted to empty the sensor's queue) | both |
 
 `sensor_time_ns` is the sensor's own clock before the mapping to the host
 clock; `timestamp_iso` is that time mapped. PPI rows without a sensor time
@@ -126,7 +126,7 @@ then stop: they show what has arrived. The files stay right:
   times always increase.
 - **Samples of a frame:** spread evenly between its time and that of the
   frame before when it is the one just before (the H10 accelerometer set to
-  200 Hz runs at about 203 Hz); after lost frames, with the period measured
+  a nominal rate runs about 1.5 % fast); after lost frames, with the period measured
   last.
 - **Phase:** `activity_index` and `phase_name` are those at `timestamp_iso`
   (when the sample was measured), not at its arrival.

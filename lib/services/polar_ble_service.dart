@@ -134,6 +134,10 @@ class PolarBleService {
   final List<PmdClockObservation> clockObservations = [];
 
   void _resetClockSync() {
+    // A flush restarts the streams of the same sensor on the same link: its
+    // clock has not changed, and frames still queued would set the offset
+    // late by the backlog.
+    if (_flushing) return;
     _clock.reset();
   }
 
@@ -143,7 +147,11 @@ class PolarBleService {
   // ACC SETTINGS
   // ===========================================================================
 
-  static const int defaultAccSampleRateHz = 200;
+  /// ACC rate of the H10: 100 Hz since 1.4.1. At 200 Hz, with a Verity
+  /// Sense on the same Bluetooth adapter, the H10 dropped 76 % of its ACC
+  /// frames (test of 04/11/2026); 100 Hz halves the data and is plenty for
+  /// steps and activity.
+  static const int defaultAccSampleRateHz = 100;
 
   int _accSampleRateHz = defaultAccSampleRateHz;
 
@@ -187,6 +195,10 @@ class PolarBleService {
     pmdTypePpi: 'ppi',
     pmdTypeGyro: 'gyro',
     pmdTypeMagnetometer: 'mag',
+  };
+
+  static final Map<String, int> pmdStreamTypes = {
+    for (final e in pmdStreamNames.entries) e.value: e.key,
   };
 
   /// Sample rate and factor the sensor reported when each of those streams
@@ -563,14 +575,89 @@ class PolarBleService {
     if (worst == null) {
       if (delay > behindMicros) {
         _behindMaxMicros = delay;
+        _behindSince = DateTime.now();
         _logEvent('link_behind', '${(delay / 1e6).toStringAsFixed(1)} s');
       }
     } else if (delay < caughtUpMicros) {
       _behindMaxMicros = null;
+      _behindSince = null;
       _logEvent('link_caught_up', 'máximo ${(worst / 1e6).toStringAsFixed(1)} s');
     } else if (delay > worst) {
       _behindMaxMicros = delay;
     }
+    _maybeFlushBacklog(delay);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Backlog flush
+  //
+  // When the link falls behind, the H10 keeps the frames it could not send
+  // and never catches up: on 05/11/2026, after the Verity Sense paired and
+  // reconnected on the same adapter, the H10 sent every frame 17 s late for
+  // the whole session and dropped half of its ACC frames (ECG complete).
+  // Stopping and starting its streams empties that queue: a second or two of
+  // data is lost once instead of half of the ACC from then on. The
+  // timestamps do not depend on it (they come from the sensor clock).
+  // ---------------------------------------------------------------------------
+
+  DateTime? _behindSince;
+  DateTime? _lastFlushAt;
+  bool _flushing = false;
+
+  /// Delay above which a backlog that lasts [flushAfter] is flushed.
+  static const flushMicros = 5 * 1000 * 1000;
+  static const flushAfter = Duration(seconds: 10);
+  static const flushEvery = Duration(seconds: 60);
+
+  /// Whether to restart the streams to empty the sensor's queue: the link has
+  /// been behind for [flushAfter], it is still more than [flushMicros] late,
+  /// and the last flush was more than [flushEvery] ago.
+  static bool shouldFlushBacklog({
+    required int delayMicros,
+    required DateTime? behindSince,
+    required DateTime? lastFlush,
+    required DateTime now,
+  }) =>
+      delayMicros > flushMicros &&
+      behindSince != null &&
+      now.difference(behindSince) >= flushAfter &&
+      (lastFlush == null || now.difference(lastFlush) >= flushEvery);
+
+  void _maybeFlushBacklog(int delay) {
+    if (_flushing || _pmdControlPoint == null || linkStatus.value.isBusy) return;
+    final now = DateTime.now();
+    if (!shouldFlushBacklog(delayMicros: delay, behindSince: _behindSince, lastFlush: _lastFlushAt, now: now)) {
+      return;
+    }
+    final active = {
+      for (final name in const ['ecg', 'acc', 'ppg', 'gyro', 'mag'])
+        if (isStreaming(name)) name,
+    };
+    if (active.isEmpty) return;
+    _flushing = true;
+    _lastFlushAt = now;
+    _logEvent('pmd_flush', '${(delay / 1e6).toStringAsFixed(1)} s de retraso: reinicio ${active.join(', ')}');
+    unawaited(() async {
+      try {
+        for (final name in active) {
+          switch (name) {
+            case 'ecg':
+              await stopEcg();
+            case 'acc':
+              await stopAcceleration();
+            default:
+              await _stopPmdStream(pmdStreamTypes[name]!);
+          }
+        }
+        await startConfiguredSensors(
+          DeviceConfiguration(deviceId: 'polar', deviceName: _lastDeviceName, sensors: active),
+        );
+      } catch (e) {
+        _logEvent('pmd_flush_failed', '$e');
+      } finally {
+        _flushing = false;
+      }
+    }());
   }
 
   String exportConnectionEventsCsv() {
@@ -1655,7 +1742,7 @@ class PolarBleService {
     // The settings are asked to the device first (opcode 0x01), as the
     // Polar SDK does: the H10 offers 25-200 Hz and ±2/4/8 G; the Verity Sense
     // 52 Hz, ±8 G and 3 channels. Without an answer, the H10 settings are
-    // requested (200 Hz, 16 bit, ±8 G).
+    // requested (100 Hz, 16 bit, ±8 G).
     final command = await _accStartCommand();
     debugPrint(
       '[POLAR DEBUG] ACC START TX: '
@@ -1678,7 +1765,7 @@ class PolarBleService {
     }
 
     // The rate in force is the one asked for (52 Hz for the Verity Sense,
-    // 200 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
+    // 100 Hz for the H10): its samples are spread with it. Keeping 200 Hz for
     // a Verity at 52 Hz packed each frame in a quarter of its time and the
     // file looked 74 % empty (test of 04/11/2026). If the start response
     // reports a rate, _updatePmdSettingsFromResponse() takes that one.
@@ -2239,7 +2326,7 @@ class PolarBleService {
   /// offered (else the highest rate), the highest resolution, ±8 G if
   /// offered (else the highest range) and the most channels.
   /// ACC rate asked to each sensor: 52 Hz for the Verity Sense (enough on
-  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 200 Hz
+  /// the arm, and the rate it streamed at in the tests of 04/11/2026), 100 Hz
   /// for the H10.
   static int accRateFor({String deviceType = '', String deviceName = ''}) {
     final verity = deviceType == 'verity_sense' || deviceName.toLowerCase().contains('sense');
@@ -2315,7 +2402,7 @@ class PolarBleService {
 
   static final Uint8List _h10AccStartCommand = Uint8List.fromList([
     0x02, pmdTypeAcc, //
-    0x00, 0x01, 0xC8, 0x00, // 200 Hz
+    0x00, 0x01, 0x64, 0x00, // 100 Hz
     0x01, 0x01, 0x10, 0x00, // 16 bit
     0x02, 0x01, 0x08, 0x00, // 8 G
   ]);

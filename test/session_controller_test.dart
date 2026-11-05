@@ -515,4 +515,38 @@ void main() {
     expect(audio.played, contains(SessionSound.go));
     c.dispose();
   });
+
+  test('walking straight into the next speed is not told to stand still', () async {
+    final clock = FakeSessionClock();
+    final audio = SilentAudio();
+    final walk = ActivityBattery.fromJson({
+      'protocol_id': 'walk_speeds',
+      'lap_mode': false,
+      'sync': {'auto': 'off'},
+      'activities': [
+        {'name': 'Caminar despacio', 'duration_seconds': 10, 'prep_seconds': 5, 'post_seconds': 0},
+        {'name': 'Caminar rápido', 'duration_seconds': 10, 'prep_seconds': 0, 'post_seconds': 5},
+      ],
+    });
+    final c = SessionController(
+      participants: participants,
+      battery: walk,
+      dataRoot: root.path,
+      settings: const SessionSettings(lapMode: false),
+      clock: clock,
+      audio: audio,
+      redcapConfigured: false,
+    );
+    await c.command('start', {'video': false});
+    await run(c, clock, 27, evaluator: false);
+    expect(audio.said, [
+      'Actividad 1 de 2: caminar despacio. Quédate quieto.',
+      '¡Empieza!',
+      'Actividad 2 de 2: caminar rápido. ¡Empieza!',
+      'Para. Quédate quieto.',
+    ]);
+    // No end beep between the two speeds, only after the last one.
+    expect(audio.played.where((s) => s == SessionSound.end), hasLength(1));
+    c.dispose();
+  });
 }

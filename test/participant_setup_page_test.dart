@@ -165,6 +165,14 @@ void main() {
     expect(find.text('Sensores sin calibrar'), findsNothing);
     await tester.tap(find.text('Empezar').last);
     await wait(tester, () => started != null);
+    // What was ticked reaches the session and the monitor (green dot).
+    final offline = started!.participants.single.sensors.where((x) => x.connection == 'offline');
+    expect(offline.where((x) => x.inLab).every((x) => x.initialized), isTrue);
+    expect(offline.where((x) => x.inFreeLiving).every((x) => x.freeLivingInitialized), isTrue);
+    final devices = started!.protocolConfiguration.devices.where((d) => d.connection == 'offline');
+    expect(devices, isNotEmpty);
+    expect(devices.every((d) => d.initialized), isTrue);
+    expect(DeviceConfiguration.fromJson(devices.first.toJson()).initialized, isTrue);
     return started;
   }
 

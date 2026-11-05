@@ -963,6 +963,9 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                   .copyWith(
                 freeLivingSerial: group.freeLivingSerialFor(sensor.sensorId),
                 clearFreeLivingSerial: group.freeLivingSerialFor(sensor.sensorId) == null,
+                initialized: sensor.inLab && group.initialized.contains('lab:${sensor.sensorId}'),
+                freeLivingInitialized:
+                    sensor.inFreeLiving && group.initialized.contains('free_living:${sensor.sensorId}'),
               ),
           ],
         ),

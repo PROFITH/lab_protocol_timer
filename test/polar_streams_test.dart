@@ -399,4 +399,30 @@ void main() {
       service.dispose();
     });
   });
+
+  group('backlog flush', () {
+    final t0 = DateTime.utc(2026, 11, 5, 13, 2, 17);
+    bool flush(int delayS, int behindS, {int? lastFlushS}) => PolarBleService.shouldFlushBacklog(
+          delayMicros: delayS * 1000000,
+          behindSince: t0,
+          lastFlush: lastFlushS == null ? null : t0.add(Duration(seconds: lastFlushS)),
+          now: t0.add(Duration(seconds: behindS)),
+        );
+
+    test('a link 17 s behind for 10 s is flushed (05/11/2026)', () {
+      expect(flush(17, 10), isTrue);
+    });
+
+    test('a short or small delay is left alone', () {
+      expect(flush(17, 5), isFalse);
+      expect(flush(3, 60), isFalse);
+      expect(PolarBleService.shouldFlushBacklog(delayMicros: 17000000, behindSince: null, lastFlush: null, now: t0),
+          isFalse);
+    });
+
+    test('at most one flush a minute', () {
+      expect(flush(17, 40, lastFlushS: 10), isFalse);
+      expect(flush(17, 75, lastFlushS: 10), isTrue);
+    });
+  });
 }
