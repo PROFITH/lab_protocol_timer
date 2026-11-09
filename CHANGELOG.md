@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **«RUN4HEALTH (demostración, 15 min)»:** rewritten to practise programming the treadmill and the bike: lying, sitting and standing (1 min each), treadmill walking at 3.0, 4.5 and 6.0 km/h (1 min stages in a row), bike at 60 and 90 rpm with a light load (1 min stages in a row) and the 30 s sit-to-stand. Claps instead of jumps, as in RUN4HEALTH (base); same sensors as day 0.
+- **«RUN4HEALTH (demostración, 25 min)»:** rewritten to practise programming the treadmill and the bike: lying 5 min (resting HR), sitting 3 min, standing 2 min, treadmill walking at 3.0, 4.5 and 6.0 km/h (2 min stages in a row), bike at 60 and 90 rpm with a light load (2 min stages in a row) and the 30 s sit-to-stand. Claps instead of jumps, as in RUN4HEALTH (base); same sensors as day 0.
 
 ## [1.4.1] - 2026-11-09
 
