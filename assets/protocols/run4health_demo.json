@@ -1,13 +1,13 @@
 {
   "protocol_id": "run4health_demo",
-  "protocol_version": "1",
-  "title": "RUN4HEALTH (demostración, 8 min)",
+  "protocol_version": "2",
+  "title": "RUN4HEALTH (demostración, 25 min)",
   "study": "RUN4HEALTH",
   "moments": [
     "da_0__visita_inici_arm_1"
   ],
   "sync": {
-    "kind": "jump",
+    "kind": "clap",
     "auto": "every_static"
   },
   "ask_rpe": false,
@@ -99,92 +99,106 @@
   ],
   "activities": [
     {
-      "name": "De pie quieto",
-      "compendium_code": "07040",
-      "met": 1.3,
-      "duration_seconds": 30,
+      "name": "Tumbado",
+      "compendium_code": "07011",
+      "met": 1.0,
+      "duration_seconds": 300,
       "prep_seconds": 15,
       "post_seconds": 15,
-      "animation": "stand",
-      "instructions": "De pie, quieto, con los brazos relajados.",
-      "notes": "Línea base: 0 pasos.",
+      "animation": "lie",
+      "instructions": "Túmbate boca arriba, relajado. No hables ni te muevas.",
+      "wait_before": true,
+      "resting_hr": true,
+      "notes": "FC de reposo con la H10: boca arriba, en silencio. La app calcula la media de los 2 últimos minutos."
+    },
+    {
+      "name": "Sentado",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 180,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "sit",
+      "instructions": "Siéntate y quédate quieto.",
       "wait_before": true
     },
     {
-      "name": "Caminar ida y vuelta por la sala",
-      "compendium_code": "17190",
-      "met": 3.8,
-      "duration_seconds": 60,
-      "prep_seconds": 15,
-      "post_seconds": 15,
-      "animation": "walk",
-      "instructions": "Camina a tu ritmo normal hasta la marca, gira y vuelve. Sigue así hasta el aviso.",
-      "notes": "Pasos normales y giros. Que el vídeo vea los pies en todo el recorrido."
-    },
-    {
-      "name": "Caminar muy despacio",
-      "compendium_code": "17151",
-      "met": 2.3,
-      "duration_seconds": 30,
-      "prep_seconds": 15,
-      "post_seconds": 15,
-      "animation": "walk",
-      "instructions": "Camina muy despacio, como paseando sin prisa.",
-      "notes": "Balanceos lentos: el límite de shoestep."
-    },
-    {
-      "name": "Pasos sueltos y giros",
-      "compendium_code": "17150",
-      "met": 2.3,
-      "duration_seconds": 30,
+      "name": "De pie",
+      "compendium_code": "07041",
+      "met": 1.5,
+      "duration_seconds": 120,
       "prep_seconds": 15,
       "post_seconds": 15,
       "animation": "stand",
-      "instructions": "Muévete como en la cocina: un paso, giro, otro paso, coger algo y volver.",
-      "notes": "Pasos aislados, los que pierde el muslo."
+      "instructions": "Quédate de pie sin dar pasos."
     },
     {
-      "name": "Trotar en el sitio",
-      "compendium_code": "12025",
+      "name": "Caminar en cinta 3,0 km/h",
+      "compendium_code": "17346",
+      "met": 2.8,
+      "duration_seconds": 120,
+      "prep_seconds": 15,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres.",
+      "wait_before": true,
+      "notes": "Programa de la cinta: 3 tramos de 2 min seguidos al 0 % (3,0 / 4,5 / 6,0 km/h). Pulsa «Siguiente» (lap) justo cuando arranque la cinta."
+    },
+    {
+      "name": "Caminar en cinta 4,5 km/h",
+      "compendium_code": "17352",
+      "met": 3.5,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 0,
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres."
+    },
+    {
+      "name": "Caminar en cinta 6,0 km/h",
+      "compendium_code": "17358",
       "met": 4.8,
-      "duration_seconds": 30,
-      "prep_seconds": 15,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
       "post_seconds": 15,
-      "animation": "run",
-      "instructions": "Trota en el sitio, sin avanzar, a ritmo cómodo.",
-      "notes": "Pasos sin desplazamiento: el detector de impactos de shoestep."
+      "animation": "treadmill",
+      "instructions": "Camina con los brazos libres.",
+      "notes": "Al acabar el tramo la cinta se para: fase quieta de pie sobre la cinta."
     },
     {
-      "name": "Sentado, golpeando con el talón",
-      "compendium_code": "07023",
-      "met": 1.8,
-      "duration_seconds": 30,
+      "name": "Bicicleta 60 rpm, carga ligera",
+      "compendium_code": "01216",
+      "met": 5.0,
+      "duration_seconds": 120,
       "prep_seconds": 15,
-      "post_seconds": 15,
-      "animation": "sit",
-      "instructions": "Sentado, golpea el suelo con el talón de forma repetida, como de nervios.",
-      "notes": "Debe dar 0 pasos."
+      "post_seconds": 0,
+      "animation": "cycle",
+      "instructions": "Pedalea a 60 revoluciones por minuto.",
+      "wait_before": true,
+      "notes": "Programa de la bici: 2 tramos de 2 min seguidos a 1 W/kg de peso corporal, redondeada a 5 W. Fase quieta sentado en la bici, sin pedalear."
     },
     {
-      "name": "Sentarse y levantarse 5 veces",
+      "name": "Bicicleta 90 rpm, carga ligera",
+      "compendium_code": "01216",
+      "met": 5.0,
+      "duration_seconds": 120,
+      "prep_seconds": 0,
+      "post_seconds": 15,
+      "animation": "cycle",
+      "instructions": "Pedalea a 90 revoluciones por minuto.",
+      "notes": "Misma carga que a 60 rpm."
+    },
+    {
+      "name": "Sentarse y levantarse 30 s",
       "compendium_code": "02344",
       "met": 4.0,
-      "duration_seconds": 20,
+      "duration_seconds": 30,
       "prep_seconds": 15,
       "post_seconds": 15,
       "animation": "sit_to_stand",
-      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces. Al terminar, quédate sentado y quieto.",
-      "notes": "Sit-to-stand para contar en SAVES."
-    },
-    {
-      "name": "Sentado quieto",
-      "compendium_code": "07021",
-      "met": 1.0,
-      "duration_seconds": 30,
-      "prep_seconds": 15,
-      "post_seconds": 15,
-      "animation": "sit",
-      "instructions": "Quédate sentado y quieto."
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate tantas veces como puedas.",
+      "wait_before": true,
+      "notes": "Sentado en el centro de la silla. Cuenta las repeticiones completas."
     }
   ]
 }
