@@ -124,14 +124,14 @@ void main() {
     // here (the monitor keeps the link).
     await wait(tester, () => find.text('Sin conectar').evaluate().length == 2);
     final checks = find.byType(Checkbox);
-    expect(checks, findsNWidgets(10));
-    expect(find.textContaining('0/12 listos'), findsOneWidget);
+    expect(checks, findsNWidgets(12));
+    expect(find.textContaining('0/14 listos'), findsOneWidget);
     for (var i = 0; i < checks.evaluate().length; i++) {
       await tester.ensureVisible(checks.at(i));
       await tester.tap(checks.at(i));
       await tester.pump();
     }
-    expect(find.textContaining('10/12 listos'), findsOneWidget);
+    expect(find.textContaining('12/14 listos'), findsOneWidget);
     for (var i = 0; i < 2; i++) {
       final connect = find.widgetWithText(TextButton, 'Conectar').first;
       await tester.ensureVisible(connect);
@@ -140,7 +140,7 @@ void main() {
       await tester.tap(find.text('Vincular').first);
       await wait(tester, () => find.text('Vincular').evaluate().isEmpty);
     }
-    await wait(tester, () => find.textContaining('12/12 listos').evaluate().isNotEmpty);
+    await wait(tester, () => find.textContaining('14/14 listos').evaluate().isNotEmpty);
     expect(find.textContaining('Conectado · Polar'), findsNWidgets(2));
     expect(monitor.linked.length, 2);
 

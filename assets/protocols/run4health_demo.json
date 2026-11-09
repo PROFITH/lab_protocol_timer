@@ -1,0 +1,190 @@
+{
+  "protocol_id": "run4health_demo",
+  "protocol_version": "1",
+  "title": "RUN4HEALTH (demostración, 8 min)",
+  "study": "RUN4HEALTH",
+  "moments": [
+    "da_0__visita_inici_arm_1"
+  ],
+  "sync": {
+    "kind": "jump",
+    "auto": "every_static"
+  },
+  "ask_rpe": false,
+  "lap_mode": false,
+  "sensors": [
+    {
+      "sensor_id": "matrix_wnd",
+      "type": "matrix",
+      "placement": "wrist",
+      "dominance": "non_dominant",
+      "sampling_rate_hz": 25,
+      "range_g": 8,
+      "use": "both"
+    },
+    {
+      "sensor_id": "ax3_wnd",
+      "type": "ax3",
+      "placement": "wrist",
+      "dominance": "non_dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "ax3_wd",
+      "type": "ax3",
+      "placement": "wrist",
+      "dominance": "dominant",
+      "sampling_rate_hz": 100,
+      "range_g": 8
+    },
+    {
+      "sensor_id": "sens_thigh",
+      "type": "sens",
+      "placement": "thigh",
+      "sampling_rate_hz": 12.5,
+      "range_g": 2,
+      "use": "both"
+    },
+    {
+      "sensor_id": "ax6_shoe_l",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "left",
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "ax6_shoe_r",
+      "type": "ax6",
+      "placement": "shoe",
+      "side": "right",
+      "sampling_rate_hz": 100,
+      "range_g": 16
+    },
+    {
+      "sensor_id": "ax6_ankle_l",
+      "type": "ax6",
+      "placement": "ankle",
+      "side": "left",
+      "sampling_rate_hz": 100,
+      "range_g": 16,
+      "use": "both"
+    },
+    {
+      "sensor_id": "ax6_ankle_r",
+      "type": "ax6",
+      "placement": "ankle",
+      "side": "right",
+      "sampling_rate_hz": 100,
+      "range_g": 16,
+      "use": "both"
+    },
+    {
+      "sensor_id": "polar_h10",
+      "type": "polar_h10",
+      "placement": "chest"
+    },
+    {
+      "sensor_id": "verity_arm",
+      "type": "verity_sense",
+      "placement": "upper_arm",
+      "dominance": "non_dominant"
+    },
+    {
+      "sensor_id": "cam_room",
+      "type": "camera",
+      "placement": "room"
+    }
+  ],
+  "activities": [
+    {
+      "name": "De pie quieto",
+      "compendium_code": "07040",
+      "met": 1.3,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "stand",
+      "instructions": "De pie, quieto, con los brazos relajados.",
+      "notes": "Línea base: 0 pasos.",
+      "wait_before": true
+    },
+    {
+      "name": "Caminar ida y vuelta por la sala",
+      "compendium_code": "17190",
+      "met": 3.8,
+      "duration_seconds": 60,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "walk",
+      "instructions": "Camina a tu ritmo normal hasta la marca, gira y vuelve. Sigue así hasta el aviso.",
+      "notes": "Pasos normales y giros. Que el vídeo vea los pies en todo el recorrido."
+    },
+    {
+      "name": "Caminar muy despacio",
+      "compendium_code": "17151",
+      "met": 2.3,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "walk",
+      "instructions": "Camina muy despacio, como paseando sin prisa.",
+      "notes": "Balanceos lentos: el límite de shoestep."
+    },
+    {
+      "name": "Pasos sueltos y giros",
+      "compendium_code": "17150",
+      "met": 2.3,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "stand",
+      "instructions": "Muévete como en la cocina: un paso, giro, otro paso, coger algo y volver.",
+      "notes": "Pasos aislados, los que pierde el muslo."
+    },
+    {
+      "name": "Trotar en el sitio",
+      "compendium_code": "12025",
+      "met": 4.8,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "run",
+      "instructions": "Trota en el sitio, sin avanzar, a ritmo cómodo.",
+      "notes": "Pasos sin desplazamiento: el detector de impactos de shoestep."
+    },
+    {
+      "name": "Sentado, golpeando con el talón",
+      "compendium_code": "07023",
+      "met": 1.8,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "sit",
+      "instructions": "Sentado, golpea el suelo con el talón de forma repetida, como de nervios.",
+      "notes": "Debe dar 0 pasos."
+    },
+    {
+      "name": "Sentarse y levantarse 5 veces",
+      "compendium_code": "02344",
+      "met": 4.0,
+      "duration_seconds": 20,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "sit_to_stand",
+      "instructions": "Brazos cruzados sobre el pecho. Levántate del todo y siéntate 5 veces. Al terminar, quédate sentado y quieto.",
+      "notes": "Sit-to-stand para contar en SAVES."
+    },
+    {
+      "name": "Sentado quieto",
+      "compendium_code": "07021",
+      "met": 1.0,
+      "duration_seconds": 30,
+      "prep_seconds": 15,
+      "post_seconds": 15,
+      "animation": "sit",
+      "instructions": "Quédate sentado y quieto."
+    }
+  ]
+}
