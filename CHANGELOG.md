@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-11-09
+
+### Changed
+
+- **«RUN4HEALTH (demostración, 15 min)»:** rewritten to practise programming the treadmill and the bike: lying, sitting and standing (1 min each), treadmill walking at 3.0, 4.5 and 6.0 km/h (1 min stages in a row), bike at 60 and 90 rpm with a light load (1 min stages in a row) and the 30 s sit-to-stand. Claps instead of jumps, as in RUN4HEALTH (base); same sensors as day 0.
+
 ## [1.4.1] - 2026-11-09
 
 ### Added
