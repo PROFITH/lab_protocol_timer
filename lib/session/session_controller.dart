@@ -1063,7 +1063,9 @@ class SessionController extends ChangeNotifier {
           );
           _speakPhase(plan, phase, attempt, first: first);
           if (phase == SessionPhase.main) audio.play(SessionSound.start);
-          if (phase == SessionPhase.post) audio.play(SessionSound.end);
+          // Without a still phase after it (walking straight into the
+          // next speed) the activity does not stop.
+          if (phase == SessionPhase.post && plan.postSeconds > 0) audio.play(SessionSound.end);
           _changed(saveState: true);
         case ActivityLogged(:final log):
           store?.logEvent(
@@ -1127,15 +1129,25 @@ class SessionController extends ChangeNotifier {
 
   void _speakPhase(ActivityPlan plan, SessionPhase phase, int attempt, {required bool first}) {
     final count = activityCount;
+    final position = count > 0 ? 'Actividad ${plan.index} de $count' : 'Actividad ${plan.index}';
+    final again = attempt > 1 ? ', otra vez' : '';
+    final name = plan.name == null ? '' : ': ${_spoken(plan)}';
     switch (phase) {
       case SessionPhase.prep:
-        final position = count > 0 ? 'Actividad ${plan.index} de $count' : 'Actividad ${plan.index}';
-        final again = attempt > 1 ? ', otra vez' : '';
-        final name = plan.name == null ? '' : ': ${_spoken(plan)}';
+        // Without a still phase the activity is announced when it starts.
+        if (plan.prepSeconds <= 0) return;
         audio.say('$position$name$again. Quédate quieto.');
       case SessionPhase.main:
-        audio.say(plan.isCalibration ? 'Caja de calibración. Cara 1.' : '¡Empieza!');
+        if (plan.isCalibration) {
+          audio.say('Caja de calibración. Cara 1.');
+        } else if (plan.prepSeconds <= 0) {
+          audio.say('$position$name$again. ¡Empieza!');
+        } else {
+          audio.say('¡Empieza!');
+        }
       case SessionPhase.post:
+        // Straight into the next activity: nothing to stop for.
+        if (plan.postSeconds <= 0) return;
         audio.say('Para. Quédate quieto.');
       case SessionPhase.wait:
         audio.say(engine.protocolComplete ? 'Protocolo completado. ¡Muy bien!' : 'Actividad terminada. Descansa.');

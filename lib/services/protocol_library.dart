@@ -43,6 +43,7 @@ class ProtocolLibrary {
     // the study that names the visit.
     'assets/protocols/run4health_base.json',
     'assets/protocols/run4health_day8_base.json',
+    'assets/protocols/run4health_demo.json',
     'assets/protocols/weargap_day0_base.json',
     'assets/protocols/weargap_day8_base.json',
   ];

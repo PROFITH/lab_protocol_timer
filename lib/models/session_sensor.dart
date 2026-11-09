@@ -341,6 +341,11 @@ class SessionSensor {
 
   bool get hasFreeLivingSerial => freeLivingSerial?.trim().isNotEmpty ?? false;
 
+  /// The evaluator ticked the laboratory device as initialized in the
+  /// waiting room (offline sensors), and the free-living one.
+  final bool initialized;
+  final bool freeLivingInitialized;
+
   /// Overrides the device label of the type (needed for `other`).
   final String? deviceNameOverride;
 
@@ -358,6 +363,8 @@ class SessionSensor {
     this.rangeG,
     this.use = SensorUse.lab,
     this.freeLivingSerial,
+    this.initialized = false,
+    this.freeLivingInitialized = false,
     this.deviceNameOverride,
     this.timestampDomainOverride,
   });
@@ -434,6 +441,8 @@ class SessionSensor {
     bool clearSerial = false,
     bool clearSamplingRate = false,
     bool clearRange = false,
+    bool? initialized,
+    bool? freeLivingInitialized,
   }) =>
       SessionSensor(
         sensorId: sensorId ?? this.sensorId,
@@ -447,6 +456,8 @@ class SessionSensor {
         rangeG: clearRange ? null : rangeG ?? this.rangeG,
         use: use ?? this.use,
         freeLivingSerial: clearFreeLivingSerial ? null : freeLivingSerial ?? this.freeLivingSerial,
+        initialized: initialized ?? this.initialized,
+        freeLivingInitialized: freeLivingInitialized ?? this.freeLivingInitialized,
         deviceNameOverride: deviceNameOverride,
         timestampDomainOverride: timestampDomainOverride,
       );
@@ -462,6 +473,8 @@ class SessionSensor {
         if (rangeG != null) 'range_g': rangeG,
         if (use != SensorUse.lab) 'use': use,
         if (hasFreeLivingSerial) 'free_living_serial': freeLivingSerial!.trim(),
+        if (initialized) 'initialized': true,
+        if (freeLivingInitialized) 'free_living_initialized': true,
         if (deviceNameOverride != null) 'device_name': deviceNameOverride,
         if (timestampDomainOverride != null)
           'timestamp_domain': timestampDomainOverride,
@@ -536,6 +549,8 @@ class SessionSensor {
       use: choice('use', SensorUse.values) ??
           (json['free_living'] == true ? SensorUse.both : SensorUse.lab),
       freeLivingSerial: json['free_living_serial']?.toString(),
+      initialized: json['initialized'] == true,
+      freeLivingInitialized: json['free_living_initialized'] == true,
       // Older files name the device and its clock themselves.
       deviceNameOverride:
           type == 'other' ? (deviceName ?? sensorId.trim()) : null,
