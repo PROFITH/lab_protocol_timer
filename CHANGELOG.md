@@ -5,7 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.1] - 2026-11-04
+## [1.4.1] - 2026-11-09
+
+### Added
+
+- **«RUN4HEALTH (demostración, 8 min)»:** protocol for training evaluators and students: standing still, walking up and down the room, very slow walking, single steps and turns, jogging on the spot, heel tapping while seated, five sit-to-stands and sitting still, each with 15 s still before and after and a jump (a clap when seated). It has the same sensors as RUN4HEALTH day 0.
+- **Windows release:** `.github/workflows/release-windows.yml` builds the app on GitHub, makes an installer (`lab_protocol_timer_setup_<version>.exe`, Inno Setup) and a portable `.zip`, and attaches both to the release of the tag (`v*`), or of the tag typed when it is run by hand.
 
 ### Fixed
 
@@ -17,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **H10 accelerometer at 100 Hz** (was 200 Hz). In the test of 04/11 afternoon, with a Verity Sense on the same Bluetooth adapter, the H10 lost 76 % of its ACC frames from the moment the Verity connected (48.8 samples/s arrived out of 200; its ECG and every Verity stream were complete and the times were right). 100 Hz halves the data and is enough for steps and activity; it did not stop the losses on its own (see «H10 stuck behind»).
 - **Devices ticked in the waiting room:** each offline device ticked as initialized shows a green dot in the monitor's device tab («Inicializado en la sala de espera; graba por su cuenta»), and the participant's manifest and session state keep it (`initialized`, `free_living_initialized`).
 - **Device tab:** the cameras first, since they are what is left to connect in the monitor.
+- **RUN4HEALTH sensors:** day 0 and day 8 list an AX6 on each ankle as well as on each shoe. The shoe AX6 are laboratory only; the ankle AX6 go home with the thigh SENS motion and the Matrix of the non-dominant wrist.
 
 ## [1.4.0] - 2026-11-03
 
