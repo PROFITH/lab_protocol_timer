@@ -268,6 +268,22 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
     }
   }
 
+  /// The video file stopped growing while recording (the camera stopped
+  /// giving frames, even if the preview moves): it is logged and the camera
+  /// is reopened, which saves what was recorded and starts a new segment.
+  void _onVideoStalled(String deviceId) {
+    final camera = _cameras[deviceId];
+    if (camera == null || !mounted) return;
+    final stalled = camera.service.recordingStalled.value;
+    setState(() {});
+    if (stalled == null) {
+      _log('video_resumed', deviceId);
+      return;
+    }
+    _log('video_stalled', '$deviceId $stalled');
+    if (!camera.recovering) _retryCamera(deviceId, automatic: true);
+  }
+
   Future<void> _retryCamera(String deviceId, {bool automatic = false}) async {
     final camera = _cameras[deviceId];
     if (camera == null || camera.recovering) return;
@@ -507,6 +523,7 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
       }
       final camera = _CameraDevice(configuration);
       camera.service.cameraError.addListener(() => _onCameraError(id));
+      camera.service.recordingStalled.addListener(() => _onVideoStalled(id));
       _cameras[id] = camera;
     });
 
@@ -1862,16 +1879,17 @@ class _ResearchMonitorWindowState extends State<ResearchMonitorWindow>
                         : DeviceConnectionStatus.disconnected,
             statusMessage: camera.recovering
                 ? 'Recuperando cámara...'
-                : camera.ready
-                    ? null
-                    : camera.service.cameraError.value,
+                : camera.service.recordingStalled.value ??
+                    (camera.ready ? null : camera.service.cameraError.value),
             sensors: [
               if (device.hasSensor('video'))
                 SensorStatus(
                   id: 'video',
                   name: camera.service.audioUnavailable ? 'Vídeo (sin audio)' : 'Vídeo + audio',
                   icon: Icons.videocam_rounded,
-                  status: camera.service.isRecording
+                  status: camera.service.recordingStalled.value != null
+                      ? SensorAcquisitionStatus.error
+                      : camera.service.isRecording
                       ? SensorAcquisitionStatus.acquiring
                       : camera.ready
                           ? SensorAcquisitionStatus.ready
