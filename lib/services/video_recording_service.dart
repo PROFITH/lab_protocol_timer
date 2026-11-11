@@ -6,8 +6,11 @@ import 'package:camera/camera.dart';
 import 'package:camera_windows/audio_inputs.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path_provider_windows/path_provider_windows.dart';
 import 'package:disk_space_2/disk_space_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'video_growth_watchdog.dart';
 
 /// Video quality. Windows encodes H.264 at a constant rate, so the file size
 /// is almost exactly the bitrate times the duration; the bitrate follows the
@@ -283,6 +286,21 @@ class VideoRecordingService {
   /// Último error reportado por la cámara (desconexión USB, fallo de
   /// MediaFoundation...). null si la cámara funciona.
   final ValueNotifier<String?> cameraError = ValueNotifier(null);
+
+  /// Not null while the video being recorded has stopped growing on disk
+  /// (the camera stopped giving frames to the recorder, even if the preview
+  /// still moves). Only on Windows.
+  final ValueNotifier<String?> recordingStalled = ValueNotifier(null);
+
+  final VideoGrowthWatchdog _watchdog = VideoGrowthWatchdog();
+  Timer? _watchTimer;
+  Set<String> _filesBeforeRecording = const {};
+  String? _recordingFile;
+  String? _videosFolder;
+
+  /// Files of the Videos folder that a camera of this app is recording, so
+  /// that two cameras never watch the same file.
+  static final Set<String> _claimedFiles = {};
 
   /// Última cámara usada, para poder reintentar la conexión.
   CameraDescription? _lastCamera;
@@ -754,6 +772,7 @@ class VideoRecordingService {
       // No garantiza correspondencia exacta con el primer fotograma del vídeo.
       _currentRecordingStartTime = DateTime.now().toUtc();
       _isRecording = true;
+      _startWatching();
 
       debugPrint(
         '[VIDEO] Grabación iniciada en: '
@@ -799,6 +818,7 @@ class VideoRecordingService {
     }
 
     try {
+      _stopWatching();
       final xFile = await _controller!.stopVideoRecording();
       final endTime = DateTime.now().toUtc();
       _isRecording = false;
@@ -851,6 +871,84 @@ class VideoRecordingService {
     }
   }
 
+  /// FOLDERID_Videos (`WindowsKnownFolder.Videos`, which the analyzer only
+  /// sees on Windows).
+  static const _folderIdVideos = '{18989B1D-99B5-455B-841C-AB7C74E4DDFC}';
+
+  /// Folder where camera_windows writes the video while it records
+  /// (`FOLDERID_Videos`, which can be redirected to OneDrive).
+  Future<String?> _videosDirectory() async {
+    if (!Platform.isWindows) return null;
+    try {
+      return _videosFolder ??= await PathProviderWindows().getPath(_folderIdVideos);
+    } catch (e) {
+      debugPrint('[VIDEO] No se encontró la carpeta Vídeos: $e');
+      return null;
+    }
+  }
+
+  Future<List<File>> _captureFiles() async {
+    final folder = await _videosDirectory();
+    if (folder == null) return const [];
+    try {
+      return Directory(folder)
+          .listSync()
+          .whereType<File>()
+          .where((f) {
+            final name = f.uri.pathSegments.last;
+            return name.startsWith('VideoCapture_') && name.endsWith('.mp4');
+          })
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Future<void> _startWatching() async {
+    if (!Platform.isWindows) return;
+    _stopWatching();
+    _filesBeforeRecording = {for (final f in await _captureFiles()) f.path};
+    _watchdog.reset(DateTime.now());
+    _watchTimer = Timer.periodic(const Duration(seconds: 5), (_) => _checkGrowth());
+  }
+
+  void _stopWatching() {
+    _watchTimer?.cancel();
+    _watchTimer = null;
+    if (_recordingFile != null) _claimedFiles.remove(_recordingFile);
+    _recordingFile = null;
+    if (recordingStalled.value != null) recordingStalled.value = null;
+  }
+
+  Future<void> _checkGrowth() async {
+    if (!_isRecording) return;
+    if (_recordingFile == null) {
+      final candidates = (await _captureFiles())
+          .where((f) => !_filesBeforeRecording.contains(f.path) && !_claimedFiles.contains(f.path))
+          .toList()
+        // VideoCapture_<date and time>: the name sorts by start time.
+        ..sort((a, b) => a.path.compareTo(b.path));
+      if (candidates.isEmpty) return;
+      _recordingFile = candidates.first.path;
+      _claimedFiles.add(_recordingFile!);
+    }
+    int? size;
+    try {
+      size = File(_recordingFile!).lengthSync();
+    } catch (_) {}
+    final now = DateTime.now();
+    if (!_watchdog.update(size, now)) return;
+    if (_watchdog.stalled) {
+      final message = 'El vídeo no se está grabando: el archivo no crece desde hace '
+          '${_watchdog.secondsSinceGrowth(now)} s';
+      debugPrint('[VIDEO] $message ($_recordingFile)');
+      recordingStalled.value = message;
+    } else {
+      debugPrint('[VIDEO] El vídeo vuelve a crecer.');
+      recordingStalled.value = null;
+    }
+  }
+
   /// Renames the file (instant on the same drive) or copies it to another
   /// drive; the temporary file is removed only once the copy is complete.
   static Future<File> _moveFile(File source, String destination) async {
@@ -890,6 +988,7 @@ class VideoRecordingService {
   // ===========================================================================
 
   Future<void> dispose() async {
+    _stopWatching();
     if (_isRecording) {
       try {
         await _controller?.stopVideoRecording();
