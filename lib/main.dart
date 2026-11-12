@@ -6,6 +6,7 @@ import 'package:multi_window_manager/multi_window_manager.dart';
 import 'config/default_protocol_configuration.dart';
 import 'models/protocol_configuration.dart';
 import 'services/redcap_connection.dart';
+import 'services/windows_tls_trust.dart';
 import 'session/session_controller.dart';
 import 'session/timer_page.dart';
 import 'setup/participant_setup_page.dart';
@@ -17,6 +18,9 @@ import 'windows/theme_sync.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // HTTPS (REDCap) checked by Windows when the app cannot (missing
+  // intermediate or root certificate on this computer).
+  WindowsTlsTrust.install();
 
   debugPrint('[MAIN] args=$args');
 

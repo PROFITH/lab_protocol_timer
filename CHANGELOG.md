@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-11-12
+
+### Fixed
+
+- **«CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate» with REDCap on some Windows computers.** On a new computer, «Probar conexión» with https://minerva.ugr.es/api/ failed although the token was right and the browser opened minerva. The app (Dart) uses the root certificates of Windows but does not fetch a missing intermediate certificate, nor a root Windows has not installed yet; the browser asks Windows, which does both. Now, when the app's own check fails, the certificate goes to Windows (`CertGetCertificateChain` and the SSL policy for the host name) and the connection goes on only if Windows accepts it for that server, as the browser would. Verification is never turned off.
+
 ## [1.5.0] - 2026-11-12
 
 ### Added
