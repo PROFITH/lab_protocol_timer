@@ -166,7 +166,8 @@ class OnboardingDevices {
   /// references), and the fields of dictionary v10 (`device_5`-`device_6`,
   /// `devices_lab`, `devices_free_living`, `devices_updated`), so a project
   /// without v10 still gets the first ones. Participants without
-  /// free-living devices (a closing visit) get nothing.
+  /// free-living devices (the day 8 visit) get only the list of the
+  /// laboratory devices, in the `onboarding_config` of their own event.
   static ({List<Map<String, dynamic>> base, List<Map<String, dynamic>> extended}) records(
     List<ParticipantEntry> participants,
     List<SessionSensor> layout, {
@@ -177,14 +178,14 @@ class OnboardingDevices {
     for (final p in participants) {
       final devices = deviceEntriesOf(p.sensorsOr(layout));
       final slots = freeLivingSlots(devices);
-      if (slots.isEmpty) continue;
+      if (devices.isEmpty) continue;
       final key = {'record_id': p.participantId, 'redcap_event_name': p.redcapEventName};
       final fields = <String, dynamic>{};
       for (var i = 0; i < slots.length && i < maxDevices; i++) {
         fields['device_${i + 1}'] = slots[i].name;
         fields[referenceFields[i + 1]!] = slots[i].reference;
       }
-      base.add({
+      if (slots.isNotEmpty) base.add({
         ...key,
         for (final e in fields.entries)
           if (_slotOf(e.key) <= maxBaseDevices) e.key: e.value,
@@ -201,10 +202,11 @@ class OnboardingDevices {
         for (final e in fields.entries)
           if (_slotOf(e.key) > maxBaseDevices) e.key: e.value,
         if (lines(SensorUse.lab).isNotEmpty) 'devices_lab': lines(SensorUse.lab),
-        'devices_free_living': [
-          lines(SensorUse.freeLiving),
-          if (overflow.isNotEmpty) 'Sin hueco en device_1-device_$maxDevices: ${overflow.join('; ')}',
-        ].join('\n'),
+        if (slots.isNotEmpty)
+          'devices_free_living': [
+            lines(SensorUse.freeLiving),
+            if (overflow.isNotEmpty) 'Sin hueco en device_1-device_$maxDevices: ${overflow.join('; ')}',
+          ].join('\n'),
         'devices_updated': LabRedCapService.formatRedcapDateTime(now),
       });
     }

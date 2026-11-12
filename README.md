@@ -86,7 +86,7 @@ When a participant takes devices home at this visit (sensors with `use` `free_li
 - `device_1`-`device_4` and their references (`ref_dispositivo1`, `device2_ref`, `device_3_ref`, `device_4_ref`): each free-living device by its place («Tobillo, izquierda»), with the device, serial and code as reference («Axivity AX6 · nº 6021 · ax6_ankle_l»). These fields exist in every dictionary version.
 - With dictionary v10: `device_5`, `device_6` (and `device_5_ref`, `device_6_ref`), `devices_lab` and `devices_free_living` (one line per device: device | place | code | serial | rate and range | initialized) and `devices_updated`. Without v10 this import fails alone and the console says to upload it.
 
-A closing visit (no free-living devices) sends nothing to `onboarding_config`.
+A visit without free-living devices (day 8) sends only the second import (`devices_lab` and `devices_updated`) to the `onboarding_config` of its own event, which must be designated for that event in REDCap; `device_1`-`device_4` of day 0 are left as they are.
 
 ### Device sheet
 

@@ -628,7 +628,7 @@ class LabRedCapService {
           '(Project Setup → Repeating instruments and events). Después pulsa $retry. '
           'Respuesta de REDCap: $error';
     }
-    if (records.any((r) => r.containsKey('devices_free_living')) &&
+    if (records.any((r) => r.containsKey('devices_updated')) &&
         RegExp('devices_|device_[56]', caseSensitive: false).hasMatch(error)) {
       return 'Faltan en REDCap los campos de dispositivos del diccionario v10 (onboarding_config): '
           'súbelo en Project Setup → Data Dictionary y pulsa $retry. Los dispositivos 1-4 de vida libre '

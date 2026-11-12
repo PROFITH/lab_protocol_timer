@@ -101,14 +101,17 @@ void main() {
     expect(extended['devices_free_living'], contains('Sin hueco en device_1-device_6: Muslo (Axivity AX3): Axivity AX3 · nº A7 · ax3_7'));
   });
 
-  test('a visit without free-living devices sends nothing to onboarding_config', () {
+  test('day 8 (no free-living devices) sends the laboratory list to its own event', () {
     final r = OnboardingDevices.records(
       [ParticipantEntry(participantId: 'P', redcapEventName: 'dia_8_arm_1', sensors: [sensors[2], sensors[5]])],
       const [],
       now: now,
     );
-    expect(r.base, isEmpty);
-    expect(r.extended, isEmpty);
+    expect(r.base, isEmpty, reason: 'device_1-4 of day 0 stay as they are');
+    final extended = r.extended.single;
+    expect(extended['redcap_event_name'], 'dia_8_arm_1');
+    expect((extended['devices_lab'] as String).split('\n'), hasLength(2));
+    expect(extended.containsKey('devices_free_living'), isFalse);
   });
 
   test('the protocol sensors count when the participant has none of their own', () {
@@ -130,7 +133,7 @@ void main() {
 
   test('a project without dictionary v10 is told what to upload', () {
     final records = [
-      {'record_id': 'P', 'devices_free_living': 'x'},
+      {'record_id': 'P', 'devices_lab': 'x', 'devices_updated': 'y'},
     ];
     final message = LabRedCapService.explainImportError(
         'The following fields were not found in the project as real data fields: devices_lab, devices_free_living', records);
