@@ -10,6 +10,7 @@ import '../models/activity_battery.dart';
 import '../models/protocol_configuration.dart';
 import '../models/session_manifest.dart';
 import '../models/sync_window.dart';
+import '../services/device_inventory.dart';
 import '../services/lab_redcap_service.dart';
 import '../services/redcap_resend.dart';
 import '../windows/window_messages.dart';
@@ -1332,6 +1333,23 @@ class SessionController extends ChangeNotifier {
     }
     s.writeText('activity_markers.csv', activityMarkersCsv(engine.logs));
     s.writeText('sync_windows.csv', syncWindowsCsv(engine.syncWindows));
+    _writeDeviceSheets();
+  }
+
+  /// `dispositivos.csv` in each participant's folder: every device they
+  /// wear in the laboratory and take home, with its place, code and serial,
+  /// for the evaluator placing them.
+  void _writeDeviceSheets() {
+    final s = store;
+    if (s == null) return;
+    final layout = battery?.sensors ?? const <SessionSensor>[];
+    for (final p in participants) {
+      s.writeTextTo(
+        s.directoryOf(p.participantId),
+        DeviceSheet.fileName,
+        DeviceSheet.csv(p.participantId, deviceEntriesOf(p.sensorsOr(layout))),
+      );
+    }
   }
 
   static const activityMarkersHeader = 'activity_index,activity_start_time_utc,'

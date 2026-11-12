@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-12
+
+### Added
+
+- **Devices to REDCap (`onboarding_config`).** At the end of a visit where the participant takes devices home, the app fills `device_1`-`device_4` and their references with the free-living devices (place, device, serial and code), so they are no longer typed by hand and healthy_tracker downloads them for the non-wear log. With dictionary v10 it also fills `device_5`-`device_6`, `devices_lab` and `devices_free_living` (every device of the laboratory and of the free-living days, one per line) and `devices_updated`. These are two imports of their own: a project without v10 still gets the first one, and the console says to upload v10.
+- **Device sheet for the evaluator.** `dispositivos.csv` in each participant's folder (opens in Excel in columns) and **Ver ficha de dispositivos** in the waiting room: where each device goes, its code, serial number, rate, range and whether it is initialized, for the laboratory and the free-living days.
+
 ## [1.4.3] - 2026-11-10
 
 ### Added

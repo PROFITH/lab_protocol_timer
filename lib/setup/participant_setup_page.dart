@@ -14,6 +14,7 @@ import '../config/default_protocol_configuration.dart';
 import '../models/protocol_configuration.dart';
 import '../windows/window_messages.dart';
 import 'device_guide.dart';
+import 'device_sheet_dialog.dart';
 import 'live_connect_dialog.dart';
 import '../models/activity_battery.dart';
 import '../services/lab_redcap_service.dart';
@@ -1825,6 +1826,20 @@ class _ParticipantSetupPageState extends State<ParticipantSetupPage> {
                 _participantSensorsCard(_participants[i], i),
               ],
               const SizedBox(height: 6),
+              if (_layoutSensors.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('open_device_sheet'),
+                    onPressed: () => showDeviceSheetDialog(
+                      context,
+                      participants: _entries(),
+                      layout: _layoutSensors,
+                    ),
+                    icon: const Icon(Icons.table_chart_rounded, size: 18),
+                    label: const Text('Ver ficha de dispositivos (dónde va cada uno)'),
+                  ),
+                ),
               Text(
                 'Cada participante lleva los sensores del protocolo; su número de serie va al manifiesto y a '
                 'REDCap, y decide qué calibración es suya. Las cámaras son de la sesión.',
