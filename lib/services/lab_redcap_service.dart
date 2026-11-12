@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/activity_battery.dart';
+import 'device_inventory.dart';
 import 'redcap_connection.dart';
 
 /// One participant of a session: ID, visit, the sensors they wear (with
@@ -581,12 +582,20 @@ class LabRedCapService {
             pendingRpeBefore: pendingRpeBefore,
           );
 
+    final devices = OnboardingDevices.records(
+      participants,
+      battery?.sensors ?? const [],
+      now: sessionEndTime,
+    );
+
     bool repeating(Map<String, dynamic> r) => r.containsKey('redcap_repeat_instrument');
     return [
       summary,
       [for (final r in detail) if (!repeating(r)) r],
       [for (final r in detail) if (repeating(r)) r],
       mapped,
+      devices.base,
+      devices.extended,
     ];
   }
 
@@ -596,7 +605,13 @@ class LabRedCapService {
     'Sesión (wearable_session)',
     'Actividades (lab_activity)',
     'Condición física',
+    onboardingBaseName,
+    onboardingExtendedName,
   ];
+
+  static const onboardingBaseName = 'Dispositivos de vida libre (onboarding_config)';
+  static const onboardingExtendedName =
+      'Lista de dispositivos (onboarding_config, campos del diccionario v10)';
 
   /// [error] of an import of [records], with what to change in the REDCap
   /// project when the cause is known and the button that sends it again.
@@ -612,6 +627,12 @@ class LabRedCapService {
           'repetible en ${events.isEmpty ? 'el evento' : events.join(', ')} '
           '(Project Setup → Repeating instruments and events). Después pulsa $retry. '
           'Respuesta de REDCap: $error';
+    }
+    if (records.any((r) => r.containsKey('devices_updated')) &&
+        RegExp('devices_|device_[56]', caseSensitive: false).hasMatch(error)) {
+      return 'Faltan en REDCap los campos de dispositivos del diccionario v10 (onboarding_config): '
+          'súbelo en Project Setup → Data Dictionary y pulsa $retry. Los dispositivos 1-4 de vida libre '
+          'van en otro envío y no dependen de esto. Respuesta de REDCap: $error';
     }
     return error;
   }

@@ -79,7 +79,18 @@ build\windows\x64\runner\Release\lab_protocol_timer.exe
 
 Another project needs the same instruments and fields (below); if one is missing, REDCap refuses that import and the console says which.
 
-At the end of a session the app sends three imports, so one that fails does not stop the others: the protocol summary (`protocol_feasibility`, fields below), the session (`wearable_session`) with one instance of the repeating instrument `lab_activity` per attempt, and the fitness-test fields of `physical_fitness`. `lab_activity` must be enabled as a repeating instrument in the visit events. If an import fails, the console shows why and **Reintentar REDCap** sends it again.
+At the end of a session the app sends these imports, so one that fails does not stop the others: the protocol summary (`protocol_feasibility`, fields below), the session (`wearable_session`) with one instance of the repeating instrument `lab_activity` per attempt, and the fitness-test fields of `physical_fitness`. `lab_activity` must be enabled as a repeating instrument in the visit events. If an import fails, the console shows why and **Reintentar REDCap** sends it again.
+
+When a participant takes devices home at this visit (sensors with `use` `free_living` or `both`), two more imports fill `onboarding_config` of the visit event, so nobody types them and healthy_tracker gets them for the non-wear log:
+
+- `device_1`-`device_4` and their references (`ref_dispositivo1`, `device2_ref`, `device_3_ref`, `device_4_ref`): each free-living device by its place («Tobillo, izquierda»), with the device, serial and code as reference («Axivity AX6 · nº 6021 · ax6_ankle_l»). These fields exist in every dictionary version.
+- With dictionary v10: `device_5`, `device_6` (and `device_5_ref`, `device_6_ref`), `devices_lab` and `devices_free_living` (one line per device: device | place | code | serial | rate and range | initialized) and `devices_updated`. Without v10 this import fails alone and the console says to upload it.
+
+A visit without free-living devices (day 8) sends only the second import (`devices_lab` and `devices_updated`) to the `onboarding_config` of its own event, which must be designated for that event in REDCap; `device_1`-`device_4` of day 0 are left as they are.
+
+### Device sheet
+
+Every participant folder gets `dispositivos.csv` (semicolons and a BOM, so Excel in Spanish opens it in columns): one row per device of the laboratory and of the free-living days, with place, code, serial number, rate, range and whether it was ticked as initialized. It is rewritten while the session runs. In the waiting room, **Ver ficha de dispositivos** shows the same table on screen and **Copiar (para Excel)** copies it.
 
 ### Required REDCap Data Dictionary Fields
 

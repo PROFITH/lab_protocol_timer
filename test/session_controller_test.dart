@@ -185,8 +185,22 @@ void main() {
     expect(events.where((e) => e.contains(',sync_go,')).length, 18);
     expect(events.any((e) => e.contains(',resting_hr,')), isTrue);
 
-    // REDCap: summary, session, 9 lab_activity, fitness fields.
-    expect(imported.length, 4);
+    // REDCap: summary, session, 9 lab_activity, fitness fields and the
+    // devices of onboarding_config (the old fields and the v10 ones).
+    expect(imported.length, 6);
+    final devices = imported[4].single;
+    expect(devices['device_1'], 'Muñeca no dominante');
+    expect(devices['ref_dispositivo1'], startsWith('Parmay Matrix · '));
+    expect(devices.keys.where((k) => k.startsWith('devices_')), isEmpty);
+    final inventory = imported[5].single;
+    expect(inventory['devices_lab'], contains('ax3_wd'));
+    expect(inventory['devices_free_living'], contains('matrix_wnd'));
+    expect(inventory['devices_updated'], isNotNull);
+    final sheetFile = File('$dir/dispositivos.csv');
+    expect(sheetFile.readAsBytesSync().take(3), [0xEF, 0xBB, 0xBF], reason: 'BOM for Excel');
+    final sheet = sheetFile.readAsStringSync();
+    expect(sheet, contains('participante;periodo;dispositivo;lugar;codigo;numero_serie'));
+    expect(sheet, contains(';Vida libre;Parmay Matrix;Muñeca no dominante;matrix_wnd;'));
     final summaryRecord = imported[0].single;
     expect(summaryRecord['lab_total_stations'], '9');
     expect(summaryRecord['act_9_end_time'], isNotNull);
